@@ -1,8 +1,26 @@
-# Architektur - BiPRO-GDV Tool v0.9.3
+# Architektur - BiPRO-GDV Tool v0.9.4
 
-**Stand:** 05. Februar 2026
+**Stand:** 06. Februar 2026
 
-## Neue Features in v0.9.3 (KI-Klassifikation & Kosten-Tracking)
+**Primaere Referenz: `AGENTS.md`** - Dieses Dokument enthaelt ergaenzende Architektur-Details. Fuer den aktuellen Feature-Stand und Debugging-Tipps siehe `AGENTS.md`.
+
+## Neue Features in v0.9.4 (Stabilitaets-Upgrade + KI-Optimierung)
+
+### Stabilitaets-Fixes
+- DataCache Race Condition (`_pause_count` unter Lock)
+- JWT 401 Auto-Refresh mit Deadlock-Schutz
+- Retry auf alle APIClient-Methoden (exp. Backoff 1s/2s/4s)
+- SharedTokenManager Double-Checked Locking
+- File-Logging mit RotatingFileHandler
+- 11 Smoke-Tests
+
+### Zweistufige KI-Klassifikation
+- Stufe 1: GPT-4o-mini (2 Seiten, Confidence-Scoring)
+- Stufe 2: GPT-4o (5 Seiten) nur bei low Confidence
+- Courtage-Definition verschaerft (Negativ-Beispiele)
+- Dokumentnamen bei Sonstige (Stufe 2)
+
+## Aeltere Features in v0.9.3 (KI-Klassifikation & Kosten-Tracking)
 
 Diese Version erweitert die KI-Klassifikation und fügt Kosten-Tracking hinzu:
 

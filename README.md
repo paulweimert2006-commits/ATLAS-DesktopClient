@@ -1,4 +1,4 @@
-# BiPRO-GDV Tool v0.9.3
+# BiPRO-GDV Tool v0.9.4
 
 Ein Desktop-Tool für Versicherungsvermittler mit:
 - **BiPRO-Datenabruf** - Automatisierter Abruf von Lieferungen von Versicherern
@@ -21,13 +21,13 @@ Ein Desktop-Tool für Versicherungsvermittler mit:
 - **Kategorien-Anzeige** (Vertragsdokumente, Geschäftsvorfälle, etc.)
 - **Download einzeln oder alle** mit automatischem Archiv-Upload
 - **MTOM/XOP-Support** für Binärdaten (PDFs)
-- **Parallele Downloads** (5 Worker, ~5x schneller) **NEU v0.9.1**
+- **Parallele Downloads** (max. 10 Worker, auto-adjustiert) **NEU v0.9.1**
 - **Adaptive Rate Limiting** (dynamische Anpassung bei 429/503) **NEU v0.9.1**
 - **PDF-Validierung** mit automatischer Reparatur **NEU v0.9.1**
 
 ### Dokumentenarchiv mit Box-System (v0.8.0)
 - **7 Boxen**: GDV, Courtage, Sach, Leben, Kranken, Sonstige, Roh
-- **KI-Klassifikation**: Automatische Zuordnung via OpenRouter (GPT-4o)
+- **KI-Klassifikation**: Zweistufig mit Confidence-Scoring (GPT-4o-mini + GPT-4o Fallback) **NEU v0.9.4**
 - **Parallele Verarbeitung**: 4 Dokumente gleichzeitig (ThreadPoolExecutor)
 - **KI-Benennung**: Automatische Umbenennung nach Schema `Versicherer_Typ_Datum.pdf`
 - **Multi-Upload**: Mehrere Dateien gleichzeitig hochladen

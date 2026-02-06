@@ -52,7 +52,7 @@ Das **BiPRO-GDV Tool** ist eine Python-Desktop-Anwendung mit Server-Backend für
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                         BiPRO-GDV Tool v0.9.3                               │
+│                         BiPRO-GDV Tool v0.9.4                               │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │  Desktop-App (PySide6/Qt)                         Strato Webspace           │
 │  ├── UI Layer                                     ├── PHP REST API          │
@@ -250,27 +250,30 @@ Das **BiPRO-GDV Tool** ist eine Python-Desktop-Anwendung mit Server-Backend für
   - `src/api/client.py` → API-Client mit Retry-Logik
   - `BiPro-Webspace Spiegelung Live/api/documents.php` → Backend mit Box-Support
 
-### 2a. KI-basierte PDF-Klassifikation und Benennung (v0.8.0)
+### 2a. KI-basierte PDF-Klassifikation und Benennung (v0.8.0, Optimierung v0.9.4)
 - **Zweck**: PDFs automatisch durch KI analysieren, klassifizieren und umbenennen
+- **Zweistufige Klassifikation mit Confidence-Scoring (NEU v0.9.4)**:
+  - **Stufe 1**: GPT-4o-mini (2 Seiten, ~200 Token, schnell + guenstig)
+    - Gibt `confidence: "high"|"medium"|"low"` zurueck
+    - Bei "high"/"medium" -> Ergebnis verwenden, fertig
+  - **Stufe 2**: GPT-4o (5 Seiten, praeziser) - NUR bei "low" Confidence
+    - Gibt zusaetzlich `document_name` zurueck (z.B. "Schriftwechsel", "Vollmacht")
+    - Wird nur fuer ~1-5% der Dokumente aufgerufen
+- **Courtage-Erkennung (verschaerft v0.9.4)**:
+  - Courtage = NUR Provisionsabrechnungen fuer Makler mit Provisionsliste
+  - NICHT Courtage: Beitragsrechnungen, Kuendigungen, Mahnungen, Adressaenderungen
+  - Negativ-Beispiele im Prompt verhindern False Positives
 - **Benennungs-Schema**:
-  - **Courtage**: `Versicherer_Courtage_Sparte_Datum.pdf` (z.B. `Helvetia_Courtage_Leben_2025-01-15.pdf`)
-  - **Andere**: `Versicherer_Dokumenttyp_Datum.pdf` (z.B. `Allianz_Privathaftpflicht_2025-01-15.pdf`)
-- **Klassifikation**:
-  - **Kontext-Aware**: KI analysiert HAUPTZWECK, nicht nur Keywords
-  - **Direktes Box-Assignment**: target_box wird direkt von KI bestimmt
-  - **insurance_type**: Bei Courtage wird Sparte (Leben/Sach/Kranken) mitgegeben
-- **Ablauf**:
-  1. PDFs im Archiv auswählen oder automatische Verarbeitung
-  2. PDF → Textextraktion (PyMuPDF) oder Vision-OCR wenn wenig Text
-  3. Klassifikation via OpenRouter (GPT-4o) mit Structured Output
-  4. Direktes Box-Assignment + Umbenennung auf Server
-- **Robustheit (v0.8.0)**:
-  - `_safe_json_loads()`: Robustes JSON-Parsing (Codefences, Whitespace)
-  - `slug_de()`: Sichere Dateinamen-Generierung (Umlaute, Sonderzeichen)
-  - Retry-Logik: 4 Versuche mit Backoff bei 429/502/503/504
-  - `date_granularity`: Datum-Format je nach Genauigkeit (day/month/year)
+  - **Courtage**: `VU_Courtage_Datum.pdf` (z.B. `Allianz_Courtage_2026-02-04.pdf`)
+  - **Sach/Leben/Kranken**: `VU_Sparte.pdf` (z.B. `Degenia_Sach.pdf`)
+  - **Sonstige**: `VU_Dokumentname.pdf` (z.B. `VEMA_Schriftwechsel.pdf`) - NEU v0.9.4
+- **Text-Extraktion**:
+  - Triage: Erste 2 Seiten, max 3000 Zeichen (vorher 1 Seite/2500 - Begleitschreiben-Fix)
+  - Detail: Erste 5 Seiten, max 5000 Zeichen (Stufe 2)
+  - OCR-Fallback: Vision-OCR bei Bild-PDFs (150 DPI)
 - **Dateien**:
-  - `src/api/openrouter.py` → OpenRouterClient, DocumentClassification, get_credits()
+  - `src/api/openrouter.py` → `classify_sparte_with_date()`, `_classify_sparte_request()`, `_classify_sparte_detail()`
+  - `src/services/document_processor.py` → Verarbeitungslogik mit Confidence-Handling
   - `src/ui/archive_boxes_view.py` → AIRenameWorker, CreditsWorker
   - `BiPro-Webspace Spiegelung Live/api/ai.php` → GET /ai/key
 
@@ -388,7 +391,7 @@ Degenia liefert Dokumente als MTOM (Message Transmission Optimization Mechanism)
 
 ---
 
-## Aktueller Stand (05. Februar 2026)
+## Aktueller Stand (06. Februar 2026)
 
 ### Implementiert ✅
 - ✅ GDV-Dateien öffnen/parsen/speichern
@@ -438,6 +441,22 @@ Degenia liefert Dokumente als MTOM (Message Transmission Optimization Mechanism)
 - ✅ **Erweiterte Sach-Keywords: Privathaftpflicht, PHV, Tierhalterhaftpflicht (v0.9.3)**
 - ✅ **Courtage-Benennung: VU_Name + Datum (z.B. Allianz_Courtage_2026-02-04.pdf) (v0.9.3)**
 - ✅ **Verbesserte KI-Klassifikation: Pensionskasse→Leben, Sachversicherung→Sach (v0.9.3)**
+- ✅ **Stabilitaets-Upgrade: DataCache Lock, JWT Auto-Refresh, Retry, Token SingleFlight (v0.9.4)**
+- ✅ **Deadlock-Schutz: _try_auth_refresh() mit non-blocking acquire (v0.9.4)**
+- ✅ **Zentrale _request_with_retry() fuer alle API-Methoden, exp. Backoff (v0.9.4)**
+- ✅ **SharedTokenManager Double-Checked Locking (~90% weniger Lock-Contention) (v0.9.4)**
+- ✅ **File-Logging: RotatingFileHandler (5 MB, 3 Backups) -> logs/bipro_gdv.log (v0.9.4)**
+- ✅ **11 Smoke-Tests inkl. Deadlock-Verifikation (v0.9.4)**
+- ✅ **processing_history PHP-Endpoint gefixt (falsche Imports + JSON) (v0.9.4)**
+- ✅ **processing_history DB-Tabelle + document_id nullable fuer Batch-Ops (v0.9.4)**
+- ✅ **Zweistufige KI-Klassifikation mit Confidence-Scoring (v0.9.4)**
+- ✅ **Stufe 1: GPT-4o-mini (2 Seiten), Stufe 2: GPT-4o (5 Seiten) bei low Confidence (v0.9.4)**
+- ✅ **Courtage-Definition verschaerft: Negativ-Beispiele im Prompt (v0.9.4)**
+- ✅ **Text-Extraktion: 1→2 Seiten (Begleitschreiben-Problem geloest) (v0.9.4)**
+- ✅ **Dokumentnamen bei Sonstige aus GPT-4o Stufe 2 (z.B. Schriftwechsel) (v0.9.4)**
+- ✅ **Fonts aufgeraeumt: 40+ Dateien auf 3 reduziert (v0.9.4)**
+- ✅ **Verarbeitung: 290s → 2.6s (100x schneller durch processing_history Fix) (v0.9.4)**
+- ✅ **Git initialisiert + Tag v0.9.4-stable (v0.9.4)**
 
 ### In Arbeit / Bekannte Issues
 - ⚠️ UI-Texte nicht in i18n-Datei (Hardcoded Strings)
@@ -566,6 +585,21 @@ python test_roundtrip.py
 **Problem**: BiPRO-Dokumente haben .bin Endung statt .pdf  
 **Lösung**: MIME-Type zu Extension Mapping via `mime_to_extension()` Funktion. Bei fehlendem Dateinamen wird der MIME-Type (`application/pdf`) zur Endung konvertiert (v0.9.2).
 
+**Problem**: processing_history/create gibt HTTP 500  
+**Lösung**: `processing_history.php` hatte falsche Imports (`database.php` statt `lib/db.php`, `helpers.php` statt `lib/response.php`). Zusaetzlich: `require_auth()` → `JWT::requireAuth()`, `get_json_input()` → `get_json_body()`. Fix in v0.9.4.
+
+**Problem**: Verarbeitung dauert 290s fuer 75 Dokumente  
+**Lösung**: War verursacht durch processing_history 500er mit 3 Retries x 7s pro Call. Nach Fix: 2.6s fuer 4 Dokumente (v0.9.4).
+
+**Problem**: PDFs werden als Courtage klassifiziert obwohl es Kuendigungen/Mahnungen sind  
+**Lösung**: Prompt verschaerft: Courtage = NUR Provisionsabrechnungen. Negativ-Beispiele im Prompt. 6/6 Testdokumente korrekt (v0.9.4).
+
+**Problem**: PDFs mit Begleitschreiben auf Seite 1 werden falsch klassifiziert  
+**Lösung**: Text-Extraktion von 1 auf 2 Seiten erhoehen (3000 Zeichen statt 2500). Damit sieht die KI auch den eigentlichen Inhalt (v0.9.4).
+
+**Problem**: Deadlock bei JWT Token-Refresh  
+**Lösung**: `_try_auth_refresh()` nutzt `acquire(blocking=False)` statt `with lock:`. Verhindert Deadlock bei rekursivem Aufruf aus `verify_token()` → `get()` → 401 (v0.9.4).
+
 ---
 
 ## Wichtige Dateipfade
@@ -588,9 +622,10 @@ python test_roundtrip.py
 | `src/api/client.py` | API-Base-Client |
 | `src/api/documents.py` | Dokumenten-API (mit Box-Support) |
 | `src/api/vu_connections.py` | VU-Verbindungen API |
-| `src/api/openrouter.py` | **OpenRouter Client (KI-Benennung)** |
-| `src/services/document_processor.py` | **Automatische Dokumenten-Klassifikation** |
-| `src/services/data_cache.py` | **DataCacheService (Cache + Auto-Refresh-Kontrolle)** |
+| `src/api/openrouter.py` | **OpenRouter Client (Zweistufige KI-Klassifikation + Confidence)** |
+| `src/api/processing_history.py` | **Processing-History API Client (Audit-Trail)** |
+| `src/services/document_processor.py` | **Automatische Dokumenten-Klassifikation mit Confidence-Handling** |
+| `src/services/data_cache.py` | **DataCacheService (Cache + Auto-Refresh, Thread-safe v0.9.4)** |
 | `src/config/processing_rules.py` | **Konfigurierbare Verarbeitungsregeln + BiPRO-Codes** |
 | `src/bipro/transfer_service.py` | BiPRO 430 Client (STS + Transfer + SharedTokenManager) |
 | `src/bipro/rate_limiter.py` | **AdaptiveRateLimiter (NEU v0.9.1)** |
@@ -609,6 +644,8 @@ python test_roundtrip.py
 | `→ api/gdv.php` | GDV-Operationen |
 | `→ api/credentials.php` | VU-Verbindungen |
 | `→ api/shipments.php` | Lieferungen |
+| `→ api/processing_history.php` | **Audit-Trail (gefixt v0.9.4)** |
+| `→ api/ai.php` | OpenRouter Key-Endpoint |
 | `→ dokumente/` | Datei-Storage (nicht web-zugänglich) |
 
 ### Sonstige
@@ -616,7 +653,11 @@ python test_roundtrip.py
 | Pfad | Beschreibung |
 |------|--------------|
 | `testdata/sample.gdv` | Test-GDV-Datei |
-| `Projekt Ziel/` | Konzepte, BiPRO-Infos, Degenia SOAP-UI |
+| `src/tests/test_stability.py` | **11 Smoke-Tests (Stabilitaets-Upgrade v0.9.4)** |
+| `scripts/run_checks.py` | **Minimal-CI Script (Lint + Tests)** |
+| `requirements-dev.txt` | **Dev-Dependencies (pytest, ruff)** |
+| `logs/bipro_gdv.log` | **Persistentes Log-File (Rotation 5 MB, 3 Backups)** |
+| `STABILITY_UPGRADE/` | **Audit-Reports des Stabilitaets-Upgrades** |
 | `Kontext/` | Generierte Projektanalyse |
 | `docs/` | ARCHITECTURE.md, DEVELOPMENT.md, DOMAIN.md |
 

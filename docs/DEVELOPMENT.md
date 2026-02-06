@@ -1,6 +1,6 @@
-# Entwickler-Dokumentation - BiPRO-GDV Tool v0.8.0+
+# Entwickler-Dokumentation - BiPRO-GDV Tool v0.9.4
 
-**Stand:** 04. Februar 2026
+**Stand:** 06. Februar 2026
 
 ## Lokales Setup
 
@@ -358,17 +358,23 @@ pip install pyside6>=6.6.0
 
 ## Empfohlene Erweiterungen
 
-### Linter einrichten (TODO)
+### Linter + Tests (eingerichtet seit v0.9.4)
 
 ```bash
-pip install ruff
-ruff check src/
+# Dev-Dependencies installieren
+pip install -r requirements-dev.txt
+
+# Lint
+ruff check src/ --select E,F --ignore E501,F401
+
+# Stabilitaets-Tests (11 Tests)
+python -m pytest src/tests/test_stability.py -v
+
+# Alles zusammen (Lint + Tests)
+python scripts/run_checks.py
 ```
 
-### Unit-Tests einrichten (TODO)
-
-```bash
-pip install pytest
+### Aeltere Tests (manuell)
 pytest tests/
 ```
 

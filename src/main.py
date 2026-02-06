@@ -92,7 +92,7 @@ def main():
     
     # Anwendungsweite Einstellungen
     app.setApplicationName("BiPRO-GDV Tool")
-    app.setApplicationVersion("0.8.0")
+    app.setApplicationVersion("0.9.4")
     app.setOrganizationName("ACENCIA GmbH")
     
     # App-Icon setzen (falls vorhanden)
