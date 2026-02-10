@@ -55,10 +55,12 @@ Siehe auch: docs/BIPRO_ENDPOINTS.md für VU-spezifische Dokumentation
 from typing import List, Optional, Dict, Any
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+import atexit
 import logging
 import base64
 import os
 import re
+import stat
 import threading
 
 try:
@@ -68,11 +70,45 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-# Proxy komplett deaktivieren (auch Windows System-Proxy)
-for proxy_var in ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy', 'ALL_PROXY', 'all_proxy', 'NO_PROXY', 'no_proxy']:
-    os.environ.pop(proxy_var, None)
-os.environ['NO_PROXY'] = '*'
-os.environ['no_proxy'] = '*'
+# SV-008 Fix: atexit-basiertes Tracking fuer PEM-Temp-Files (Baustein B4)
+_temp_pem_files: list = []
+_temp_pem_lock = threading.Lock()
+
+def _register_temp_pem(path: str) -> None:
+    """Registriert eine PEM-Temp-Datei fuer automatisches Cleanup."""
+    with _temp_pem_lock:
+        _temp_pem_files.append(path)
+
+def _unregister_temp_pem(path: str) -> None:
+    """Entfernt eine Datei aus dem Tracking."""
+    with _temp_pem_lock:
+        if path in _temp_pem_files:
+            _temp_pem_files.remove(path)
+
+def _cleanup_temp_pem_files() -> None:
+    """Raeumt alle registrierten PEM-Temp-Dateien auf (atexit-Handler)."""
+    with _temp_pem_lock:
+        for path in _temp_pem_files[:]:
+            try:
+                if os.path.exists(path):
+                    os.unlink(path)
+                    logger.debug(f"SV-008: PEM-Temp-File aufgeraeumt: {path}")
+            except Exception:
+                pass
+        _temp_pem_files.clear()
+
+atexit.register(_cleanup_temp_pem_files)
+
+# SV-015 Fix: Proxy-Verhalten konfigurierbar statt hart deaktiviert
+# Default: Kein Proxy (Abwaertskompatibilitaet). Kann per Env-Variable ueberschrieben werden.
+_USE_SYSTEM_PROXY = os.environ.get('BIPRO_USE_SYSTEM_PROXY', '0').lower() in ('1', 'true', 'yes')
+if not _USE_SYSTEM_PROXY:
+    for proxy_var in ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy', 'ALL_PROXY', 'all_proxy', 'NO_PROXY', 'no_proxy']:
+        os.environ.pop(proxy_var, None)
+    os.environ['NO_PROXY'] = '*'
+    os.environ['no_proxy'] = '*'
+else:
+    logger.info("BiPRO: System-Proxy wird verwendet (BIPRO_USE_SYSTEM_PROXY=1)")
 
 
 @dataclass
@@ -346,6 +382,10 @@ class TransferServiceClient:
             mode='wb', suffix='.pem', delete=False, prefix='bipro_key_'
         )
         
+        # SV-008 Fix: PEM-Dateien fuer atexit-Cleanup registrieren
+        _register_temp_pem(self._temp_cert_file.name)
+        _register_temp_pem(self._temp_key_file.name)
+        
         # Zertifikat als PEM schreiben
         cert_pem = certificate.public_bytes(Encoding.PEM)
         self._temp_cert_file.write(cert_pem)
@@ -357,6 +397,12 @@ class TransferServiceClient:
         
         self._temp_cert_file.close()
         
+        # SV-008 Fix: Restriktive Permissions auf Cert-PEM setzen
+        try:
+            os.chmod(self._temp_cert_file.name, stat.S_IRUSR | stat.S_IWUSR)
+        except Exception:
+            pass  # Windows: chmod begrenzt wirksam
+        
         # Private Key als PEM schreiben (unverschlüsselt)
         key_pem = private_key.private_bytes(
             Encoding.PEM,
@@ -365,6 +411,12 @@ class TransferServiceClient:
         )
         self._temp_key_file.write(key_pem)
         self._temp_key_file.close()
+        
+        # SV-008 Fix: Restriktive Permissions auf Key-PEM setzen
+        try:
+            os.chmod(self._temp_key_file.name, stat.S_IRUSR | stat.S_IWUSR)
+        except Exception:
+            pass  # Windows: chmod begrenzt wirksam
         
         # Session mit Zertifikat konfigurieren
         self.session.cert = (self._temp_cert_file.name, self._temp_key_file.name)
@@ -614,7 +666,8 @@ class TransferServiceClient:
             )
             
             logger.debug(f"STS Response Status: {response.status_code}")
-            logger.debug(f"STS Response: {response.text[:500]}")
+            # SV-014 Fix: Response-Text kuerzen und PII vermeiden
+            logger.debug(f"STS Response: {response.text[:200]}...")
             
             # Token extrahieren
             match = re.search(r'<wsc:Identifier>([^<]+)</wsc:Identifier>', response.text)
@@ -1284,7 +1337,8 @@ class TransferServiceClient:
                 error_match = re.search(r'<(?:nac:|n:)?Text>([^<]+)</(?:nac:|n:)?Text>', response.text)
                 error_text = error_match.group(1) if error_match else "Unbekannter Fehler"
                 logger.warning(f"acknowledgeShipment fehlgeschlagen für {shipment_id}: {error_text}")
-                logger.debug(f"acknowledgeShipment Response: {response.text[:1000]}")
+                # SV-014 Fix: Response kuerzen
+                logger.debug(f"acknowledgeShipment Response: {response.text[:200]}...")
             
             return success
             

@@ -636,7 +636,7 @@ Die Datei `BiPro-Webspace Spiegelung Live/api/config.php` enthält:
   - Hinzufuegen-Dialog mit Typ-Auswahl
   - Bearbeiten, Deaktivieren, Reaktivieren
   - Typ-Filter (Alle/PDF/ZIP)
-- **Seed-Daten**: 4 bekannte PDF-Passwoerter (TQMakler37, TQMakler2021, 555469899, dfvprovision)
+- **Seed-Daten**: 4 bekannte PDF-Passwoerter (in DB gespeichert, nicht im Code)
 - **Dateien**:
   - `BiPro-Webspace Spiegelung Live/api/passwords.php` → PHP API (Public + Admin)
   - `BiPro-Webspace Spiegelung Live/api/index.php` → Route-Registrierung
@@ -1076,7 +1076,7 @@ Degenia liefert Dokumente als MTOM (Message Transmission Optimization Mechanism)
 - ✅ **Outlook-Direct-Drop: E-Mails direkt aus Outlook ziehen via COM-Automation/pywin32 (v1.0.4)**
 - ✅ **COM SaveAs: Outlook-Selection als .msg speichern, Einzel- und Mehrfachauswahl (v1.0.4)**
 - ✅ **PDF-Unlock: Passwortgeschuetzte PDFs automatisch entsperren beim Upload (v1.0.4)**
-- ✅ **Bekannte Passwoerter (TQMakler37/TQMakler2021) werden vor Upload durchprobiert (v1.0.4)**
+- ✅ **Bekannte Passwoerter (aus DB geladen) werden vor Upload durchprobiert (v1.0.4)**
 - ✅ **3 Integrationspunkte: MultiUploadWorker, DropUploadWorker, msg_handler (v1.0.4)**
 - ✅ **ZIP-Entpackung: ZIP-Dateien automatisch entpacken beim Upload (v1.0.5)**
 - ✅ **Passwortgeschuetzte ZIPs: Standard-PKZIP + AES-256 via pyzipper (v1.0.5)**

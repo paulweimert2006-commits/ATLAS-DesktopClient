@@ -186,7 +186,7 @@ class DocumentProcessor:
             credits_info = openrouter.get_credits()
             if credits_info:
                 credits_before = credits_info.get('balance', 0.0)
-                logger.info(f"OpenRouter-Guthaben vor Verarbeitung: ${credits_before:.4f} USD")
+                logger.info(f"OpenRouter-Guthaben vor Verarbeitung: ${credits_before:.6f} USD")
         except Exception as e:
             logger.warning(f"Konnte Guthaben nicht abrufen: {e}")
         
@@ -259,7 +259,7 @@ class DocumentProcessor:
         logger.info(f"Verarbeitung abgeschlossen: {successful_count}/{total} erfolgreich in {duration:.1f}s")
         
         if credits_before is not None:
-            logger.info(f"Guthaben vor Verarbeitung: ${credits_before:.4f} USD")
+            logger.info(f"Guthaben vor Verarbeitung: ${credits_before:.6f} USD")
             logger.info("Kosten-Berechnung erfolgt verzoegert (OpenRouter-Guthaben braucht 1-3 Min)")
         
         return BatchProcessingResult(
@@ -348,11 +348,11 @@ class DocumentProcessor:
             cost_per_doc = total_cost / successful_count if successful_count > 0 else 0.0
             
             logger.info(f"=== VERZOEGERTE KOSTEN-ZUSAMMENFASSUNG ===")
-            logger.info(f"Guthaben vorher:  ${credits_before:.4f} USD")
-            logger.info(f"Guthaben nachher: ${credits_after:.4f} USD")
-            logger.info(f"Gesamtkosten:     ${total_cost:.4f} USD")
+            logger.info(f"Guthaben vorher:  ${credits_before:.6f} USD")
+            logger.info(f"Guthaben nachher: ${credits_after:.6f} USD")
+            logger.info(f"Gesamtkosten:     ${total_cost:.6f} USD")
             if cost_per_doc:
-                logger.info(f"Kosten/Dokument:  ${cost_per_doc:.6f} USD ({successful_count} Dokumente)")
+                logger.info(f"Kosten/Dokument:  ${cost_per_doc:.8f} USD ({successful_count} Dokumente)")
             logger.info(f"==========================================")
             
             # Neuen History-Eintrag fuer die Kosten erstellen

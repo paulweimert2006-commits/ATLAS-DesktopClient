@@ -255,12 +255,15 @@ function getGdvRecords(string $docId, array $user): void {
     $limit = min((int)($_GET['limit'] ?? 1000), 5000);
     $offset = max((int)($_GET['offset'] ?? 0), 0);
     
+    // SV-012 Fix: LIMIT/OFFSET als Prepared-Statement-Parameter
+    $params[] = $limit;
+    $params[] = $offset;
     $records = Database::query("
         SELECT id, line_number, satzart, teildatensatz, raw_content, parsed_fields, is_modified
         FROM gdv_records
         WHERE $where
         ORDER BY line_number
-        LIMIT $limit OFFSET $offset
+        LIMIT ? OFFSET ?
     ", $params);
     
     $total = Database::queryOne("SELECT COUNT(*) as cnt FROM gdv_records WHERE $where", $params);

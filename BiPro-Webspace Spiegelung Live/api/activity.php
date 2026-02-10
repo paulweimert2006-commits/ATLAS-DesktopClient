@@ -117,6 +117,9 @@ function handleActivityList(): void {
     $total = (int)($countRow['total'] ?? 0);
     
     // Daten abrufen
+    // SV-012 Fix: LIMIT/OFFSET als Prepared-Statement-Parameter
+    $params[] = $perPage;
+    $params[] = $offset;
     $items = Database::query(
         "SELECT a.id, a.user_id, a.username, a.action_category, a.action, 
                 a.entity_type, a.entity_id, a.description, a.details,
@@ -124,7 +127,7 @@ function handleActivityList(): void {
          FROM activity_log a
          {$whereClause}
          ORDER BY a.created_at DESC
-         LIMIT {$perPage} OFFSET {$offset}",
+         LIMIT ? OFFSET ?",
         $params
     );
     

@@ -1,38 +1,44 @@
 # ACENCIA ATLAS - Abhaengigkeiten
 # Python 3.10+ erforderlich
+#
+# SV-011 Fix: Obere Versionsgrenzen hinzugefuegt.
+# Fuer deterministische Builds: pip install -r requirements-lock.txt
 
 # GUI Framework
-PySide6>=6.6.0
+PySide6>=6.6.0,<7.0.0
 
 # HTTP Client fuer API-Kommunikation
-requests>=2.31.0
+requests>=2.31.0,<3.0.0
 
 # Kryptographie fuer PFX-Zertifikate (easy Login)
-cryptography>=41.0.0
+cryptography>=41.0.0,<44.0.0
 
 # PDF-Verarbeitung (KI-Benennung)
-PyMuPDF>=1.23.0
+PyMuPDF>=1.23.0,<2.0.0
 
 # JKS-Zertifikate (Java KeyStore)
-pyjks>=20.0.0
+pyjks>=20.0.0,<22.0.0
 
 # SOAP Client fuer BiPRO (optional, nicht mehr aktiv genutzt)
 # zeep>=4.2.0
 
 # Excel-Dateien lesen (Vorschau im Archiv)
-openpyxl>=3.1.0
+openpyxl>=3.1.0,<4.0.0
 
 # Outlook .msg E-Mails parsen (Anhaenge extrahieren)
-extract-msg>=0.50.0
+extract-msg>=0.50.0,<1.0.0
 
 # Windows COM-Automation (Outlook Drag & Drop)
-pywin32>=306; sys_platform == "win32"
+pywin32>=306,<400; sys_platform == "win32"
 
 # ZIP mit AES-256 Verschluesselung entpacken
-pyzipper>=0.3.6
+pyzipper>=0.3.6,<1.0.0
+
+# Sichere lokale Speicherung (JWT-Token, Zertifikate) — SV-005
+keyring>=24.0.0,<26.0.0
 
 # Fuer Packaging
-pyinstaller>=6.0.0
+pyinstaller>=6.0.0,<7.0.0
 
 
 

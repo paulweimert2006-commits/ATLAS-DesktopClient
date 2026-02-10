@@ -404,8 +404,23 @@ function uploadDocument(array $user): void {
         json_error('Datei zu groß (max. ' . (MAX_UPLOAD_SIZE / 1024 / 1024) . ' MB)', 400);
     }
     
-    // MIME-Type prüfen (optional)
+    // SV-021 Fix: MIME-Type-Whitelist fuer alle Uploads
     $mimeType = $file['type'] ?: 'application/octet-stream';
+    $allowedMimeTypes = [
+        'application/pdf',
+        'image/jpeg', 'image/png', 'image/gif',
+        'text/plain', 'text/csv', 'text/xml',
+        'application/xml',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'application/vnd.ms-excel',
+        'application/zip', 'application/x-zip-compressed',
+        'application/octet-stream',  // GDV-Dateien, .dat, .gdv
+        'application/vnd.ms-outlook', // .msg Dateien
+        'message/rfc822',
+    ];
+    if (!in_array($mimeType, $allowedMimeTypes)) {
+        json_error('Dateityp nicht erlaubt: ' . $mimeType, 415);
+    }
     
     // Dateiname bereinigen
     $originalFilename = basename($file['name']);

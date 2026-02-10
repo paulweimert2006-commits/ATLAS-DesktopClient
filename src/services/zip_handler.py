@@ -19,6 +19,10 @@ logger = logging.getLogger(__name__)
 
 # Maximale Rekursionstiefe fuer verschachtelte ZIPs
 MAX_RECURSION_DEPTH = 3
+# SV-007 Fix: Kumulatives Groessenlimit fuer entpackte Daten (500 MB)
+MAX_TOTAL_UNCOMPRESSED_SIZE = 500 * 1024 * 1024
+# Maximale Groesse einer einzelnen entpackten Datei (100 MB)
+MAX_SINGLE_FILE_SIZE = 100 * 1024 * 1024
 
 
 @dataclass
@@ -42,7 +46,8 @@ def extract_zip_contents(
     zip_path: str,
     temp_dir: Optional[str] = None,
     api_client=None,
-    _depth: int = 0
+    _depth: int = 0,
+    _total_size: int = 0
 ) -> ZipExtractResult:
     """
     Entpackt eine ZIP-Datei und gibt die Pfade der extrahierten Dateien zurueck.
@@ -119,6 +124,23 @@ def extract_zip_contents(
                 else:
                     data = zip_obj.read(member_name)
                 
+                # SV-007 Fix: Einzeldatei-Groesse pruefen
+                if len(data) > MAX_SINGLE_FILE_SIZE:
+                    logger.warning(
+                        f"ZIP-Eintrag '{filename}' ueberschreitet Einzeldatei-Limit "
+                        f"({len(data)} > {MAX_SINGLE_FILE_SIZE} Bytes), uebersprungen"
+                    )
+                    continue
+                
+                # SV-007 Fix: Kumulatives Groessenlimit pruefen
+                _total_size += len(data)
+                if _total_size > MAX_TOTAL_UNCOMPRESSED_SIZE:
+                    raise ValueError(
+                        f"Kumulatives Groessenlimit ueberschritten "
+                        f"({_total_size} > {MAX_TOTAL_UNCOMPRESSED_SIZE} Bytes). "
+                        f"Moeglicherweise Zip-Bomb."
+                    )
+                
                 with open(target_path, 'wb') as f:
                     f.write(data)
                 
@@ -128,8 +150,9 @@ def extract_zip_contents(
                 if is_zip_file(target_path) and _depth < MAX_RECURSION_DEPTH:
                     logger.info(f"Verschachtelte ZIP gefunden: {filename}")
                     sub_dir = tempfile.mkdtemp(prefix="atlas_zip_sub_", dir=temp_dir)
+                    # SV-007: Kumulatives Size-Tracking an rekursiven Aufruf weitergeben
                     sub_result = extract_zip_contents(
-                        target_path, sub_dir, api_client, _depth + 1
+                        target_path, sub_dir, api_client, _depth + 1, _total_size
                     )
                     if sub_result.has_files:
                         result.extracted_paths.extend(sub_result.extracted_paths)

@@ -2984,8 +2984,8 @@ class ArchiveBoxesView(QWidget):
             self.credits_label.setText(f"KI: ${balance:.2f}")
             self.credits_label.setToolTip(
                 f"Guthaben: ${total_credits:.2f}\n"
-                f"Verbraucht: ${total_usage:.2f}\n"
-                f"Verbleibend: ${balance:.2f}"
+                f"Verbraucht: ${total_usage:.4f}\n"
+                f"Verbleibend: ${balance:.4f}"
             )
         else:
             self.credits_label.setText("")
@@ -5065,7 +5065,7 @@ class ArchiveBoxesView(QWidget):
         """
         from i18n import de as texts
         
-        delay_seconds = 45  # 45 Sekunden Verzoegerung
+        delay_seconds = 90  # 90 Sekunden Verzoegerung (OpenRouter braucht laenger)
         
         logger.info(f"Starte verzoegerten Kosten-Check in {delay_seconds}s")
         
@@ -5101,8 +5101,8 @@ class ArchiveBoxesView(QWidget):
             docs = cost_result.get('successful_documents', 0)
             
             logger.info(
-                f"Verzoegerte Kosten: ${total_cost:.4f} USD "
-                f"(${cost_per_doc:.6f}/Dok, {docs} Dokumente)"
+                f"Verzoegerte Kosten: ${total_cost:.6f} USD "
+                f"(${cost_per_doc:.8f}/Dok, {docs} Dokumente)"
             )
         else:
             logger.warning("Verzoegerter Kosten-Check: Kein Ergebnis")

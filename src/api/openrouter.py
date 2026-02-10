@@ -595,83 +595,60 @@ Eingabetext:
         self._session = requests.Session()
     
     def _ensure_api_key(self) -> str:
-        """Holt den API-Key vom Server falls noch nicht vorhanden."""
-        if self._api_key:
-            return self._api_key
-        
-        logger.info("Hole OpenRouter API-Key vom Server...")
-        
-        try:
-            response = self.api_client.get("/ai/key")
-            if response.get('success') and response.get('data', {}).get('api_key'):
-                self._api_key = response['data']['api_key']
-                logger.info("API-Key erhalten")
-                return self._api_key
-            else:
-                raise APIError("API-Key nicht in Antwort enthalten")
-        except APIError as e:
-            logger.error(f"Fehler beim Abrufen des API-Keys: {e}")
-            raise
+        """
+        SV-004: API-Key wird nicht mehr vom Server geholt.
+        Klassifikation laeuft jetzt ueber Server-Proxy POST /ai/classify.
+        Diese Methode existiert nur noch fuer Abwaertskompatibilitaet.
+        """
+        # SV-004 Fix: Key wird nicht mehr benoetigt, Proxy uebernimmt
+        return "proxy-mode"
     
     def get_credits(self) -> Optional[dict]:
         """
-        Ruft das aktuelle OpenRouter-Guthaben ab.
+        SV-004 Fix: Ruft Guthaben ueber Server-Proxy ab.
         
         Returns:
             dict mit 'balance', 'total_credits', 'total_usage' und 'currency' oder None bei Fehler
-            
-        Beispiel-Antwort von OpenRouter /api/v1/credits:
-        {
-            "data": {
-                "total_credits": 100.5,
-                "total_usage": 25.75
-            }
-        }
         """
         try:
-            api_key = self._ensure_api_key()
+            # SV-004: Ueber Server-Proxy statt direkt an OpenRouter
+            response = self.api_client.get("/ai/credits")
             
-            headers = {
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json"
-            }
-            
-            response = self._session.get(
-                f"{OPENROUTER_BASE_URL}/credits",
-                headers=headers,
-                timeout=10
-            )
-            
-            if response.status_code == 200:
-                data = response.json()
+            if response.get('success') and response.get('data'):
+                data = response['data']
+                # OpenRouter gibt {data: {total_credits, total_usage}} zurueck
                 if 'data' in data:
                     total_credits = data['data'].get('total_credits', 0)
                     total_usage = data['data'].get('total_usage', 0)
-                    
-                    # Berechne verbleibendes Guthaben
-                    balance = total_credits - total_usage
-                    
-                    return {
-                        'total_credits': total_credits,
-                        'total_usage': total_usage,
-                        'balance': balance,
-                        'currency': 'USD'
-                    }
+                else:
+                    total_credits = data.get('total_credits', 0)
+                    total_usage = data.get('total_usage', 0)
+                
+                balance = total_credits - total_usage
+                
+                return {
+                    'total_credits': total_credits,
+                    'total_usage': total_usage,
+                    'balance': balance,
+                    'currency': 'USD'
+                }
             
-            logger.warning(f"Credits-Abfrage fehlgeschlagen: HTTP {response.status_code}")
+            logger.warning(f"Credits-Abfrage ueber Proxy fehlgeschlagen")
             return None
             
         except Exception as e:
-            logger.warning(f"Fehler beim Abrufen der Credits: {e}")
+            logger.warning(f"Fehler beim Abrufen der Credits (Proxy): {e}")
             return None
     
     def _openrouter_request(self, messages: List[dict], model: str = DEFAULT_VISION_MODEL,
                             response_format: dict = None, max_tokens: int = 4096) -> dict:
         """
-        Sendet eine Anfrage an OpenRouter mit Retry-Logik und Backpressure-Kontrolle.
+        SV-004 Fix: Sendet Anfragen ueber den Server-Proxy statt direkt an OpenRouter.
+        
+        Der Server-Proxy (POST /ai/classify) injiziert den API-Key serverseitig
+        und reduziert PII aus dem Text (SV-013).
         
         BACKPRESSURE: Verwendet Semaphore um parallele KI-Aufrufe zu begrenzen.
-        Dies verhindert Server-Ueberlastung bei hohem Dokumenten-Durchsatz.
         
         Args:
             messages: Chat-Nachrichten
@@ -680,29 +657,11 @@ Eingabetext:
             max_tokens: Maximale Ausgabelaenge
             
         Returns:
-            API-Antwort als dict
+            API-Antwort als dict (OpenRouter-Format)
             
         Raises:
-            APIError: Nach MAX_RETRIES fehlgeschlagenen Versuchen
+            APIError: Bei Proxy- oder OpenRouter-Fehlern
         """
-        api_key = self._ensure_api_key()
-        
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": "https://acencia.info",
-            "X-Title": "ACENCIA ATLAS"
-        }
-        
-        payload = {
-            "model": model,
-            "messages": messages,
-            "max_tokens": max_tokens
-        }
-        
-        if response_format:
-            payload["response_format"] = response_format
-        
         # BACKPRESSURE: Semaphore verwenden
         semaphore = get_ai_semaphore()
         _increment_queue_depth()
@@ -711,7 +670,16 @@ Eingabetext:
         if queue_depth > 1:
             logger.debug(f"KI-Queue-Tiefe: {queue_depth} wartende Aufrufe")
         
-        logger.debug(f"OpenRouter Request: model={model}, messages={len(messages)}, queue_depth={queue_depth}")
+        logger.debug(f"OpenRouter Proxy Request: model={model}, messages={len(messages)}, queue_depth={queue_depth}")
+        
+        # Proxy-Payload: Server fuegt API-Key hinzu
+        proxy_payload = {
+            "messages": messages,
+            "model": model,
+            "max_tokens": max_tokens
+        }
+        if response_format:
+            proxy_payload["response_format"] = response_format
         
         last_error = None
         
@@ -720,49 +688,45 @@ Eingabetext:
         try:
             for attempt in range(MAX_RETRIES):
                 try:
-                    response = self._session.post(
-                        f"{OPENROUTER_BASE_URL}/chat/completions",
-                        headers=headers,
-                        json=payload,
-                        timeout=120  # Vision-Calls koennen lange dauern
+                    # SV-004: Ueber unseren Server-Proxy statt direkt an OpenRouter
+                    response = self.api_client.post(
+                        "/ai/classify",
+                        json_data=proxy_payload
                     )
                     
+                    # Server-Proxy gibt OpenRouter-Antwort in 'data' zurueck
+                    if response.get('success') and response.get('data'):
+                        return response['data']
+                    
+                    # Fehler vom Proxy
+                    error_msg = response.get('error', 'Unbekannter Proxy-Fehler')
+                    logger.error(f"AI-Proxy Fehler: {error_msg}")
+                    raise APIError(f"AI-Proxy Fehler: {error_msg}")
+                    
+                except APIError as e:
                     # Retryable Status Codes
-                    if response.status_code in RETRY_STATUS_CODES:
+                    if hasattr(e, 'status_code') and e.status_code in RETRY_STATUS_CODES:
                         wait_time = RETRY_BACKOFF_FACTOR * (attempt + 1)
                         logger.warning(
-                            f"OpenRouter HTTP {response.status_code}, "
+                            f"AI-Proxy HTTP {e.status_code}, "
                             f"Retry {attempt + 1}/{MAX_RETRIES} in {wait_time:.1f}s"
                         )
                         time.sleep(wait_time)
                         continue
-                    
-                    # Nicht-retryable Fehler
-                    if response.status_code != 200:
-                        # BUG-0010 Fix: Non-JSON-Fehlerantworten sauber abfangen
-                        try:
-                            error_data = response.json() if response.text else {}
-                        except (ValueError, Exception):
-                            error_data = {}
-                        error_msg = error_data.get('error', {}).get('message', f"HTTP {response.status_code}")
-                        logger.error(f"OpenRouter Fehler: {error_msg}")
-                        raise APIError(f"OpenRouter Fehler: {error_msg}", status_code=response.status_code)
-                    
-                    # Erfolg
-                    return response.json()
+                    raise
                     
                 except requests.RequestException as e:
                     last_error = e
                     wait_time = RETRY_BACKOFF_FACTOR * (attempt + 1)
                     logger.warning(
-                        f"OpenRouter Netzwerkfehler: {e}, "
+                        f"AI-Proxy Netzwerkfehler: {e}, "
                         f"Retry {attempt + 1}/{MAX_RETRIES} in {wait_time:.1f}s"
                     )
                     time.sleep(wait_time)
             
             # Alle Retries fehlgeschlagen
-            logger.error(f"OpenRouter nach {MAX_RETRIES} Versuchen nicht erreichbar")
-            raise APIError(f"OpenRouter dauerhaft nicht erreichbar: {last_error}")
+            logger.error(f"AI-Proxy nach {MAX_RETRIES} Versuchen nicht erreichbar")
+            raise APIError(f"AI-Proxy dauerhaft nicht erreichbar: {last_error}")
         finally:
             # BACKPRESSURE: Semaphore freigeben und Queue-Tiefe verringern
             semaphore.release()

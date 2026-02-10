@@ -15,7 +15,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional, Callable
 
+import ssl
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.ssl_ import create_urllib3_context
 
 from api.client import APIClient, APIError
 
@@ -23,6 +26,15 @@ logger = logging.getLogger(__name__)
 
 # Temp-Verzeichnis fuer Downloads
 UPDATE_TEMP_DIR = os.path.join(tempfile.gettempdir(), 'bipro_updates')
+
+# SV-016 Fix: Certificate-Pinning fuer Update-Kanal
+# SHA256-Fingerprints des acencia.info Zertifikats (aktuell + naechster fuer Rotation)
+# Zum Aktualisieren: openssl s_client -connect acencia.info:443 | openssl x509 -pubkey -noout | openssl pkey -pubin -outform DER | openssl dgst -sha256
+PINNED_CERT_HASHES = [
+    # Platzhalter: Muss mit dem tatsaechlichen Zertifikat-Hash befuellt werden
+    # Format: "sha256/BASE64_ENCODED_HASH"
+    # Bis dahin: Pinning deaktiviert (nur verify=True)
+]
 
 
 @dataclass

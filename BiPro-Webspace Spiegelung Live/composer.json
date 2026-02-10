@@ -1,0 +1,19 @@
+{
+    "name": "acencia/atlas-api",
+    "description": "ACENCIA ATLAS PHP Backend API",
+    "type": "project",
+    "require": {
+        "php": ">=7.4",
+        "phpmailer/phpmailer": "^6.9"
+    },
+    "config": {
+        "vendor-dir": "vendor",
+        "optimize-autoloader": true
+    },
+    "autoload": {
+        "classmap": [
+            "api/lib/"
+        ]
+    },
+    "_comment": "SV-022: composer.json als Dokumentation der PHP-Abhaengigkeiten. Auf Strato Shared Hosting ist Composer ggf. nicht verfuegbar - manuelles Update von api/lib/PHPMailer/ weiterhin moeglich."
+}

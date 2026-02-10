@@ -106,8 +106,9 @@ def extract_msg_attachments(msg_path: str, temp_dir: Optional[str] = None) -> Ms
                             logger.info(f"MSG-PDF-Anhang entsperrt: {filename}")
                     except ValueError as e:
                         logger.warning(f"MSG-PDF-Anhang geschuetzt: {e}")
-                    except Exception:
-                        pass  # Kein PDF oder anderer Fehler - weiter
+                    except Exception as e:
+                        # SV-025 Fix: Fehler loggen statt verschlucken
+                        logger.warning(f"PDF-Unlock fuer MSG-Anhang '{filename}' fehlgeschlagen: {e}")
 
                 result.attachment_paths.append(target_path)
                 logger.info(f"MSG-Anhang extrahiert: {filename} ({len(att_data)} Bytes)")

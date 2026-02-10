@@ -293,19 +293,49 @@ class AuthAPI:
         return None
 
     def _save_token(self, token: str, user_data: Dict) -> None:
-        """Speichert Token lokal."""
+        """
+        SV-005 Fix: Speichert Token lokal mit OS-Schutz.
+        Nutzt keyring (Windows Credential Manager/DPAPI) wenn verfuegbar,
+        sonst Datei mit restriktiven Permissions.
+        """
+        data_json = json.dumps({'token': token, 'user': user_data})
+        
+        # Versuch 1: keyring (bevorzugt, DPAPI-geschuetzt)
         try:
-            data = {
-                'token': token,
-                'user': user_data
-            }
-            self.TOKEN_FILE.write_text(json.dumps(data))
-            logger.debug("Token gespeichert")
+            import keyring
+            keyring.set_password("acencia_atlas", "jwt_token", data_json)
+            logger.debug("Token in keyring gespeichert (SV-005)")
+            # Alte Datei aufraeumen falls vorhanden
+            if self.TOKEN_FILE.exists():
+                self.TOKEN_FILE.unlink()
+            return
+        except Exception:
+            pass
+        
+        # Versuch 2: Datei mit restriktiven Permissions (Fallback)
+        try:
+            self.TOKEN_FILE.write_text(data_json)
+            # SV-005: Restriktive Permissions setzen (nur aktueller User)
+            import stat
+            self.TOKEN_FILE.chmod(stat.S_IRUSR | stat.S_IWUSR)
+            logger.debug("Token in Datei gespeichert (SV-005 Fallback, chmod 0600)")
         except Exception as e:
             logger.warning(f"Token speichern fehlgeschlagen: {e}")
     
     def _load_saved_token(self) -> Optional[Dict]:
-        """Lädt gespeicherten Token."""
+        """
+        SV-005 Fix: Laedt Token aus keyring oder Datei.
+        """
+        # Versuch 1: keyring
+        try:
+            import keyring
+            data = keyring.get_password("acencia_atlas", "jwt_token")
+            if data:
+                return json.loads(data)
+        except Exception:
+            pass
+        
+        # Versuch 2: Datei (Fallback / Migration)
         try:
             if self.TOKEN_FILE.exists():
                 return json.loads(self.TOKEN_FILE.read_text())
@@ -314,10 +344,21 @@ class AuthAPI:
         return None
     
     def _delete_saved_token(self) -> None:
-        """Löscht gespeicherten Token."""
+        """
+        SV-005 Fix: Loescht Token aus keyring und Datei.
+        """
+        # keyring aufraeumen
+        try:
+            import keyring
+            keyring.delete_password("acencia_atlas", "jwt_token")
+            logger.debug("Token aus keyring geloescht (SV-005)")
+        except Exception:
+            pass
+        
+        # Datei aufraeumen
         try:
             if self.TOKEN_FILE.exists():
                 self.TOKEN_FILE.unlink()
-                logger.debug("Gespeicherter Token gelöscht")
+                logger.debug("Token-Datei geloescht")
         except Exception as e:
-            logger.warning(f"Token löschen fehlgeschlagen: {e}")
+            logger.warning(f"Token loeschen fehlgeschlagen: {e}")

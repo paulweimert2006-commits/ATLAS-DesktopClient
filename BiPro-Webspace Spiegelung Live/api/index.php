@@ -10,6 +10,13 @@ require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/lib/db.php';
 require_once __DIR__ . '/lib/response.php';
 
+// SV-002 Fix: Security Headers fuer alle Responses
+send_security_headers();
+
+// SV-019 Fix: Probabilistischer Log-Cleanup (1% der Requests)
+require_once __DIR__ . '/lib/log_cleanup.php';
+LogCleanup::maybePurge();
+
 // CORS Pre-flight Handling
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(200);
@@ -37,9 +44,9 @@ try {
         case '':
         case 'status':
             // API Status / Health Check
+            // SV-023 Fix: API-Version nicht mehr im Health-Check exponieren
             json_response([
                 'status' => 'ok',
-                'version' => API_VERSION,
                 'timestamp' => date('c')
             ]);
             break;

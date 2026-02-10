@@ -63,6 +63,24 @@ function handleLogin(): void {
     $username = trim($data['username']);
     $password = $data['password'];
     
+    // SV-003 Fix: Rate-Limiting vor Login-Logik (Baustein B2)
+    require_once __DIR__ . '/lib/rate_limiter.php';
+    $clientIp = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
+    if (!RateLimiter::check($clientIp)) {
+        $remaining = RateLimiter::getLockoutRemaining($clientIp);
+        header('Retry-After: ' . max(1, $remaining));
+        ActivityLogger::log([
+            'user_id' => null,
+            'username' => $username,
+            'action_category' => 'auth',
+            'action' => 'login_rate_limited',
+            'description' => "Login blockiert: Rate-Limit fuer IP {$clientIp}",
+            'details' => ['ip' => $clientIp, 'remaining_seconds' => $remaining],
+            'status' => 'error'
+        ]);
+        json_error('Zu viele fehlgeschlagene Anmeldeversuche. Bitte warten.', 429);
+    }
+    
     // User aus DB holen (erweitert um account_type, is_locked)
     $user = Database::queryOne(
         'SELECT id, username, password_hash, email, account_type, is_active, is_locked FROM users WHERE username = ?',
@@ -72,6 +90,9 @@ function handleLogin(): void {
     if (!$user) {
         // Timing-Attack verhindern
         Crypto::verifyPassword($password, '$argon2id$v=19$m=65536,t=4,p=3$dummy');
+        
+        // SV-003: Fehlgeschlagenen Versuch fuer Rate-Limiting zaehlen
+        RateLimiter::recordFailure($clientIp, $username);
         
         // Fehlgeschlagenen Login loggen (ohne user_id)
         ActivityLogger::log([
@@ -98,9 +119,14 @@ function handleLogin(): void {
     }
     
     if (!Crypto::verifyPassword($password, $user['password_hash'])) {
+        // SV-003: Fehlgeschlagenen Versuch fuer Rate-Limiting zaehlen
+        RateLimiter::recordFailure($clientIp, $username);
         ActivityLogger::logAuth($user['id'], $username, 'login_failed', "Login fehlgeschlagen: Falsches Passwort", 'error', ['reason' => 'wrong_password']);
         json_error('Ungültige Anmeldedaten', 401);
     }
+    
+    // SV-003: Rate-Limit-Counter nach erfolgreichem Login zuruecksetzen
+    RateLimiter::reset($clientIp);
     
     // Token erstellen
     $token = JWT::create([

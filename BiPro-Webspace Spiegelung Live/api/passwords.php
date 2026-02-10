@@ -22,6 +22,7 @@ require_once __DIR__ . '/lib/jwt.php';
 require_once __DIR__ . '/lib/response.php';
 require_once __DIR__ . '/lib/permissions.php';
 require_once __DIR__ . '/lib/activity_logger.php';
+require_once __DIR__ . '/lib/crypto.php';
 
 /**
  * Oeffentlicher Endpunkt: GET /passwords?type=pdf|zip
@@ -45,8 +46,16 @@ function handlePasswordsPublicRequest(string $method): void {
         [$type]
     );
     
-    // Nur die Werte zurueckgeben (kein Admin-Detail)
-    $values = array_map(function($row) { return $row['password_value']; }, $passwords);
+    // SV-006 Fix: Passwoerter entschluesseln (verschluesselt gespeichert)
+    $values = [];
+    foreach ($passwords as $row) {
+        try {
+            $values[] = Crypto::decrypt($row['password_value']);
+        } catch (Exception $e) {
+            // Fallback: Klartext-Wert (fuer noch nicht migrierte Eintraege)
+            $values[] = $row['password_value'];
+        }
+    }
     
     json_success(['passwords' => $values]);
 }
@@ -108,6 +117,16 @@ function handleListPasswords(): void {
         );
     }
     
+    // SV-006 Fix: Passwoerter fuer Admin-Anzeige entschluesseln
+    foreach ($passwords as &$pw) {
+        try {
+            $pw['password_value'] = Crypto::decrypt($pw['password_value']);
+        } catch (Exception $e) {
+            // Klartext-Wert (noch nicht migriert) - unveraendert lassen
+        }
+    }
+    unset($pw);
+    
     json_success(['passwords' => $passwords]);
 }
 
@@ -136,11 +155,24 @@ function handleCreatePassword(array $adminPayload): void {
         json_error('Passwort darf maximal 255 Zeichen lang sein', 400);
     }
     
-    // Duplikat-Pruefung
-    $existing = Database::queryOne(
-        'SELECT id, is_active FROM known_passwords WHERE password_type = ? AND password_value = ?',
-        [$type, $value]
+    // SV-006 Fix: Duplikat-Pruefung muss alle vorhandenen Passwoerter entschluesseln und vergleichen
+    $allOfType = Database::query(
+        'SELECT id, password_value, is_active FROM known_passwords WHERE password_type = ?',
+        [$type]
     );
+    $existing = null;
+    foreach ($allOfType as $row) {
+        $storedValue = $row['password_value'];
+        try {
+            $storedValue = Crypto::decrypt($storedValue);
+        } catch (Exception $e) {
+            // Klartext-Wert (noch nicht migriert)
+        }
+        if ($storedValue === $value) {
+            $existing = $row;
+            break;
+        }
+    }
     
     if ($existing) {
         if (!$existing['is_active']) {
@@ -159,10 +191,13 @@ function handleCreatePassword(array $adminPayload): void {
         json_error('Dieses Passwort existiert bereits fuer diesen Typ', 409);
     }
     
+    // SV-006 Fix: Passwort verschluesselt speichern
+    $encryptedValue = Crypto::encrypt($value);
+    
     // Einfuegen
     $id = Database::insert(
         'INSERT INTO known_passwords (password_type, password_value, description, created_by) VALUES (?, ?, ?, ?)',
-        [$type, $value, $description ?: null, $adminPayload['user_id']]
+        [$type, $encryptedValue, $description ?: null, $adminPayload['user_id']]
     );
     
     // Activity Log
@@ -194,15 +229,21 @@ function handleUpdatePassword(int $id, array $adminPayload): void {
         if (strlen($value) === 0) {
             json_error('Passwort darf nicht leer sein', 400);
         }
-        // Duplikat-Pruefung (anderer Eintrag mit gleichem Typ+Wert?)
-        $dup = Database::queryOne(
-            'SELECT id FROM known_passwords WHERE password_type = ? AND password_value = ? AND id != ?',
-            [$password['password_type'], $value, $id]
+        // SV-006: Duplikat-Pruefung gegen entschluesselte Werte
+        $allOfType = Database::query(
+            'SELECT id, password_value FROM known_passwords WHERE password_type = ? AND id != ?',
+            [$password['password_type'], $id]
         );
-        if ($dup) {
-            json_error('Dieses Passwort existiert bereits fuer diesen Typ', 409);
+        foreach ($allOfType as $row) {
+            $storedValue = $row['password_value'];
+            try { $storedValue = Crypto::decrypt($storedValue); } catch (Exception $e) {}
+            if ($storedValue === $value) {
+                json_error('Dieses Passwort existiert bereits fuer diesen Typ', 409);
+            }
         }
-        Database::execute('UPDATE known_passwords SET password_value = ? WHERE id = ?', [$value, $id]);
+        // SV-006 Fix: Verschluesselt speichern
+        $encryptedValue = Crypto::encrypt($value);
+        Database::execute('UPDATE known_passwords SET password_value = ? WHERE id = ?', [$encryptedValue, $id]);
         $changes['password_value'] = '(geaendert)';
     }
     

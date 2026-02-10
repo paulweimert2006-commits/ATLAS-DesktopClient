@@ -203,6 +203,13 @@ class CertificateManager:
         dest_path = get_certificates_dir() / safe_name
         shutil.copy2(source_path, dest_path)
         
+        # SV-010 Fix: Restriktive Permissions auf Zertifikat-Datei setzen
+        try:
+            import stat
+            dest_path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+        except Exception:
+            pass  # Windows: chmod begrenzt wirksam
+        
         # Anzeigename falls nicht angegeben
         if not display_name:
             display_name = subject_cn or original_name

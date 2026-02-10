@@ -1,0 +1,3 @@
+# SV-018 Fix: Zugriff auf Migrations-Skripte per HTTP verbieten
+# Migrationen werden nur per SFTP/SSH ausgefuehrt.
+Require all denied

@@ -19,20 +19,9 @@ from typing import List, Optional
 
 logger = logging.getLogger(__name__)
 
-# Fallback-Passwoerter (werden verwendet wenn API nicht verfuegbar)
-_FALLBACK_PDF_PASSWORDS = [
-    "TQMakler37",
-    "TQMakler2021",
-    "555469899",
-    "dfvprovision",
-]
-
-_FALLBACK_ZIP_PASSWORDS = [
-    "TQMakler37",
-    "TQMakler2021",
-    "555469899",
-    "dfvprovision",
-]
+# SV-001 Fix: Keine hardcoded Fallback-Passwoerter mehr.
+# Passwoerter werden ausschliesslich ueber die API aus der DB geladen.
+# Bei API-Fehler wird eine leere Liste zurueckgegeben.
 
 # Session-Cache: Passwoerter werden einmal pro Session geladen
 _password_cache: dict = {}  # {'pdf': [...], 'zip': [...]}
@@ -77,19 +66,15 @@ def get_known_passwords(password_type: str, api_client=None) -> List[str]:
                 f"Konnte {password_type}-Passwoerter nicht von API laden: {e}"
             )
     
-    # Fallback auf hartcodierte Liste
-    if password_type == 'pdf':
-        passwords = list(_FALLBACK_PDF_PASSWORDS)
-    elif password_type == 'zip':
-        passwords = list(_FALLBACK_ZIP_PASSWORDS)
+    # SV-001 Fix: Kein Fallback auf hartcodierte Passwoerter.
+    # Leere Liste zurueckgeben und warnen.
+    logger.warning(
+        f"Keine {password_type}-Passwoerter verfuegbar "
+        f"(API nicht erreichbar oder keine Passwoerter konfiguriert)"
+    )
     
     with _cache_lock:
         _password_cache[password_type] = passwords
-    
-    if passwords:
-        logger.debug(
-            f"{len(passwords)} {password_type}-Passwoerter aus Fallback geladen"
-        )
     
     return passwords
 
@@ -152,6 +137,7 @@ def unlock_pdf_if_needed(file_path: str, api_client=None) -> bool:
             if doc.authenticate(pw):
                 # Entsperrt! In Temp-Datei speichern (PyMuPDF kann nicht
                 # in die gleiche Datei speichern die gerade geoeffnet ist)
+                # SV-024 Fix: try/finally mit garantiertem Cleanup
                 temp_fd, temp_path = tempfile.mkstemp(suffix='.pdf')
                 os.close(temp_fd)
                 try:
@@ -159,11 +145,11 @@ def unlock_pdf_if_needed(file_path: str, api_client=None) -> bool:
                     doc.close()
                     # Original ersetzen
                     shutil.move(temp_path, file_path)
-                except Exception:
-                    # Temp-Datei aufraeumen bei Fehler
-                    if os.path.exists(temp_path):
+                    temp_path = None  # Move erfolgreich, kein Cleanup noetig
+                finally:
+                    # Temp-Datei aufraeumen wenn noch vorhanden
+                    if temp_path and os.path.exists(temp_path):
                         os.unlink(temp_path)
-                    raise
                 logger.info(f"PDF entsperrt: {Path(file_path).name}")
                 return True
 
