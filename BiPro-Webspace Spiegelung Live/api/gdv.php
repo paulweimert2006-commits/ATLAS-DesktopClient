@@ -12,9 +12,25 @@
 
 require_once __DIR__ . '/lib/jwt.php';
 require_once __DIR__ . '/lib/response.php';
+require_once __DIR__ . '/lib/permissions.php';
+require_once __DIR__ . '/lib/activity_logger.php';
 
 function handleGdvRequest(string $docId, string $action, string $method): void {
     $payload = JWT::requireAuth();
+    
+    // PUT (records update) erfordert gdv_edit Recht
+    if ($method === 'PUT') {
+        if (!hasPermission($payload['user_id'], 'gdv_edit')) {
+            ActivityLogger::log([
+                'user_id' => $payload['user_id'], 'username' => $payload['username'] ?? '',
+                'action_category' => 'gdv', 'action' => 'edit_denied',
+                'entity_type' => 'gdv_file', 'entity_id' => (int)$docId,
+                'description' => 'GDV-Bearbeitung verweigert: Keine Berechtigung',
+                'status' => 'denied'
+            ]);
+            json_error('Keine Berechtigung zum Bearbeiten', 403, ['required_permission' => 'gdv_edit']);
+        }
+    }
     
     if (empty($docId)) {
         json_error('Dokument-ID erforderlich', 400);
@@ -189,11 +205,14 @@ function parseGdvFile(string $docId, array $user): void {
         throw $e;
     }
     
-    // Audit-Log
-    Database::insert(
-        'INSERT INTO audit_log (user_id, action, entity_type, entity_id, details, ip_address) VALUES (?, ?, ?, ?, ?, ?)',
-        [$user['user_id'], 'gdv_parse', 'gdv_file', $gdvFileId, json_encode(['records' => $recordCount]), $_SERVER['REMOTE_ADDR'] ?? '']
-    );
+    // Activity-Log
+    ActivityLogger::log([
+        'user_id' => $user['user_id'], 'username' => $user['username'] ?? '',
+        'action_category' => 'gdv', 'action' => 'parse',
+        'entity_type' => 'gdv_file', 'entity_id' => $gdvFileId,
+        'description' => "GDV-Datei geparst: {$recordCount} Records",
+        'details' => ['records' => $recordCount, 'encoding' => $encoding, 'vu_number' => $vuNumber]
+    ]);
     
     json_success([
         'gdv_file_id' => $gdvFileId,
@@ -297,11 +316,14 @@ function updateGdvRecords(string $docId, array $user): void {
         throw $e;
     }
     
-    // Audit-Log
-    Database::insert(
-        'INSERT INTO audit_log (user_id, action, entity_type, entity_id, details, ip_address) VALUES (?, ?, ?, ?, ?, ?)',
-        [$user['user_id'], 'gdv_update', 'gdv_file', $gdvFile['id'], json_encode(['updated' => $updated]), $_SERVER['REMOTE_ADDR'] ?? '']
-    );
+    // Activity-Log
+    ActivityLogger::log([
+        'user_id' => $user['user_id'], 'username' => $user['username'] ?? '',
+        'action_category' => 'gdv', 'action' => 'update',
+        'entity_type' => 'gdv_file', 'entity_id' => $gdvFile['id'],
+        'description' => "{$updated} GDV-Record(s) aktualisiert",
+        'details' => ['updated_count' => $updated]
+    ]);
     
     json_success(['updated' => $updated], "$updated Record(s) aktualisiert");
 }

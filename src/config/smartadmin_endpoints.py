@@ -1,5 +1,5 @@
 """
-BiPRO-GDV Tool - SmartAdmin Endpunkte
+ACENCIA ATLAS - SmartAdmin Endpunkte
 
 Vollständige BiPRO-Endpunkte aus dem SmartAdmin/bipro-service.
 Enthält 47 Versicherer mit STS-, Transfer- und Extranet-URLs.

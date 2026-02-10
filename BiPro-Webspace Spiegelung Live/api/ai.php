@@ -3,16 +3,18 @@
  * BiPro API - AI/KI-Funktionen
  * 
  * Endpunkte:
- * - GET /ai/key - OpenRouter API-Key abrufen (authentifiziert)
+ * - GET /ai/key - OpenRouter API-Key abrufen (erfordert documents_process Recht)
  */
 
 require_once __DIR__ . '/lib/db.php';
 require_once __DIR__ . '/lib/jwt.php';
 require_once __DIR__ . '/lib/response.php';
+require_once __DIR__ . '/lib/permissions.php';
+require_once __DIR__ . '/lib/activity_logger.php';
 
 function handleAiRequest(string $action, string $method): void {
-    // Authentifizierung erforderlich fuer alle AI-Endpunkte
-    $payload = JWT::requireAuth();
+    // Authentifizierung + documents_process Recht erforderlich
+    $payload = requirePermission('documents_process');
     
     switch ($method) {
         case 'GET':
@@ -32,7 +34,7 @@ function handleAiRequest(string $action, string $method): void {
  * GET /ai/key
  * 
  * Gibt den OpenRouter API-Key zurueck.
- * Nur fuer authentifizierte Benutzer.
+ * Erfordert documents_process Berechtigung.
  */
 function getOpenRouterKey(array $user): void {
     // Pruefen ob Key konfiguriert ist
@@ -41,22 +43,16 @@ function getOpenRouterKey(array $user): void {
         return;
     }
     
-    // Audit-Log (sensible Operation) - ignoriere Fehler falls Tabelle nicht existiert
-    try {
-        Database::insert(
-            'INSERT INTO audit_log (user_id, action, entity_type, details, ip_address) VALUES (?, ?, ?, ?, ?)',
-            [
-                $user['user_id'], 
-                'ai_key_access', 
-                'ai', 
-                json_encode(['purpose' => 'pdf_rename']), 
-                $_SERVER['REMOTE_ADDR'] ?? ''
-            ]
-        );
-    } catch (Exception $e) {
-        // Audit-Log optional - ignorieren falls Tabelle fehlt
-        error_log('Audit-Log Fehler (ignoriert): ' . $e->getMessage());
-    }
+    // Activity-Log
+    ActivityLogger::log([
+        'user_id' => $user['user_id'],
+        'username' => $user['username'] ?? '',
+        'action_category' => 'ai',
+        'action' => 'key_access',
+        'entity_type' => 'ai',
+        'description' => 'OpenRouter API-Key abgerufen',
+        'details' => ['purpose' => 'pdf_classification']
+    ]);
     
     json_success([
         'api_key' => OPENROUTER_API_KEY,

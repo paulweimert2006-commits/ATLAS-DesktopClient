@@ -51,6 +51,7 @@ class APIClient:
         self._token: Optional[str] = None
         self._session = requests.Session()
         self._auth_refresh_callback: Optional[Callable[[], bool]] = None
+        self._forced_logout_callback: Optional[Callable[[str], None]] = None
         self._auth_refresh_lock = threading.Lock()
         
     @property
@@ -90,7 +91,20 @@ class APIClient:
         """
         self._auth_refresh_callback = callback
     
-    def _try_auth_refresh(self) -> bool:
+    def set_forced_logout_callback(self, callback: Callable[[str], None]) -> None:
+        """
+        Registriert einen Callback fuer erzwungenen Logout.
+        
+        Wird aufgerufen wenn eine Session server-seitig ungueltig wurde
+        (Session beendet, User gesperrt, User deaktiviert) und kein
+        Token-Refresh moeglich ist.
+        
+        Args:
+            callback: Funktion mit Grund-String als Parameter
+        """
+        self._forced_logout_callback = callback
+    
+    def _try_auth_refresh(self, error_message: str = '') -> bool:
         """
         Versucht Token-Refresh (thread-safe, max 1 gleichzeitig).
         
@@ -100,8 +114,12 @@ class APIClient:
           sofort False zurueckgegeben statt zu blockieren.
         - threading.Lock() ist NICHT reentrant, daher wuerde 'with self._lock'
           bei Rekursion den gleichen Thread blockieren (Deadlock).
+        
+        Wenn der Refresh fehlschlaegt, wird der forced_logout_callback
+        aufgerufen (Session ungueltig).
         """
         if not self._auth_refresh_callback:
+            self._trigger_forced_logout(error_message)
             return False
         
         # Non-blocking acquire verhindert Deadlock bei Rekursion
@@ -110,9 +128,30 @@ class APIClient:
             return False  # Lock gehalten (Rekursion oder paralleler Refresh)
         
         try:
-            return self._auth_refresh_callback()
+            success = self._auth_refresh_callback()
+            if not success:
+                self._trigger_forced_logout(error_message)
+            return success
+        except Exception:
+            self._trigger_forced_logout(error_message)
+            return False
         finally:
             self._auth_refresh_lock.release()
+    
+    def _trigger_forced_logout(self, reason: str = '') -> None:
+        """
+        Loest einen erzwungenen Logout aus.
+        
+        Wird aufgerufen wenn die Session server-seitig ungueltig ist
+        und kein Re-Auth moeglich war.
+        """
+        if self._forced_logout_callback:
+            logger.warning(f"Erzwungener Logout: {reason}")
+            self.clear_token()
+            try:
+                self._forced_logout_callback(reason)
+            except Exception as e:
+                logger.error(f"Fehler im Forced-Logout-Callback: {e}")
     
     def _handle_response(self, response: requests.Response) -> Dict[str, Any]:
         """Verarbeitet die API-Response."""
@@ -216,7 +255,7 @@ class APIClient:
             return self._handle_response(response)
         except APIError as e:
             # Bei 401: Token-Refresh versuchen und Retry
-            if e.status_code == 401 and self._try_auth_refresh():
+            if e.status_code == 401 and self._try_auth_refresh(str(e)):
                 logger.info(f"Token erneuert, wiederhole GET {endpoint}")
                 try:
                     response = self._request_with_retry(
@@ -234,10 +273,11 @@ class APIClient:
             logger.error(f"Netzwerkfehler: {e}")
             raise APIError(f"Netzwerkfehler: {e}")
     
-    def post(self, endpoint: str, data: Dict = None, json_data: Dict = None) -> Dict[str, Any]:
+    def post(self, endpoint: str, data: Dict = None, json_data: Dict = None, timeout: int = None) -> Dict[str, Any]:
         """POST-Anfrage an die API."""
         url = f"{self.base_url}/{endpoint.lstrip('/')}"
         logger.debug(f"POST {url}")
+        req_timeout = timeout or self.config.timeout
         
         try:
             response = self._request_with_retry(
@@ -245,13 +285,13 @@ class APIClient:
                 headers=self._get_headers(),
                 data=data,
                 json=json_data,
-                timeout=self.config.timeout,
+                timeout=req_timeout,
                 verify=self.config.verify_ssl
             )
             return self._handle_response(response)
         except APIError as e:
             # Bei 401: Token-Refresh versuchen und Retry
-            if e.status_code == 401 and self._try_auth_refresh():
+            if e.status_code == 401 and self._try_auth_refresh(str(e)):
                 logger.info(f"Token erneuert, wiederhole POST {endpoint}")
                 try:
                     response = self._request_with_retry(
@@ -259,7 +299,7 @@ class APIClient:
                         headers=self._get_headers(),
                         data=data,
                         json=json_data,
-                        timeout=self.config.timeout,
+                        timeout=req_timeout,
                         verify=self.config.verify_ssl
                     )
                     return self._handle_response(response)
@@ -286,7 +326,7 @@ class APIClient:
             return self._handle_response(response)
         except APIError as e:
             # Bei 401: Token-Refresh versuchen und Retry
-            if e.status_code == 401 and self._try_auth_refresh():
+            if e.status_code == 401 and self._try_auth_refresh(str(e)):
                 logger.info(f"Token erneuert, wiederhole PUT {endpoint}")
                 try:
                     response = self._request_with_retry(
@@ -319,7 +359,7 @@ class APIClient:
             return self._handle_response(response)
         except APIError as e:
             # Bei 401: Token-Refresh versuchen und Retry
-            if e.status_code == 401 and self._try_auth_refresh():
+            if e.status_code == 401 and self._try_auth_refresh(str(e)):
                 logger.info(f"Token erneuert, wiederhole DELETE {endpoint}")
                 try:
                     response = self._request_with_retry(
@@ -363,7 +403,7 @@ class APIClient:
             return self._handle_response(response)
         except APIError as e:
             # Bei 401: Token-Refresh versuchen und Retry
-            if e.status_code == 401 and self._try_auth_refresh():
+            if e.status_code == 401 and self._try_auth_refresh(str(e)):
                 logger.info(f"Token erneuert, wiederhole UPLOAD {endpoint}")
                 headers = {}
                 if self._token:
@@ -407,7 +447,7 @@ class APIClient:
             return self._download_file_inner(endpoint, target_path)
         except APIError as e:
             # Bei 401: Token-Refresh versuchen und Retry
-            if e.status_code == 401 and self._try_auth_refresh():
+            if e.status_code == 401 and self._try_auth_refresh(str(e)):
                 logger.info(f"Token erneuert, wiederhole DOWNLOAD {endpoint}")
                 try:
                     return self._download_file_inner(endpoint, target_path)

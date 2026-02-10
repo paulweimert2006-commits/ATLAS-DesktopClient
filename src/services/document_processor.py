@@ -23,7 +23,7 @@ from api.processing_history import ProcessingHistoryAPI
 logger = logging.getLogger(__name__)
 
 # Parallele Verarbeitung
-DEFAULT_MAX_WORKERS = 4  # Anzahl gleichzeitiger Verarbeitungen
+DEFAULT_MAX_WORKERS = 8  # Anzahl gleichzeitiger Verarbeitungen
 
 
 @dataclass
@@ -90,12 +90,47 @@ class DocumentProcessor:
         self.docs_api = DocumentsAPI(api_client)
         self.history_api = ProcessingHistoryAPI(api_client)
         self.openrouter: Optional[OpenRouterClient] = None
+        # Content-Hash-Cache fuer Deduplizierung (thread-safe)
+        # Spart KI-Kosten wenn identische Dokumente mehrfach verarbeitet werden
+        self._classification_cache: dict = {}  # hash -> (target_box, category, new_filename, vu_name, classification_source, classification_confidence, classification_reason)
+        self._cache_lock = threading.Lock()
         
     def _get_openrouter(self) -> OpenRouterClient:
         """Lazy-Init des OpenRouter-Clients."""
         if self.openrouter is None:
             self.openrouter = OpenRouterClient(self.api_client)
         return self.openrouter
+    
+    def _get_cached_classification(self, content_hash: Optional[str]) -> Optional[dict]:
+        """
+        Prueft ob eine Klassifikation fuer diesen Content-Hash bereits im Cache liegt.
+        
+        Kostenoptimierung: Identische Dokumente werden nur 1x per KI klassifiziert.
+        
+        Args:
+            content_hash: SHA256-Hash des Dokument-Inhalts
+            
+        Returns:
+            Cached Klassifikations-dict oder None
+        """
+        if not content_hash:
+            return None
+        with self._cache_lock:
+            return self._classification_cache.get(content_hash)
+    
+    def _cache_classification(self, content_hash: Optional[str], result: dict) -> None:
+        """
+        Speichert eine Klassifikation im Cache fuer Deduplizierung.
+        
+        Args:
+            content_hash: SHA256-Hash des Dokument-Inhalts
+            result: Klassifikations-Ergebnis als dict
+        """
+        if not content_hash:
+            return
+        with self._cache_lock:
+            self._classification_cache[content_hash] = result
+            logger.debug(f"Klassifikation gecached fuer Hash {content_hash[:12]}...")
     
     def process_inbox(self, 
                       progress_callback: Optional[Callable[[int, int, str], None]] = None,
@@ -121,6 +156,15 @@ class DocumentProcessor:
         
         # Dokumente aus Eingangsbox holen
         inbox_docs = self.docs_api.list_by_box('eingang')
+        
+        # Manuell ausgeschlossene Dokumente ueberspringen
+        excluded_docs = [d for d in inbox_docs if d.processing_status == 'manual_excluded']
+        if excluded_docs:
+            logger.info(
+                f"{len(excluded_docs)} Dokument(e) uebersprungen (manuell bearbeitet)"
+            )
+            inbox_docs = [d for d in inbox_docs if d.processing_status != 'manual_excluded']
+        
         total = len(inbox_docs)
         
         if total == 0:
@@ -199,34 +243,11 @@ class DocumentProcessor:
         
         # ============================================
         # KOSTEN-TRACKING: Guthaben NACH Verarbeitung
+        # HINWEIS: Credits-After wird NICHT sofort abgefragt!
+        # OpenRouter aktualisiert das Guthaben verzoegert (1-3 Minuten).
+        # Die eigentliche Kosten-Berechnung erfolgt per Timer in der UI
+        # (siehe archive_boxes_view.py -> _start_delayed_cost_check).
         # ============================================
-        credits_after = None
-        total_cost = None
-        cost_per_doc = None
-        
-        try:
-            credits_info = openrouter.get_credits()
-            if credits_info:
-                credits_after = credits_info.get('balance', 0.0)
-                logger.info(f"OpenRouter-Guthaben nach Verarbeitung: ${credits_after:.4f} USD")
-                
-                # Kosten berechnen
-                if credits_before is not None:
-                    total_cost = credits_before - credits_after
-                    successful_count = sum(1 for r in results if r.success)
-                    
-                    if successful_count > 0:
-                        cost_per_doc = total_cost / successful_count
-                    
-                    logger.info(f"=== KOSTEN-ZUSAMMENFASSUNG ===")
-                    logger.info(f"Guthaben vorher:  ${credits_before:.4f} USD")
-                    logger.info(f"Guthaben nachher: ${credits_after:.4f} USD")
-                    logger.info(f"Gesamtkosten:     ${total_cost:.4f} USD")
-                    if cost_per_doc is not None:
-                        logger.info(f"Kosten/Dokument:  ${cost_per_doc:.6f} USD ({successful_count} Dokumente)")
-                    logger.info(f"==============================")
-        except Exception as e:
-            logger.warning(f"Konnte Guthaben nach Verarbeitung nicht abrufen: {e}")
         
         # Dauer berechnen
         end_time = datetime.now()
@@ -237,19 +258,9 @@ class DocumentProcessor:
         
         logger.info(f"Verarbeitung abgeschlossen: {successful_count}/{total} erfolgreich in {duration:.1f}s")
         
-        # ============================================
-        # KOSTEN IN DATENBANK LOGGEN
-        # ============================================
-        self._log_batch_costs(
-            total_documents=total,
-            successful_documents=successful_count,
-            failed_documents=failed_count,
-            duration_seconds=duration,
-            credits_before=credits_before,
-            credits_after=credits_after,
-            total_cost=total_cost,
-            cost_per_document=cost_per_doc
-        )
+        if credits_before is not None:
+            logger.info(f"Guthaben vor Verarbeitung: ${credits_before:.4f} USD")
+            logger.info("Kosten-Berechnung erfolgt verzoegert (OpenRouter-Guthaben braucht 1-3 Min)")
         
         return BatchProcessingResult(
             results=results,
@@ -258,80 +269,154 @@ class DocumentProcessor:
             failed_documents=failed_count,
             duration_seconds=duration,
             credits_before=credits_before,
-            credits_after=credits_after,
-            total_cost_usd=total_cost,
-            cost_per_document_usd=cost_per_doc
+            credits_after=None,  # Wird spaeter per Timer ermittelt
+            total_cost_usd=None,  # Wird spaeter berechnet
+            cost_per_document_usd=None  # Wird spaeter berechnet
         )
     
-    def _log_batch_costs(self,
-                         total_documents: int,
-                         successful_documents: int,
-                         failed_documents: int,
-                         duration_seconds: float,
-                         credits_before: Optional[float],
-                         credits_after: Optional[float],
-                         total_cost: Optional[float],
-                         cost_per_document: Optional[float]) -> None:
+    def log_batch_complete(self,
+                          batch_result: 'BatchProcessingResult') -> Optional[int]:
         """
-        Loggt die Kosten eines Batch-Verarbeitungslaufs in der Datenbank.
+        Loggt den Abschluss eines Batch-Verarbeitungslaufs in der Datenbank.
         
-        Verwendet die Processing-History API mit action='batch_complete'.
+        Wird direkt nach Verarbeitungsende aufgerufen, OHNE Kosten
+        (diese werden spaeter per log_delayed_costs nachgetragen).
+        
+        Returns:
+            ID des History-Eintrags (fuer spaeteres Update) oder None
         """
         try:
             action_details = {
                 'batch_type': 'inbox_processing',
-                'total_documents': total_documents,
-                'successful_documents': successful_documents,
-                'failed_documents': failed_documents,
-                'duration_seconds': round(duration_seconds, 2),
-                'timestamp': datetime.now().isoformat()
+                'total_documents': batch_result.total_documents,
+                'successful_documents': batch_result.successful_documents,
+                'failed_documents': batch_result.failed_documents,
+                'duration_seconds': round(batch_result.duration_seconds, 2),
+                'timestamp': datetime.now().isoformat(),
+                'cost_pending': True  # Kosten werden spaeter nachgetragen
             }
             
-            # Kosten-Daten hinzufuegen wenn verfuegbar
-            if credits_before is not None:
-                action_details['credits_before_usd'] = round(credits_before, 6)
-            if credits_after is not None:
-                action_details['credits_after_usd'] = round(credits_after, 6)
-            if total_cost is not None:
-                action_details['total_cost_usd'] = round(total_cost, 6)
-            if cost_per_document is not None:
-                action_details['cost_per_document_usd'] = round(cost_per_document, 8)
+            # Credits-Before schon mal speichern
+            if batch_result.credits_before is not None:
+                action_details['credits_before_usd'] = round(batch_result.credits_before, 6)
             
-            # Als History-Eintrag speichern (document_id=None fuer Batch-Operationen)
-            self.history_api.create(
-                document_id=None,  # None = Batch-Operation, kein einzelnes Dokument
+            entry_id = self.history_api.create(
+                document_id=None,
                 action='batch_complete',
                 new_status='completed',
                 previous_status='processing',
                 action_details=action_details,
-                success=failed_documents == 0,
-                duration_ms=int(duration_seconds * 1000),
+                success=batch_result.failed_documents == 0,
+                duration_ms=int(batch_result.duration_seconds * 1000),
                 classification_source='batch_processor',
-                classification_result=f'{successful_documents}/{total_documents} OK, ${total_cost:.4f} USD' if total_cost else f'{successful_documents}/{total_documents} OK'
+                classification_result=f'{batch_result.successful_documents}/{batch_result.total_documents} OK'
             )
             
-            logger.debug(f"Batch-Kosten geloggt: {action_details}")
+            logger.debug(f"Batch-Abschluss geloggt (Kosten ausstehend): ID={entry_id}")
+            return entry_id
             
         except Exception as e:
-            logger.warning(f"Batch-Kosten-Logging fehlgeschlagen: {e}")
+            logger.warning(f"Batch-Abschluss-Logging fehlgeschlagen: {e}")
+            return None
+    
+    def log_delayed_costs(self,
+                          history_entry_id: int,
+                          batch_result: 'BatchProcessingResult',
+                          credits_after: float) -> Optional[dict]:
+        """
+        Traegt die Kosten nachtraeglich in einen bestehenden History-Eintrag ein.
+        
+        Wird aufgerufen, nachdem der verzoegerte Guthaben-Check abgeschlossen ist
+        (typischerweise 90 Sekunden nach Verarbeitung).
+        
+        Args:
+            history_entry_id: ID des batch_complete History-Eintrags
+            batch_result: Das BatchProcessingResult mit credits_before
+            credits_after: Das Guthaben NACH der Verarbeitung (verzoegert abgefragt)
+            
+        Returns:
+            Dict mit berechneten Kosten oder None bei Fehler
+        """
+        try:
+            credits_before = batch_result.credits_before
+            if credits_before is None:
+                logger.warning("Kein credits_before vorhanden, Kosten-Berechnung nicht moeglich")
+                return None
+            
+            total_cost = credits_before - credits_after
+            successful_count = batch_result.successful_documents
+            cost_per_doc = total_cost / successful_count if successful_count > 0 else 0.0
+            
+            logger.info(f"=== VERZOEGERTE KOSTEN-ZUSAMMENFASSUNG ===")
+            logger.info(f"Guthaben vorher:  ${credits_before:.4f} USD")
+            logger.info(f"Guthaben nachher: ${credits_after:.4f} USD")
+            logger.info(f"Gesamtkosten:     ${total_cost:.4f} USD")
+            if cost_per_doc:
+                logger.info(f"Kosten/Dokument:  ${cost_per_doc:.6f} USD ({successful_count} Dokumente)")
+            logger.info(f"==========================================")
+            
+            # Neuen History-Eintrag fuer die Kosten erstellen
+            # (Update des bestehenden Eintrags ist komplexer, daher neuer Eintrag)
+            cost_details = {
+                'batch_type': 'cost_update',
+                'reference_entry_id': history_entry_id,
+                'credits_before_usd': round(credits_before, 6),
+                'credits_after_usd': round(credits_after, 6),
+                'total_cost_usd': round(total_cost, 6),
+                'cost_per_document_usd': round(cost_per_doc, 8),
+                'total_documents': batch_result.total_documents,
+                'successful_documents': successful_count,
+                'failed_documents': batch_result.failed_documents,
+                'duration_seconds': round(batch_result.duration_seconds, 2),
+                'timestamp': datetime.now().isoformat(),
+                'cost_pending': False
+            }
+            
+            self.history_api.create(
+                document_id=None,
+                action='batch_cost_update',
+                new_status='completed',
+                previous_status='completed',
+                action_details=cost_details,
+                success=True,
+                duration_ms=0,
+                classification_source='cost_tracker',
+                classification_result=f'${total_cost:.4f} USD ({successful_count} Dok.)'
+            )
+            
+            return {
+                'credits_before': credits_before,
+                'credits_after': credits_after,
+                'total_cost_usd': total_cost,
+                'cost_per_document_usd': cost_per_doc,
+                'successful_documents': successful_count
+            }
+            
+        except Exception as e:
+            logger.warning(f"Verzoegertes Kosten-Logging fehlgeschlagen: {e}")
+            return None
     
     def _process_document(self, doc: Document) -> ProcessingResult:
         """
         Verarbeitet ein einzelnes Dokument.
         
-        LOGIK (BiPRO-Code-basiert, optimiert):
+        LOGIK (BiPRO-Code-basiert, optimiert, v1.0.4):
         1. In Verarbeitungsbox verschieben
+        1b. Content-Hash-Deduplizierung (spart 100% KI-Kosten bei Duplikaten)
         2. XML-Rohdateien -> Roh Archiv (keine KI)
-        3. GDV per BiPRO-Code (999xxx) -> GDV Box + Metadaten aus Datensatz (KEINE KI!)
+        3. GDV per BiPRO-Code (999xxx) + Content-Verifikation -> GDV Box (KEINE KI!)
+           Bei fehlgeschlagener Verifikation: Fallback nach Dateiendung
         4. GDV per Dateiendung/Content -> GDV Box + Metadaten aus Datensatz (KEINE KI!)
-        5. PDF mit BiPRO-Code:
+        5. PDF mit BiPRO-Code + PDF-Validierung vor KI:
            a) Courtage (300xxx) -> Courtage Box + KI nur fuer VU+Datum (~200 Token)
            b) VU-Dokumente -> Sparten-KI + minimale Benennung
-        6. PDF ohne BiPRO-Code -> Sparten-KI
+        6. PDF ohne BiPRO-Code + PDF-Validierung vor KI -> Sparten-KI
         7. Rest -> Sonstige
         
-        WICHTIG: BiPRO-Code-basierte Klassifikation hat PRIORITÄT vor Content-Check!
-        Dies verhindert False-Positives (z.B. PDFs die zufällig "0001" enthalten).
+        KOSTENOPTIMIERUNGEN:
+        - Content-Hash-Cache: Duplikate werden ohne KI klassifiziert
+        - PDF-Validierung: Korrupte PDFs ueberspringen KI (-> Beschaedigte_Datei)
+        - GDV-Verifikation: 999er-Codes mit nicht-GDV-Inhalt werden als korrupt behandelt
         
         Args:
             doc: Das zu verarbeitende Dokument
@@ -343,6 +428,23 @@ class DocumentProcessor:
         previous_status = doc.processing_status or 'pending'
         
         try:
+            # 0. Re-Verifikation: Dokument nochmal frisch vom Server holen
+            #    und pruefen ob es noch verarbeitet werden soll
+            #    (Schutz gegen Server-Caching bei list_by_box)
+            fresh_doc = self.docs_api.get_document(doc.id)
+            if fresh_doc and fresh_doc.processing_status == 'manual_excluded':
+                logger.info(
+                    f"Dokument {doc.id} ({doc.original_filename}): "
+                    f"Uebersprungen (manuell ausgeschlossen)"
+                )
+                return ProcessingResult(
+                    document_id=doc.id,
+                    original_filename=doc.original_filename,
+                    success=True,
+                    target_box=doc.box_type,
+                    category='manual_excluded'
+                )
+            
             # 1. Status: downloaded -> processing (In Verarbeitungsbox verschieben)
             self.docs_api.update(doc.id, 
                                  box_type='verarbeitung', 
@@ -364,8 +466,23 @@ class DocumentProcessor:
             classification_confidence = None  # high, medium, low
             classification_reason = None      # Begruendung
             
+            # 1b. Content-Hash-Deduplizierung: Wenn identisches Dokument bereits
+            #     klassifiziert wurde, KI ueberspringen (spart 100% Token-Kosten)
+            cached = self._get_cached_classification(doc.content_hash)
+            if cached:
+                target_box = cached['target_box']
+                category = cached['category']
+                new_filename = cached.get('new_filename')
+                classification_source = 'cache_dedup'
+                classification_confidence = cached.get('classification_confidence', 'high')
+                classification_reason = f'Deduplizierung: identischer Inhalt bereits klassifiziert (Hash {doc.content_hash[:12] if doc.content_hash else "?"}...)'
+                logger.info(
+                    f"Dokument {doc.id} ({doc.original_filename}): "
+                    f"Duplikat erkannt -> {target_box} (aus Cache)"
+                )
+            
             # 2. XML-Rohdateien -> Roh Archiv (keine KI)
-            if self._is_xml_raw(doc):
+            elif self._is_xml_raw(doc):
                 target_box = 'roh'
                 category = 'xml_raw'
                 classification_source = 'rule_pattern'
@@ -373,43 +490,71 @@ class DocumentProcessor:
                 classification_reason = 'XML-Rohdatei erkannt (Dateiname-Pattern)'
                 logger.info(f"XML-Rohdatei erkannt: {doc.original_filename} -> roh")
             
-            # 3. GDV ueber BiPRO-Code (999xxx) - PRIORITÄT!
-            # Diese Dateien werden vom BiPRO als .pdf geliefert, sind aber GDV-Datensaetze
-            # WICHTIG: Diese Prüfung MUSS vor _is_gdv_file() kommen, da BiPRO-Code
-            # zuverlässiger ist als Content-Erkennung!
+            # 3. GDV ueber BiPRO-Code (999xxx)
+            # Diese Dateien werden vom BiPRO manchmal als .pdf geliefert, sind aber GDV-Datensaetze.
+            # WICHTIG: Verifizierung per Content-Check! Nicht blind dem BiPRO-Code vertrauen,
+            # da manche 999er-Dateien korrupt oder kein gueltiges GDV sind.
             elif self._is_bipro_gdv(doc):
-                target_box = 'gdv'
-                category = 'gdv_bipro'
-                classification_source = 'rule_bipro'
-                classification_confidence = 'high'
-                classification_reason = f'BiPRO-Code {doc.bipro_category} identifiziert GDV-Datei'
-                logger.info(f"GDV per BiPRO-Code erkannt: {doc.original_filename} (Code: {doc.bipro_category}) -> gdv")
+                gdv_verified = False
                 
-                # VU, Absender und Datum aus GDV-Datensatz extrahieren (KEINE KI!)
+                # Herunterladen und GDV-Content verifizieren
                 try:
                     with tempfile.TemporaryDirectory() as tmpdir:
                         local_path = self.docs_api.download(doc.id, tmpdir)
                         if local_path:
+                            # Pruefen ob Datei tatsaechlich GDV-Inhalt hat (erste Zeile = '0001')
                             vu_nummer, absender, datum_iso = self._extract_gdv_metadata(local_path)
-                            if vu_nummer or absender or datum_iso:
-                                parts = []
+                            
+                            # GDV ist verifiziert wenn VU-Nummer oder Absender extrahiert werden konnten
+                            # (Fallback-Werte 'Xvu'/'kDatum' zaehlen NICHT als erfolgreich)
+                            from config.processing_rules import GDV_FALLBACK_VU
+                            if (vu_nummer and vu_nummer != GDV_FALLBACK_VU) or absender:
+                                gdv_verified = True
+                                target_box = 'gdv'
+                                category = 'gdv_bipro'
+                                classification_source = 'rule_bipro'
+                                classification_confidence = 'high'
+                                classification_reason = f'BiPRO-Code {doc.bipro_category} + GDV-Content verifiziert'
+                                logger.info(f"GDV per BiPRO-Code verifiziert: {doc.original_filename} (Code: {doc.bipro_category}) -> gdv")
                                 
+                                parts = []
                                 if absender:
                                     parts.append(self._slugify(absender))
                                 elif vu_nummer:
                                     parts.append(vu_nummer)
-                                
-                                if datum_iso:
+                                if datum_iso and datum_iso != 'kDatum':
                                     parts.append(datum_iso)
-                                
                                 if vu_nummer and absender:
                                     parts.append(f"VU{vu_nummer}")
-                                
                                 if parts:
                                     new_filename = '_'.join(parts) + '.gdv'
                                     logger.info(f"GDV-Metadaten: Absender={absender}, VU={vu_nummer}, Datum={datum_iso}")
                 except Exception as e:
-                    logger.warning(f"GDV-Metadaten-Extraktion fehlgeschlagen (BiPRO): {e}")
+                    logger.warning(f"GDV-Verifikation fehlgeschlagen (BiPRO): {e}")
+                
+                # Wenn GDV-Content NICHT verifiziert: Datei nach Endung weiterverarbeiten
+                # (z.B. korrupte PDFs mit 999xxx-Code die kein GDV sind)
+                if not gdv_verified:
+                    logger.warning(
+                        f"BiPRO-Code {doc.bipro_category} behauptet GDV, aber Content-Verifikation fehlgeschlagen: "
+                        f"{doc.original_filename} -> Behandlung nach Dateiendung"
+                    )
+                    # Fallback: nach Dateiendung behandeln (wird in Schritt 4-7 aufgefangen)
+                    ext = doc.file_extension.lower()
+                    if ext == '.pdf' or doc.is_pdf:
+                        # Korruptes PDF -> Sonstige mit Beschaedigte_Datei
+                        target_box = 'sonstige'
+                        category = 'pdf_corrupt_bipro'
+                        new_filename = "Beschaedigte_Datei.pdf"
+                        classification_source = 'rule_validation'
+                        classification_confidence = 'high'
+                        classification_reason = f'BiPRO-Code {doc.bipro_category} aber kein gueltiger GDV/PDF-Inhalt'
+                    else:
+                        target_box = 'sonstige'
+                        category = 'unknown_bipro'
+                        classification_source = 'fallback'
+                        classification_confidence = 'low'
+                        classification_reason = f'BiPRO-Code {doc.bipro_category} aber Content nicht verifizierbar'
             
             # 4. GDV-Dateien per Dateiendung/Content -> GDV Box + Metadaten aus Datensatz
             # Diese Prüfung kommt NACH BiPRO-Code, da BiPRO-Code zuverlässiger ist
@@ -471,25 +616,32 @@ class DocumentProcessor:
                         with tempfile.TemporaryDirectory() as tmpdir:
                             local_path = self.docs_api.download(doc.id, tmpdir)
                             if local_path:
-                                openrouter = self._get_openrouter()
-                                result = openrouter.classify_courtage_minimal(local_path)
-                                
-                                if result:
-                                    insurer = result.get('insurer') or 'Unbekannt'
-                                    date_iso = result.get('document_date_iso') or ''
+                                # PDF-Validierung vor KI-Call (spart Tokens bei korrupten PDFs)
+                                is_valid, repaired_path = self._validate_pdf(local_path)
+                                if not is_valid:
+                                    logger.warning(f"Courtage-PDF korrupt, ueberspringe KI: {doc.original_filename}")
+                                    new_filename = "Beschaedigte_Datei_Courtage.pdf"
+                                else:
+                                    pdf_path = repaired_path or local_path
+                                    openrouter = self._get_openrouter()
+                                    result = openrouter.classify_courtage_minimal(pdf_path)
                                     
-                                    # Dateiname: VU_Courtage_Datum.pdf
-                                    insurer_slug = self._slugify(insurer)
-                                    if date_iso:
-                                        new_filename = f"{insurer_slug}_Courtage_{date_iso}.pdf"
-                                    else:
-                                        new_filename = f"{insurer_slug}_Courtage.pdf"
-                                    
-                                    # KI-Quelle zusaetzlich dokumentieren
-                                    classification_source = 'ki_courtage_minimal'
-                                    classification_reason = f'Courtage via BiPRO + KI-Extraktion: {insurer}, {date_iso}'
-                                    
-                                    logger.info(f"Courtage klassifiziert: {insurer}, {date_iso}")
+                                    if result:
+                                        insurer = result.get('insurer') or 'Unbekannt'
+                                        date_iso = result.get('document_date_iso') or ''
+                                        
+                                        # Dateiname: VU_Courtage_Datum.pdf
+                                        insurer_slug = self._slugify(insurer)
+                                        if date_iso:
+                                            new_filename = f"{insurer_slug}_Courtage_{date_iso}.pdf"
+                                        else:
+                                            new_filename = f"{insurer_slug}_Courtage.pdf"
+                                        
+                                        # KI-Quelle zusaetzlich dokumentieren
+                                        classification_source = 'ki_courtage_minimal'
+                                        classification_reason = f'Courtage via BiPRO + KI-Extraktion: {insurer}, {date_iso}'
+                                        
+                                        logger.info(f"Courtage klassifiziert: {insurer}, {date_iso}")
                     except Exception as e:
                         logger.warning(f"Courtage-KI fehlgeschlagen: {e}")
                 
@@ -505,50 +657,59 @@ class DocumentProcessor:
                         with tempfile.TemporaryDirectory() as tmpdir:
                             local_path = self.docs_api.download(doc.id, tmpdir)
                             if local_path:
-                                openrouter = self._get_openrouter()
-                                ki_result = openrouter.classify_sparte_with_date(local_path)
-                                
-                                sparte = ki_result.get('sparte', 'sonstige')
-                                date_iso = ki_result.get('document_date_iso')
-                                ki_vu_name = ki_result.get('vu_name')
-                                ki_confidence = ki_result.get('confidence', 'medium')
-                                ki_doc_name = ki_result.get('document_name')  # Dokumentname bei sonstige (Stufe 2)
-                                
-                                target_box = sparte
-                                category = f'sparte_{sparte}'
-                                
-                                # Audit-Metadaten - Confidence aus KI uebernehmen
-                                classification_source = 'ki_gpt4o_mini' if ki_confidence != 'medium' else 'ki_gpt4o_zweistufig'
-                                classification_confidence = ki_confidence
-                                classification_reason = f'KI-Sparten-Klassifikation: {sparte} ({ki_confidence}), BiPRO-Typ: {doc_type}'
-                                
-                                logger.info(f"Sparte klassifiziert: {sparte} (confidence: {ki_confidence})")
-                                
-                                # VU-Name: aus KI oder Dokument-Metadaten
-                                if sparte == 'courtage' and ki_vu_name:
-                                    vu_name = ki_vu_name
+                                # PDF-Validierung vor KI-Call (spart Tokens bei korrupten PDFs)
+                                is_valid, repaired_path = self._validate_pdf(local_path)
+                                if not is_valid:
+                                    logger.warning(f"VU-PDF korrupt, ueberspringe KI: {doc.original_filename}")
+                                    target_box = 'sonstige'
+                                    category = 'pdf_corrupt'
+                                    new_filename = "Beschaedigte_Datei.pdf"
+                                    classification_source = 'rule_validation'
+                                    classification_confidence = 'high'
+                                    classification_reason = f'PDF korrupt/nicht lesbar, KI uebersprungen'
                                 else:
-                                    vu_name = getattr(doc, 'vu_name', None) or 'VEMA'
-                                
-                                parts = []
-                                parts.append(self._slugify(vu_name))
-                                
-                                if sparte == 'sonstige' and ki_doc_name:
-                                    # Stufe 2 hat einen Dokumentnamen geliefert
-                                    parts.append(self._slugify(ki_doc_name))
-                                else:
-                                    parts.append(sparte.capitalize())
-                                
-                                # Dokumenttyp bei Sonstige (aus BiPRO) als Fallback
-                                if sparte == 'sonstige' and not ki_doc_name and doc_type and doc_type != 'unbekannt':
-                                    parts.append(doc_type.capitalize())
-                                
-                                # Datum nur bei Courtage
-                                if sparte == 'courtage' and date_iso:
-                                    parts.append(date_iso)
-                                
-                                new_filename = '_'.join(parts) + '.pdf'
-                                logger.info(f"VU-Dokument benannt: {new_filename}")
+                                    pdf_path = repaired_path or local_path
+                                    openrouter = self._get_openrouter()
+                                    ki_result = openrouter.classify_sparte_with_date(pdf_path)
+                                    
+                                    sparte = ki_result.get('sparte', 'sonstige')
+                                    date_iso = ki_result.get('document_date_iso')
+                                    ki_vu_name = ki_result.get('vu_name')
+                                    ki_confidence = ki_result.get('confidence', 'medium')
+                                    ki_doc_name = ki_result.get('document_name')  # Dokumentname bei sonstige (Stufe 2)
+                                    
+                                    target_box = sparte
+                                    category = f'sparte_{sparte}'
+                                    
+                                    # Audit-Metadaten - Confidence aus KI uebernehmen (BUG-0007 Fix: == 'high' statt != 'medium')
+                                    classification_source = 'ki_gpt4o_mini' if ki_confidence == 'high' else 'ki_gpt4o_zweistufig'
+                                    classification_confidence = ki_confidence
+                                    classification_reason = f'KI-Sparten-Klassifikation: {sparte} ({ki_confidence}), BiPRO-Typ: {doc_type}'
+                                    
+                                    logger.info(f"Sparte klassifiziert: {sparte} (confidence: {ki_confidence})")
+                                    
+                                    # VU-Name: KI-Ergebnis hat Vorrang, dann Dokument-Metadaten
+                                    vu_name = ki_vu_name or getattr(doc, 'vu_name', None) or 'Unbekannt'
+                                    
+                                    parts = []
+                                    parts.append(self._slugify(vu_name))
+                                    
+                                    if sparte == 'sonstige' and ki_doc_name:
+                                        # Stufe 2 hat einen Dokumentnamen geliefert
+                                        parts.append(self._slugify(ki_doc_name))
+                                    else:
+                                        parts.append(sparte.capitalize())
+                                    
+                                    # Dokumenttyp bei Sonstige (aus BiPRO) als Fallback
+                                    if sparte == 'sonstige' and not ki_doc_name and doc_type and doc_type != 'unbekannt':
+                                        parts.append(doc_type.capitalize())
+                                    
+                                    # Datum nur bei Courtage
+                                    if sparte == 'courtage' and date_iso:
+                                        parts.append(date_iso)
+                                    
+                                    new_filename = '_'.join(parts) + '.pdf'
+                                    logger.info(f"VU-Dokument benannt: {new_filename}")
                     except Exception as e:
                         logger.warning(f"Sparten-KI fehlgeschlagen: {e}")
                         target_box = 'sonstige'
@@ -565,43 +726,52 @@ class DocumentProcessor:
                     with tempfile.TemporaryDirectory() as tmpdir:
                         local_path = self.docs_api.download(doc.id, tmpdir)
                         if local_path:
-                            openrouter = self._get_openrouter()
-                            ki_result = openrouter.classify_sparte_with_date(local_path)
-                            
-                            sparte = ki_result.get('sparte', 'sonstige')
-                            date_iso = ki_result.get('document_date_iso')
-                            ki_vu_name = ki_result.get('vu_name')
-                            ki_confidence = ki_result.get('confidence', 'medium')
-                            ki_doc_name = ki_result.get('document_name')
-                            
-                            target_box = sparte
-                            category = f'sparte_{sparte}'
-                            
-                            # Audit-Metadaten - Confidence aus KI
-                            classification_source = 'ki_gpt4o_mini' if ki_confidence != 'medium' else 'ki_gpt4o_zweistufig'
-                            classification_confidence = ki_confidence
-                            classification_reason = f'KI-Sparten-Klassifikation ohne BiPRO: {sparte} ({ki_confidence})'
-                            
-                            logger.info(f"PDF klassifiziert: {sparte} (confidence: {ki_confidence})")
-                            
-                            # Benennung je nach Sparte
-                            if sparte == 'courtage':
+                            # PDF-Validierung vor KI-Call (spart Tokens bei korrupten PDFs)
+                            is_valid, repaired_path = self._validate_pdf(local_path)
+                            if not is_valid:
+                                logger.warning(f"PDF korrupt, ueberspringe KI: {doc.original_filename}")
+                                target_box = 'sonstige'
+                                category = 'pdf_corrupt'
+                                new_filename = "Beschaedigte_Datei.pdf"
+                                classification_source = 'rule_validation'
+                                classification_confidence = 'high'
+                                classification_reason = f'PDF korrupt/nicht lesbar, KI uebersprungen'
+                            else:
+                                pdf_path = repaired_path or local_path
+                                openrouter = self._get_openrouter()
+                                ki_result = openrouter.classify_sparte_with_date(pdf_path)
+                                
+                                sparte = ki_result.get('sparte', 'sonstige')
+                                date_iso = ki_result.get('document_date_iso')
+                                ki_vu_name = ki_result.get('vu_name')
+                                ki_confidence = ki_result.get('confidence', 'medium')
+                                ki_doc_name = ki_result.get('document_name')
+                                
+                                target_box = sparte
+                                category = f'sparte_{sparte}'
+                                
+                                # Audit-Metadaten - Confidence aus KI (BUG-0007 Fix: == 'high' statt != 'medium')
+                                classification_source = 'ki_gpt4o_mini' if ki_confidence == 'high' else 'ki_gpt4o_zweistufig'
+                                classification_confidence = ki_confidence
+                                classification_reason = f'KI-Sparten-Klassifikation ohne BiPRO: {sparte} ({ki_confidence})'
+                                
+                                logger.info(f"PDF klassifiziert: {sparte} (confidence: {ki_confidence})")
+                                
+                                # Benennung je nach Sparte
                                 vu_slug = self._slugify(ki_vu_name) if ki_vu_name else 'Unbekannt'
-                                if date_iso:
-                                    new_filename = f"{vu_slug}_Courtage_{date_iso}.pdf"
-                                else:
-                                    new_filename = f"{vu_slug}_Courtage.pdf"
-                            elif sparte == 'sonstige' and ki_doc_name:
-                                # Stufe 2 hat Dokumentnamen geliefert
-                                doc_slug = self._slugify(ki_doc_name)
-                                if date_iso:
-                                    new_filename = f"{doc_slug}_{date_iso}.pdf"
-                                else:
-                                    new_filename = f"{doc_slug}.pdf"
-                            elif sparte in ['sach', 'leben', 'kranken']:
-                                new_filename = f"{sparte.capitalize()}.pdf"
-                            elif date_iso:
-                                new_filename = f"{sparte.capitalize()}_{date_iso}.pdf"
+                                if sparte == 'courtage':
+                                    if date_iso:
+                                        new_filename = f"{vu_slug}_Courtage_{date_iso}.pdf"
+                                    else:
+                                        new_filename = f"{vu_slug}_Courtage.pdf"
+                                elif sparte == 'sonstige' and ki_doc_name:
+                                    # Stufe 2 hat Dokumentnamen geliefert
+                                    doc_slug = self._slugify(ki_doc_name)
+                                    new_filename = f"{vu_slug}_{doc_slug}.pdf"
+                                elif sparte in ['sach', 'leben', 'kranken']:
+                                    new_filename = f"{vu_slug}_{sparte.capitalize()}.pdf"
+                                elif date_iso:
+                                    new_filename = f"{vu_slug}_{sparte.capitalize()}_{date_iso}.pdf"
                 except Exception as e:
                     logger.warning(f"PDF-KI fehlgeschlagen: {e}")
                     target_box = 'sonstige'
@@ -618,6 +788,19 @@ class DocumentProcessor:
                 classification_confidence = 'low'
                 classification_reason = 'Unbekannter Dateityp, keine Klassifikation moeglich'
                 logger.debug(f"Unbekannter Dateityp: {doc.original_filename} -> sonstige")
+            
+            # Content-Hash-Cache: KI-Ergebnis fuer spaetere Duplikate speichern
+            # Nur wenn nicht selbst aus Cache und nicht pdf_corrupt/pdf_error
+            if (classification_source != 'cache_dedup' 
+                    and category not in ('pdf_corrupt', 'pdf_error', None)
+                    and doc.content_hash):
+                self._cache_classification(doc.content_hash, {
+                    'target_box': target_box,
+                    'category': category,
+                    'new_filename': new_filename,
+                    'classification_confidence': classification_confidence,
+                    'classification_reason': classification_reason,
+                })
             
             # Schritt 1: processing -> classified (mit Klassifikations-Metadaten)
             update_kwargs = {
@@ -638,7 +821,12 @@ class DocumentProcessor:
             update_kwargs['classification_timestamp'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             
             self.docs_api.update(doc.id, **update_kwargs)
-            logger.debug(f"Dokument {doc.id}: Status -> classified")
+            
+            # Logging: Sonstige als "nicht zugeordnet" markieren
+            if target_box == 'sonstige':
+                logger.info(f"Dokument {doc.id}: Nicht zugeordnet -> {category}")
+            else:
+                logger.debug(f"Dokument {doc.id}: Status -> classified")
             
             # History: Klassifikation abgeschlossen
             duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
@@ -676,10 +864,15 @@ class DocumentProcessor:
                               previous_status=current_status,
                               action_details={'final_box': target_box, 'new_filename': new_filename})
             
+            # Erfolg-Logik:
+            # - Erfolgreich = GDV, Courtage, Sach, Leben, Kranken, Roh
+            # - Nicht zugeordnet = Sonstige (wird als "failed" gezaehlt)
+            is_success = target_box not in ['sonstige']
+            
             return ProcessingResult(
                 document_id=doc.id,
                 original_filename=doc.original_filename,
-                success=True,
+                success=is_success,
                 target_box=target_box,
                 category=category,
                 new_filename=new_filename
@@ -713,6 +906,74 @@ class DocumentProcessor:
                 target_box='sonstige',
                 error=str(e)
             )
+    
+    def _validate_pdf(self, pdf_path: str) -> Tuple[bool, Optional[str]]:
+        """
+        Validiert ein PDF und versucht bei Fehler eine Reparatur.
+        
+        Kostenoptimiert: Verhindert teure KI-Aufrufe fuer korrupte PDFs.
+        
+        Args:
+            pdf_path: Pfad zur PDF-Datei
+            
+        Returns:
+            (is_valid, repaired_path) - is_valid=True wenn OK oder repariert,
+            repaired_path = Pfad zur reparierten Datei (oder None wenn original OK)
+        """
+        try:
+            import fitz  # PyMuPDF
+        except ImportError:
+            logger.warning("PyMuPDF nicht installiert, ueberspringe PDF-Validierung")
+            return (True, None)  # Im Zweifel weiter
+        
+        try:
+            doc = fitz.open(pdf_path)
+            page_count = len(doc)
+            doc.close()
+            
+            if page_count > 0:
+                return (True, None)  # PDF OK
+            else:
+                logger.warning(f"PDF hat 0 Seiten: {pdf_path}")
+                return (False, None)
+                
+        except Exception as open_error:
+            logger.warning(f"PDF defekt ({open_error}), versuche Reparatur: {pdf_path}")
+            
+            # Reparatur-Versuch: fitz kann defekte PDFs oft retten
+            try:
+                repaired_path = pdf_path + ".repaired.pdf"
+                doc = fitz.open(pdf_path)  # type: ignore[arg-type]
+                # Garbage-Collection und Linearisierung
+                doc.save(repaired_path, garbage=4, deflate=True, clean=True)
+                doc.close()
+                
+                # Reparierte Datei pruefen
+                doc2 = fitz.open(repaired_path)
+                page_count = len(doc2)
+                doc2.close()
+                
+                if page_count > 0:
+                    logger.info(f"PDF erfolgreich repariert: {repaired_path} ({page_count} Seiten)")
+                    return (True, repaired_path)
+                else:
+                    logger.warning(f"Repariertes PDF hat 0 Seiten")
+                    # Aufraeumen
+                    try:
+                        os.remove(repaired_path)
+                    except OSError:
+                        pass
+                    return (False, None)
+                    
+            except Exception as repair_error:
+                logger.warning(f"PDF-Reparatur fehlgeschlagen: {repair_error}")
+                # Aufraeumen falls Datei erstellt wurde
+                repaired_path = pdf_path + ".repaired.pdf"
+                try:
+                    os.remove(repaired_path)
+                except OSError:
+                    pass
+                return (False, None)
     
     def _slugify(self, text: str) -> str:
         """

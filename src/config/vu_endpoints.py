@@ -1,5 +1,5 @@
 """
-BiPRO-GDV Tool - VU-Endpunkte Konfiguration
+ACENCIA ATLAS - VU-Endpunkte Konfiguration
 
 Lokale Konfiguration der BiPRO-Endpunkte für Versicherungsgesellschaften.
 Enthält STS-URLs, Auth-Arten und Gesellschafts-Mapping.
@@ -432,7 +432,7 @@ def get_config_dir() -> Path:
     else:
         base = Path.home() / '.local' / 'share'
     
-    config_dir = base / 'BiPRO-GDV-Tool' / 'config'
+    config_dir = base / 'ACENCIA-ATLAS' / 'config'
     config_dir.mkdir(parents=True, exist_ok=True)
     return config_dir
 

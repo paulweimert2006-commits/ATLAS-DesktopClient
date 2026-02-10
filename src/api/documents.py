@@ -18,6 +18,9 @@ logger = logging.getLogger(__name__)
 # Box-Typen und ihre Anzeige-Reihenfolge
 BOX_TYPES = ['eingang', 'verarbeitung', 'gdv', 'courtage', 'sach', 'leben', 'kranken', 'sonstige', 'roh']
 
+# Admin-only Boxen (nur fuer Admins sichtbar)
+BOX_TYPES_ADMIN = ['falsch']
+
 BOX_DISPLAY_NAMES = {
     'eingang': 'Eingangs Box',
     'verarbeitung': 'Verarbeitungs Box',
@@ -28,6 +31,7 @@ BOX_DISPLAY_NAMES = {
     'kranken': 'Kranken Box',
     'sonstige': 'Sonstige Box',
     'roh': 'Roh Archiv',
+    'falsch': 'Falsch Box',
 }
 
 # Box-Farben - Harmonisch mit ACENCIA CI
@@ -42,6 +46,7 @@ BOX_COLORS = {
     'kranken': '#06b6d4',      # Cyan - Versicherungstyp
     'sonstige': '#64748b',     # Grau - Neutral
     'roh': '#78716c',          # Steingrau - Archiv/System
+    'falsch': '#ef4444',       # Rot - Falsch klassifiziert (Admin-only)
 }
 
 
@@ -53,7 +58,7 @@ class Document:
     original_filename: str
     mime_type: Optional[str]
     file_size: int
-    source_type: str  # 'bipro_auto', 'manual_upload', 'self_created'
+    source_type: str  # 'bipro_auto', 'manual_upload', 'self_created', 'scan'
     is_gdv: bool
     created_at: str
     uploaded_by_name: Optional[str] = None
@@ -85,6 +90,10 @@ class Document:
     external_shipment_id: Optional[str] = None        # BiPRO-Lieferungs-ID (extern)
     # Archivierungs-Status (nach Download)
     is_archived: bool = False
+    # Farbmarkierung (persistent ueber alle Operationen)
+    display_color: Optional[str] = None
+    # Originalname des Duplikat-Quell-Dokuments (fuer Tooltip)
+    duplicate_of_filename: Optional[str] = None
     
     @classmethod
     def from_dict(cls, data: Dict) -> 'Document':
@@ -94,7 +103,7 @@ class Document:
             original_filename=data.get('original_filename', data['filename']),
             mime_type=data.get('mime_type'),
             file_size=data.get('file_size', 0),
-            source_type=data.get('source_type', 'manual_upload'),
+            source_type=data.get('source_type') or '',
             is_gdv=bool(data.get('is_gdv', False)),
             created_at=data.get('created_at', ''),
             uploaded_by_name=data.get('uploaded_by_name'),
@@ -108,8 +117,8 @@ class Document:
             bipro_category=data.get('bipro_category'),
             validation_status=data.get('validation_status'),
             content_hash=data.get('content_hash'),
-            version=data.get('version', 1),
-            previous_version_id=data.get('previous_version_id'),
+            version=int(data.get('version', 1) or 1),
+            previous_version_id=int(data['previous_version_id']) if data.get('previous_version_id') else None,
             classification_source=data.get('classification_source'),
             classification_confidence=data.get('classification_confidence'),
             classification_reason=data.get('classification_reason'),
@@ -117,13 +126,18 @@ class Document:
             bipro_document_id=data.get('bipro_document_id'),
             source_xml_index_id=data.get('source_xml_index_id'),
             external_shipment_id=data.get('external_shipment_id'),
-            is_archived=bool(data.get('is_archived', False))
+            is_archived=bool(data.get('is_archived', False)),
+            display_color=data.get('display_color'),
+            duplicate_of_filename=data.get('duplicate_of_filename') or None,
         )
     
     @property
     def is_duplicate(self) -> bool:
         """Prueft ob dieses Dokument ein Duplikat (Version > 1) ist."""
-        return self.version > 1
+        try:
+            return int(self.version) > 1
+        except (TypeError, ValueError):
+            return False
     
     @property
     def is_pdf(self) -> bool:
@@ -140,16 +154,18 @@ class Document:
     @property
     def source_type_display(self) -> str:
         """Anzeigename fuer Quelle."""
-        if self.source_type == 'bipro_auto' or self.source_type.startswith('bipro_'):
+        source = self.source_type or ''
+        if source == 'bipro_auto' or source.startswith('bipro_'):
             if self.vu_name:
                 return self.vu_name  # Nur VU-Name ohne "BiPRO:" Prefix
             return "BiPRO"
         
         mapping = {
             'manual_upload': 'Manuell',
-            'self_created': 'Selbst erstellt'
+            'self_created': 'Selbst erstellt',
+            'scan': 'Scan'
         }
-        return mapping.get(self.source_type, self.source_type)
+        return mapping.get(source, source)
     
     @property
     def box_type_display(self) -> str:
@@ -191,6 +207,7 @@ class BoxStats:
     kranken: int = 0
     sonstige: int = 0
     roh: int = 0
+    falsch: int = 0
     total: int = 0
     # Archivierte Zaehlungen
     gdv_archived: int = 0
@@ -199,6 +216,7 @@ class BoxStats:
     leben_archived: int = 0
     kranken_archived: int = 0
     sonstige_archived: int = 0
+    falsch_archived: int = 0
     
     @classmethod
     def from_dict(cls, data: Dict) -> 'BoxStats':
@@ -212,6 +230,7 @@ class BoxStats:
             kranken=data.get('kranken', 0),
             sonstige=data.get('sonstige', 0),
             roh=data.get('roh', 0),
+            falsch=data.get('falsch', 0),
             total=data.get('total', 0),
             # Archivierte
             gdv_archived=data.get('gdv_archived', 0),
@@ -219,7 +238,8 @@ class BoxStats:
             sach_archived=data.get('sach_archived', 0),
             leben_archived=data.get('leben_archived', 0),
             kranken_archived=data.get('kranken_archived', 0),
-            sonstige_archived=data.get('sonstige_archived', 0)
+            sonstige_archived=data.get('sonstige_archived', 0),
+            falsch_archived=data.get('falsch_archived', 0)
         )
     
     def get_count(self, box_type: str) -> int:
@@ -322,13 +342,16 @@ class DocumentsAPI:
             logger.error(f"Box-Statistiken laden fehlgeschlagen: {e}")
             return BoxStats()
     
-    def move_documents(self, doc_ids: List[int], target_box: str) -> int:
+    def move_documents(self, doc_ids: List[int], target_box: str,
+                       processing_status: Optional[str] = None) -> int:
         """
         Dokumente in eine andere Box verschieben.
         
         Args:
             doc_ids: Liste von Dokument-IDs
             target_box: Ziel-Box ('gdv', 'courtage', 'sach', etc.)
+            processing_status: Optionaler Processing-Status ('completed', 'pending', 
+                             'manual_excluded'). Standard: 'completed' (serverseitig).
             
         Returns:
             Anzahl verschobener Dokumente
@@ -337,10 +360,14 @@ class DocumentsAPI:
             return 0
         
         try:
-            response = self.client.post('/documents/move', json_data={
+            payload = {
                 'document_ids': doc_ids,
                 'target_box': target_box
-            })
+            }
+            if processing_status:
+                payload['processing_status'] = processing_status
+            
+            response = self.client.post('/documents/move', json_data=payload)
             if response.get('success'):
                 moved = response['data'].get('moved_count', 0)
                 logger.info(f"{moved} Dokument(e) nach '{target_box}' verschoben")
@@ -402,7 +429,9 @@ class DocumentsAPI:
             
             if response.get('success'):
                 data = response['data']
-                logger.info(f"Dokument hochgeladen: {data.get('original_filename')} -> Box: {box_type}, BiPRO-Kat: {bipro_category}")
+                is_dup = data.get('is_duplicate', False)
+                dup_info = f" [DUPLIKAT v{data.get('version', 1)}]" if is_dup else ""
+                logger.info(f"Dokument hochgeladen: {data.get('original_filename')} -> Box: {box_type}, BiPRO-Kat: {bipro_category}{dup_info}")
                 
                 # Minimales Document-Objekt zurueckgeben
                 return Document(
@@ -416,7 +445,10 @@ class DocumentsAPI:
                     created_at=datetime.now().isoformat(),
                     box_type=data.get('box_type', box_type),
                     processing_status=data.get('processing_status', 'pending'),
-                    bipro_category=data.get('bipro_category', bipro_category)
+                    bipro_category=data.get('bipro_category', bipro_category),
+                    content_hash=data.get('content_hash'),
+                    version=int(data.get('version', 1) or 1),
+                    previous_version_id=int(data['previous_version_id']) if data.get('previous_version_id') else None,
                 )
             return None
         except APIError as e:
@@ -431,19 +463,20 @@ class DocumentsAPI:
         Args:
             doc_id: Dokument-ID
             target_dir: Zielverzeichnis
-            filename_override: Optionaler Dateiname (sonst original_filename)
+            filename_override: Optionaler Dateiname (sonst original_filename aus API)
             
         Returns:
             Pfad zur heruntergeladenen Datei oder None
         """
-        # Erst Dokument-Info holen für Dateinamen
-        doc = self.get_document(doc_id)
-        if not doc:
-            logger.error(f"Dokument {doc_id} nicht gefunden")
-            return None
-        
         # Dateinamen bestimmen
-        filename = filename_override or doc.original_filename
+        filename = filename_override
+        if not filename:
+            # Nur wenn kein Filename uebergeben: Dokument-Info holen (1 API-Call!)
+            doc = self.get_document(doc_id)
+            if not doc:
+                logger.error(f"Dokument {doc_id} nicht gefunden")
+                return None
+            filename = doc.original_filename
         
         # Sicherstellen, dass Zielverzeichnis existiert
         target_dir_path = Path(target_dir)
@@ -503,6 +536,35 @@ class DocumentsAPI:
             logger.error(f"Löschen fehlgeschlagen: {e}")
             return False
     
+    def delete_documents(self, doc_ids: List[int]) -> int:
+        """
+        Mehrere Dokumente loeschen (Bulk-API, 1 Request statt N).
+        
+        Args:
+            doc_ids: Liste von Dokument-IDs
+            
+        Returns:
+            Anzahl erfolgreich geloeschter Dokumente
+        """
+        if not doc_ids:
+            return 0
+        
+        try:
+            response = self.client.post('/documents/delete', json_data={'ids': doc_ids})
+            if response.get('success'):
+                count = response['data'].get('deleted_count', 0)
+                logger.info(f"{count} Dokument(e) geloescht (Bulk)")
+                return count
+            return 0
+        except APIError as e:
+            logger.error(f"Bulk-Loeschen fehlgeschlagen: {e}")
+            # Fallback: Einzeln loeschen (Abwaertskompatibilitaet)
+            count = 0
+            for doc_id in doc_ids:
+                if self.delete(doc_id):
+                    count += 1
+            return count
+    
     def get_gdv_documents(self) -> List[Document]:
         """Nur GDV-Dateien abrufen."""
         return self.list_documents(is_gdv=True)
@@ -522,7 +584,8 @@ class DocumentsAPI:
                content_hash: Optional[str] = None,
                bipro_document_id: Optional[str] = None,
                source_xml_index_id: Optional[int] = None,
-               is_archived: Optional[bool] = None) -> bool:
+               is_archived: Optional[bool] = None,
+               display_color: Optional[str] = None) -> bool:
         """
         Dokument-Metadaten aktualisieren.
         
@@ -543,6 +606,7 @@ class DocumentsAPI:
             bipro_document_id: BiPRO Dokument-ID
             source_xml_index_id: Relation zur XML-Quell-Lieferung
             is_archived: Archivierungs-Status (nach Download)
+            display_color: Farbmarkierung (green, red, blue, ...) oder leerer String zum Entfernen
             
         Returns:
             True wenn erfolgreich
@@ -578,6 +642,8 @@ class DocumentsAPI:
             data['source_xml_index_id'] = source_xml_index_id
         if is_archived is not None:
             data['is_archived'] = 1 if is_archived else 0
+        if display_color is not None:
+            data['display_color'] = display_color
         
         if not data:
             logger.warning("Keine Aenderungen angegeben")
@@ -644,7 +710,7 @@ class DocumentsAPI:
     
     def archive_documents(self, doc_ids: List[int]) -> int:
         """
-        Mehrere Dokumente archivieren.
+        Mehrere Dokumente archivieren (Bulk-API, 1 Request statt N).
         
         Args:
             doc_ids: Liste von Dokument-IDs
@@ -652,15 +718,28 @@ class DocumentsAPI:
         Returns:
             Anzahl erfolgreich archivierter Dokumente
         """
-        count = 0
-        for doc_id in doc_ids:
-            if self.archive_document(doc_id):
-                count += 1
-        return count
+        if not doc_ids:
+            return 0
+        
+        try:
+            response = self.client.post('/documents/archive', json_data={'ids': doc_ids})
+            if response.get('success'):
+                count = response['data'].get('archived_count', 0)
+                logger.info(f"{count} Dokument(e) archiviert (Bulk)")
+                return count
+            return 0
+        except APIError as e:
+            logger.error(f"Bulk-Archivierung fehlgeschlagen: {e}")
+            # Fallback: Einzeln archivieren (Abwaertskompatibilitaet)
+            count = 0
+            for doc_id in doc_ids:
+                if self.archive_document(doc_id):
+                    count += 1
+            return count
     
     def unarchive_documents(self, doc_ids: List[int]) -> int:
         """
-        Mehrere Dokumente entarchivieren.
+        Mehrere Dokumente entarchivieren (Bulk-API, 1 Request statt N).
         
         Args:
             doc_ids: Liste von Dokument-IDs
@@ -668,13 +747,122 @@ class DocumentsAPI:
         Returns:
             Anzahl erfolgreich entarchivierter Dokumente
         """
-        count = 0
-        for doc_id in doc_ids:
-            if self.unarchive_document(doc_id):
-                count += 1
-        return count
+        if not doc_ids:
+            return 0
+        
+        try:
+            response = self.client.post('/documents/unarchive', json_data={'ids': doc_ids})
+            if response.get('success'):
+                count = response['data'].get('unarchived_count', 0)
+                logger.info(f"{count} Dokument(e) entarchiviert (Bulk)")
+                return count
+            return 0
+        except APIError as e:
+            logger.error(f"Bulk-Entarchivierung fehlgeschlagen: {e}")
+            # Fallback: Einzeln entarchivieren (Abwaertskompatibilitaet)
+            count = 0
+            for doc_id in doc_ids:
+                if self.unarchive_document(doc_id):
+                    count += 1
+            return count
+    
+    def set_document_color(self, doc_id: int, color: Optional[str]) -> bool:
+        """
+        Farbmarkierung fuer ein einzelnes Dokument setzen oder entfernen.
+        
+        Args:
+            doc_id: Dokument-ID
+            color: Farbname (green, red, blue, ...) oder None zum Entfernen
+            
+        Returns:
+            True wenn erfolgreich
+        """
+        return self.update(doc_id, display_color=color or '')
+    
+    def set_documents_color(self, doc_ids: List[int], color: Optional[str]) -> int:
+        """
+        Farbmarkierung fuer mehrere Dokumente setzen oder entfernen (Bulk-API).
+        
+        Args:
+            doc_ids: Liste von Dokument-IDs
+            color: Farbname (green, red, blue, ...) oder None zum Entfernen
+            
+        Returns:
+            Anzahl erfolgreich aktualisierter Dokumente
+        """
+        if not doc_ids:
+            return 0
+        
+        try:
+            response = self.client.post('/documents/colors', json_data={
+                'ids': doc_ids,
+                'color': color
+            })
+            if response.get('success'):
+                count = response['data'].get('updated_count', 0)
+                logger.info(f"Farbmarkierung fuer {count} Dokument(e) gesetzt: {color}")
+                return count
+            return 0
+        except APIError as e:
+            logger.error(f"Bulk-Farbmarkierung fehlgeschlagen: {e}")
+            # Fallback: Einzeln setzen
+            count = 0
+            for doc_id in doc_ids:
+                if self.set_document_color(doc_id, color):
+                    count += 1
+            return count
     
     def get_unrenamed_pdfs(self) -> List[Document]:
         """Alle PDFs abrufen, die noch nicht durch KI umbenannt wurden."""
         all_docs = self.list_documents()
         return [d for d in all_docs if d.is_pdf and not d.ai_renamed]
+    
+    def get_document_history(self, doc_id: int) -> Optional[List[Dict]]:
+        """
+        Laedt die Aenderungshistorie eines Dokuments aus dem activity_log.
+        
+        Berechtigung: documents_history
+        
+        Args:
+            doc_id: Dokument-ID
+            
+        Returns:
+            Liste von Historie-Eintraegen (Dict) oder None bei Fehler.
+            Jeder Eintrag enthaelt: id, created_at, username, action, description, details, status
+        """
+        try:
+            response = self.client.get(f'/documents/{doc_id}/history')
+            if response.get('success'):
+                return response['data']['history']
+            return None
+        except APIError as e:
+            logger.error(f"Dokument-Historie laden fehlgeschlagen: {e}")
+            return None
+    
+    def replace_document_file(self, doc_id: int, file_path: str) -> bool:
+        """
+        Ersetzt die Datei eines bestehenden Dokuments auf dem Server.
+        
+        Metadaten (box_type, filename, etc.) bleiben erhalten.
+        content_hash und file_size werden serverseitig neu berechnet.
+        
+        Berechtigung: documents_manage
+        
+        Args:
+            doc_id: Dokument-ID
+            file_path: Pfad zur neuen Datei
+            
+        Returns:
+            True wenn erfolgreich
+        """
+        try:
+            response = self.client.upload_file(
+                f'/documents/{doc_id}/replace', file_path
+            )
+            if response.get('success'):
+                logger.info(f"Dokument {doc_id} Datei ersetzt: {file_path}")
+                return True
+            return False
+        except APIError as e:
+            logger.error(f"Datei-Ersetzung fehlgeschlagen fuer Dokument {doc_id}: {e}")
+            return False

@@ -51,7 +51,9 @@ try {
             
         case 'documents':
             require_once __DIR__ . '/documents.php';
-            handleDocumentsRequest($action ?: $id, $method);
+            // /documents/{id}/history → $action=id, $id='history'
+            $docSub = $parts[2] ?? null;
+            handleDocumentsRequest($action ?: $id, $method, $docSub);
             break;
             
         case 'gdv':
@@ -89,6 +91,110 @@ try {
         case 'processing-history':
             require_once __DIR__ . '/processing_history.php';
             handleProcessingHistoryRequest($action ?: $id, $method);
+            break;
+        
+        case 'passwords':
+            // Oeffentlicher Endpunkt: GET /passwords?type=pdf|zip
+            require_once __DIR__ . '/passwords.php';
+            handlePasswordsPublicRequest($method);
+            break;
+        
+        case 'smartscan':
+            // SmartScan Versand + Historie
+            // /smartscan/settings, /smartscan/send, /smartscan/jobs, /smartscan/jobs/{id}, /smartscan/jobs/{id}/process
+            require_once __DIR__ . '/smartscan.php';
+            handleSmartScanRequest($action, $id, $method);
+            break;
+        
+        case 'email-inbox':
+            // E-Mail Inbox (IMAP empfangene Mails)
+            // /email-inbox, /email-inbox/{id}, /email-inbox/pending-attachments,
+            // /email-inbox/attachments/{id}/download, /email-inbox/attachments/{id}/imported
+            require_once __DIR__ . '/email_accounts.php';
+            handleEmailInboxRequest($action ?: null, $method);
+            break;
+        
+        case 'admin':
+            // /admin/releases → separater Handler
+            if ($action === 'releases') {
+                require_once __DIR__ . '/releases.php';
+                handleAdminReleasesRequest($id ?: null, $method);
+                break;
+            }
+            
+            // /admin/passwords → Passwort-Verwaltung
+            if ($action === 'passwords') {
+                require_once __DIR__ . '/passwords.php';
+                handleAdminPasswordsRequest($id ?: null, $method);
+                break;
+            }
+            
+            // /admin/email-accounts → E-Mail-Konten-Verwaltung
+            if ($action === 'email-accounts') {
+                require_once __DIR__ . '/email_accounts.php';
+                $sub = $parts[3] ?? null;
+                handleAdminEmailAccountsRequest($id ?: null, $method, $sub);
+                break;
+            }
+            
+            // /admin/smartscan → SmartScan-Einstellungen
+            if ($action === 'smartscan') {
+                require_once __DIR__ . '/smartscan.php';
+                handleAdminSmartScanRequest($id ?: null, $method);
+                break;
+            }
+            
+            require_once __DIR__ . '/admin.php';
+            // /admin/users → ('users', method, null)
+            // /admin/users/5 → ('5', method, null)  [is_numeric → User-ID]
+            // /admin/users/5/password → ('5', method, 'password')
+            // /admin/permissions → ('permissions', method, null)
+            $adminSub = $parts[3] ?? null;
+            if ($action === 'users' && !empty($id)) {
+                // /admin/users/{id}[/sub]
+                handleAdminRequest($id, $method, $adminSub);
+            } else {
+                handleAdminRequest($action ?: null, $method, null);
+            }
+            break;
+        
+        case 'sessions':
+            require_once __DIR__ . '/sessions.php';
+            // /sessions, /sessions/{id}, /sessions/user/{userId}
+            $extra = $parts[2] ?? null;
+            handleSessionsRequest($action ?: null, $method, $extra);
+            break;
+        
+        case 'activity':
+            require_once __DIR__ . '/activity.php';
+            handleActivityRequest($action ?: null, $method);
+            break;
+        
+        case 'updates':
+            // Oeffentlicher Update-Check (keine Auth erforderlich)
+            require_once __DIR__ . '/releases.php';
+            if ($action === 'check') {
+                handleUpdateCheckRequest($method);
+            } else {
+                json_error('Unbekannte Updates-Aktion', 404);
+            }
+            break;
+        
+        case 'releases':
+            // Oeffentlicher Download-Endpoint
+            require_once __DIR__ . '/releases.php';
+            if ($action === 'download' && !empty($id) && is_numeric($id)) {
+                handleReleaseDownload((int)$id);
+            } else {
+                json_error('Unbekannte Releases-Aktion', 404);
+            }
+            break;
+        
+        case 'incoming-scans':
+            // Eingehende Scan-Dokumente (Power Automate)
+            // Auth: API-Key im Header X-API-Key (kein JWT)
+            require_once __DIR__ . '/incoming_scans.php';
+            handleIncomingScansRequest($method);
             break;
             
         default:

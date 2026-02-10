@@ -1,0 +1,20 @@
+﻿- Delete Perfomance optmimierung
+- Post Performance optimierung
+- Verarbeitungs Performance optimierung
+- Refresh alle 10s
+- Outlook kompatibilität.
+- Passwortgeschütze PDF behandlung (Zürich)
+- Drag and Drop vom Explorer in die Eingangsbox.
+- Zuordnung geschärft.
+- Dateibehandlung verbessert.
+- Kosten weiter minimiert.
+- Persistentes Farbsystem
+- Auto-Update-System implementiert
+- Admin-Bereich mit Release-Verwaltung
+- Cache-Optimierung
+- Bulk-Archivierung
+- Vorschau-Cache fuer schnellere PDF-Anzeige
+- KI-Kosten-Tracking mit Admin-Uebersicht
+- Rechte-/Session-/Activity-Management
+- Neue Box für Admins um falsch sortierte Dokumente auszulagern.
+- Scans implementiert.

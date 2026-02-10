@@ -81,6 +81,21 @@ BOX_COLORS = {
 }
 
 # =============================================================================
+# DOKUMENTEN-FARBMARKIERUNGEN (blasse, nicht grelle Toene)
+# =============================================================================
+
+DOCUMENT_DISPLAY_COLORS = {
+    'green':  '#c8e6c9',   # Blasses Gruen
+    'red':    '#ffcdd2',   # Blasses Rot
+    'blue':   '#bbdefb',   # Blasses Blau
+    'orange': '#ffe0b2',   # Blasses Orange
+    'purple': '#e1bee7',   # Blasses Lila
+    'pink':   '#f8bbd0',   # Blasses Pink
+    'cyan':   '#b2ebf2',   # Blasses Tuerkis
+    'yellow': '#fff9c4',   # Blasses Gelb
+}
+
+# =============================================================================
 # TYPOGRAFIE - ACENCIA Fonts (OFFIZIELL)
 # =============================================================================
 
@@ -525,12 +540,13 @@ def get_application_stylesheet() -> str:
         /* ================================================================== */
         
         QToolTip {{
-            background-color: {PRIMARY_900};
-            color: {TEXT_INVERSE};
-            border: none;
+            background-color: #fffdf5;
+            color: #1a1a1a;
+            border: 1px solid {ACCENT_500};
             border-radius: {RADIUS_SM};
-            padding: 6px 10px;
-            font-size: {FONT_SIZE_CAPTION};
+            padding: 8px 12px;
+            font-size: {FONT_SIZE_BODY};
+            font-weight: 500;
         }}
         
         /* ================================================================== */
@@ -953,37 +969,8 @@ def show_error_dialog(parent, title: str, cause: str, actions: list = None,
     return retry_clicked[0]
 
 
-def show_success_toast(parent, message: str, duration_ms: int = 3000):
-    """
-    Zeigt eine kurze Erfolgsmeldung (Toast) im ACENCIA Design.
-    
-    Args:
-        parent: Parent-Widget
-        message: Kurze Erfolgsmeldung
-        duration_ms: Anzeigedauer in Millisekunden
-    """
-    from PySide6.QtWidgets import QLabel
-    from PySide6.QtCore import QTimer, Qt
-    
-    toast = QLabel(f"✓ {message}", parent)
-    toast.setStyleSheet(f"""
-        QLabel {{
-            background-color: {SUCCESS};
-            color: {TEXT_INVERSE};
-            padding: 12px 20px;
-            border-radius: {RADIUS_MD};
-            font-family: {FONT_BODY};
-            font-size: {FONT_SIZE_BODY};
-        }}
-    """)
-    toast.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    
-    # Position unten mittig
-    toast.adjustSize()
-    x = (parent.width() - toast.width()) // 2
-    y = parent.height() - toast.height() - 30
-    toast.move(x, y)
-    toast.show()
-    
-    # Nach duration_ms ausblenden
-    QTimer.singleShot(duration_ms, toast.deleteLater)
+# show_success_toast() wurde entfernt (v1.0.7).
+# Verwende stattdessen ToastManager aus ui.toast:
+#   from ui.toast import ToastManager
+#   toast_manager.show_success("Nachricht")
+# Siehe docs/ui/UX_RULES.md

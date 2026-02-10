@@ -9,7 +9,7 @@ Cached Server-Daten persistent im Speicher:
 Features:
 - Lazy Loading: Daten werden erst bei Bedarf geladen
 - Persistenter Cache: Daten bleiben beim View-Wechsel erhalten
-- Auto-Refresh: Alle 90 Sekunden im Hintergrund
+- Auto-Refresh: Alle 30 Sekunden im Hintergrund
 - Manuelle Aktualisierung: Bei explizitem Refresh-Button
 """
 
@@ -22,12 +22,12 @@ from typing import Dict, List, Optional, Callable, Any
 from PySide6.QtCore import QObject, Signal, QTimer
 
 from api.client import APIClient
-from api.documents import DocumentsAPI, Document
+from api.documents import DocumentsAPI, Document, BoxStats
 
 logger = logging.getLogger(__name__)
 
 # Cache-Konfiguration
-DEFAULT_AUTO_REFRESH_INTERVAL = 90  # Sekunden
+DEFAULT_AUTO_REFRESH_INTERVAL = 20  # Sekunden
 CACHE_TTL = 300  # 5 Minuten (als Fallback wenn Auto-Refresh nicht laeuft)
 
 
@@ -124,6 +124,9 @@ class DataCacheService(QObject):
         """
         Holt Dokumente aus dem Cache oder laedt sie vom Server.
         
+        Strategie: Einmal ALLE Dokumente laden, dann lokal nach box_type filtern.
+        Das spart ~87% der API-Calls gegenueber pro-Box-Laden.
+        
         Args:
             box_type: Box-Typ oder None fuer alle
             force_refresh: True = Cache ignorieren, neu laden
@@ -131,33 +134,65 @@ class DataCacheService(QObject):
         Returns:
             Liste von Document-Objekten
         """
-        cache_key = box_type or 'all'
-        
         with self._cache_lock:
             # Cache vorhanden und nicht abgelaufen?
-            if not force_refresh and cache_key in self._documents_cache:
-                entry = self._documents_cache[cache_key]
+            if not force_refresh and 'all' in self._documents_cache:
+                entry = self._documents_cache['all']
                 if not entry.is_expired():
-                    logger.debug(f"Dokumente aus Cache: {cache_key} ({len(entry.data)} Stk)")
-                    return entry.data
+                    all_docs = entry.data
+                    if box_type:
+                        filtered = [d for d in all_docs if d.box_type == box_type]
+                        logger.debug(f"Dokumente aus Cache (gefiltert): {box_type} ({len(filtered)}/{len(all_docs)} Stk)")
+                        return filtered
+                    logger.debug(f"Dokumente aus Cache: all ({len(all_docs)} Stk)")
+                    return all_docs
         
-        # Neu laden
-        return self._load_documents(box_type)
+        # Neu laden (immer alle)
+        all_docs = self._load_all_documents()
+        
+        if box_type:
+            return [d for d in all_docs if d.box_type == box_type]
+        return all_docs
+
+    def get_documents_cached_only(self, box_type: str = None) -> Optional[List[Document]]:
+        """
+        Holt Dokumente nur aus dem Cache (kein Server-Call).
+        
+        Args:
+            box_type: Box-Typ oder None fuer alle
+        
+        Returns:
+            Liste von Document-Objekten wenn Cache vorhanden und gueltig,
+            sonst None.
+        """
+        with self._cache_lock:
+            if 'all' in self._documents_cache:
+                entry = self._documents_cache['all']
+                if not entry.is_expired():
+                    all_docs = entry.data
+                    if box_type:
+                        filtered = [d for d in all_docs if d.box_type == box_type]
+                        logger.debug(f"Dokumente aus Cache (cache-only, gefiltert): {box_type} ({len(filtered)} Stk)")
+                        return filtered
+                    logger.debug(f"Dokumente aus Cache (cache-only): all ({len(all_docs)} Stk)")
+                    return all_docs
+        
+        return None
     
-    def _load_documents(self, box_type: str = None) -> List[Document]:
-        """Laedt Dokumente vom Server und cached sie."""
-        cache_key = box_type or 'all'
+    def _load_all_documents(self) -> List[Document]:
+        """Laedt ALLE Dokumente vom Server und cached sie zentral.
         
+        Ein einzelner API-Call statt N Calls pro Box.
+        Client-seitiges Filtern erfolgt in get_documents().
+        """
         try:
-            logger.info(f"Lade Dokumente vom Server: {cache_key}")
+            logger.info("Lade alle Dokumente vom Server (1 API-Call)")
             
-            if box_type:
-                documents = self.docs_api.list_by_box(box_type)
-            else:
-                documents = self.docs_api.list_documents()
+            documents = self.docs_api.list_documents()
             
             with self._cache_lock:
-                self._documents_cache[cache_key] = CacheEntry(data=documents)
+                # Nur 'all' cachen - Box-Filter erfolgt client-seitig
+                self._documents_cache['all'] = CacheEntry(data=documents)
             
             logger.info(f"Dokumente geladen und gecached: {len(documents)} Stk")
             return documents
@@ -166,23 +201,25 @@ class DataCacheService(QObject):
             logger.error(f"Fehler beim Laden der Dokumente: {e}")
             # Bei Fehler: Alten Cache zurueckgeben falls vorhanden
             with self._cache_lock:
-                if cache_key in self._documents_cache:
-                    return self._documents_cache[cache_key].data
+                if 'all' in self._documents_cache:
+                    return self._documents_cache['all'].data
             return []
     
     def invalidate_documents(self, box_type: str = None):
         """
         Invalidiert den Dokumente-Cache.
         
+        Da alle Dokumente zentral gecacht werden, invalidiert jeder Aufruf
+        den gesamten Cache (egal ob box_type angegeben oder nicht).
+        
         Args:
-            box_type: Bestimmte Box oder None fuer alle
+            box_type: Wird fuer Logging verwendet, invalidiert aber immer alles
         """
         with self._cache_lock:
+            self._documents_cache.clear()
             if box_type:
-                self._documents_cache.pop(box_type, None)
-                logger.debug(f"Dokumente-Cache invalidiert: {box_type}")
+                logger.debug(f"Dokumente-Cache invalidiert (Trigger: {box_type})")
             else:
-                self._documents_cache.clear()
                 logger.debug("Dokumente-Cache komplett invalidiert")
     
     # =========================================================================
@@ -191,24 +228,90 @@ class DataCacheService(QObject):
     
     def get_stats(self, force_refresh: bool = False) -> Dict[str, int]:
         """
-        Holt Box-Statistiken aus dem Cache oder laedt sie vom Server.
+        Holt Box-Statistiken - bevorzugt berechnet aus dem Dokumente-Cache.
+        
+        Strategie:
+        1. Wenn Dokumente im Cache sind: Stats client-seitig berechnen (kein API-Call)
+        2. Wenn nicht: Stats vom Server laden (Fallback)
         
         Args:
             force_refresh: True = Cache ignorieren, neu laden
             
         Returns:
-            Dict mit Box-Typ -> Anzahl
+            BoxStats-Objekt oder Dict mit Box-Typ -> Anzahl
         """
-        with self._cache_lock:
-            if not force_refresh and self._stats_cache:
-                if not self._stats_cache.is_expired():
+        if not force_refresh:
+            with self._cache_lock:
+                if self._stats_cache and not self._stats_cache.is_expired():
                     logger.debug("Statistiken aus Cache")
                     return self._stats_cache.data
         
+        # Versuche Stats aus Dokumente-Cache zu berechnen (spart 1 API-Call)
+        computed = self._compute_stats_from_cache()
+        if computed is not None:
+            return computed
+        
+        # Fallback: Vom Server laden
         return self._load_stats()
     
+    def _compute_stats_from_cache(self) -> Optional[Any]:
+        """
+        Berechnet Box-Statistiken aus dem Dokumente-Cache (kein API-Call).
+        
+        Returns:
+            BoxStats wenn Dokumente-Cache vorhanden, sonst None
+        """
+        with self._cache_lock:
+            if 'all' not in self._documents_cache:
+                return None
+            entry = self._documents_cache['all']
+            if entry.is_expired():
+                return None
+            all_docs = entry.data
+        
+        # Zaehler initialisieren
+        box_counts = {}
+        archived_counts = {}
+        total = 0
+        
+        for doc in all_docs:
+            box = doc.box_type or 'sonstige'
+            total += 1
+            
+            if doc.is_archived:
+                archived_counts[box] = archived_counts.get(box, 0) + 1
+            else:
+                box_counts[box] = box_counts.get(box, 0) + 1
+        
+        stats = BoxStats(
+            eingang=box_counts.get('eingang', 0),
+            verarbeitung=box_counts.get('verarbeitung', 0),
+            gdv=box_counts.get('gdv', 0),
+            courtage=box_counts.get('courtage', 0),
+            sach=box_counts.get('sach', 0),
+            leben=box_counts.get('leben', 0),
+            kranken=box_counts.get('kranken', 0),
+            sonstige=box_counts.get('sonstige', 0),
+            roh=box_counts.get('roh', 0),
+            falsch=box_counts.get('falsch', 0),
+            total=total,
+            gdv_archived=archived_counts.get('gdv', 0),
+            courtage_archived=archived_counts.get('courtage', 0),
+            sach_archived=archived_counts.get('sach', 0),
+            leben_archived=archived_counts.get('leben', 0),
+            kranken_archived=archived_counts.get('kranken', 0),
+            sonstige_archived=archived_counts.get('sonstige', 0),
+            falsch_archived=archived_counts.get('falsch', 0),
+        )
+        
+        with self._cache_lock:
+            self._stats_cache = CacheEntry(data=stats)
+        
+        logger.info(f"Statistiken aus Dokumente-Cache berechnet: {stats}")
+        return stats
+    
     def _load_stats(self) -> Dict[str, int]:
-        """Laedt Statistiken vom Server und cached sie."""
+        """Laedt Statistiken vom Server und cached sie (Fallback)."""
         try:
             logger.info("Lade Statistiken vom Server")
             stats = self.docs_api.get_box_stats()
@@ -224,7 +327,9 @@ class DataCacheService(QObject):
             with self._cache_lock:
                 if self._stats_cache:
                     return self._stats_cache.data
-            return {}
+            # BUG-0008 Fix: Leeres BoxStats-Objekt statt {} zurueckgeben
+            from api.documents import BoxStats
+            return BoxStats()
     
     def invalidate_stats(self):
         """Invalidiert den Statistiken-Cache."""
@@ -379,39 +484,44 @@ class DataCacheService(QObject):
         thread.start()
     
     def _refresh_all_background(self):
-        """Background-Worker fuer Refresh."""
+        """Background-Worker fuer Refresh.
+        
+        Optimierung: Statt N API-Calls (einen pro gecachte Box) wird nur
+        EIN Call fuer alle Dokumente gemacht. Client-seitiges Filtern
+        spart ~87% der Netzwerk-Anfragen.
+        
+        WICHTIG: Signal-Emission direkt (nicht ueber QTimer.singleShot!).
+        QTimer.singleShot funktioniert NICHT aus einem threading.Thread,
+        da kein Qt-Event-Loop vorhanden ist. Direkte Emission ist sicher,
+        weil alle UI-Verbindungen QueuedConnection verwenden - Qt stellt
+        die Zustellung im Main-Thread automatisch sicher.
+        """
         try:
-            # Statistiken laden
-            self._load_stats()
-            # Signal ueber QTimer.singleShot im Main-Thread emittieren
-            # (threading.Thread hat keine Qt Event-Loop, daher direktes emit() -> Deadlock!)
-            QTimer.singleShot(0, self.stats_updated.emit)
+            # 1. Alle Dokumente in einem API-Call laden (statt pro Box)
+            self._load_all_documents()
+            # 'all' Signal emittieren - UI filtert lokal
+            self.documents_updated.emit('all')
             
-            # Dokumente fuer alle gecachten Boxen neu laden
-            with self._cache_lock:
-                cached_boxes = list(self._documents_cache.keys())
-            
-            for box_type in cached_boxes:
-                if box_type == 'all':
-                    self._load_documents(None)
-                else:
-                    self._load_documents(box_type)
-                # Signal im Main-Thread emittieren (Closure fuer box_type)
-                QTimer.singleShot(0, lambda bt=box_type: self.documents_updated.emit(bt))
+            # 2. Statistiken aus Dokumente-Cache berechnen (kein extra API-Call)
+            computed = self._compute_stats_from_cache()
+            if computed is None:
+                # Fallback: Vom Server laden
+                self._load_stats()
+            self.stats_updated.emit()
             
             # VU-Verbindungen
             if self._connections_cache:
                 self._load_connections()
-                QTimer.singleShot(0, self.connections_updated.emit)
+                self.connections_updated.emit()
             
-            logger.info("Auto-Refresh abgeschlossen")
+            logger.info("Auto-Refresh abgeschlossen (1 API-Call fuer Dokumente)")
             
         except Exception as e:
             logger.error(f"Fehler beim Auto-Refresh: {e}")
         finally:
             with self._cache_lock:
                 self._refresh_in_progress = False
-            QTimer.singleShot(0, self.refresh_finished.emit)
+            self.refresh_finished.emit()
     
     def refresh_all_sync(self):
         """
@@ -433,6 +543,20 @@ class DataCacheService(QObject):
     # =========================================================================
     # HILFSMETHODEN
     # =========================================================================
+    
+    def get_documents_cache_time(self) -> Optional[datetime]:
+        """
+        Gibt den Zeitpunkt zurueck, an dem der Dokumente-Cache zuletzt geladen wurde.
+        
+        Returns:
+            datetime wenn Cache vorhanden und gueltig, sonst None
+        """
+        with self._cache_lock:
+            if 'all' in self._documents_cache:
+                entry = self._documents_cache['all']
+                if not entry.is_expired():
+                    return entry.loaded_at
+        return None
     
     def get_cache_info(self) -> Dict[str, Any]:
         """Gibt Cache-Status-Informationen zurueck (fuer Debug)."""

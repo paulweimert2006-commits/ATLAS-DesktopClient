@@ -1,5 +1,5 @@
 """
-BiPRO-GDV Tool - GDV Editor View
+ACENCIA ATLAS - GDV Editor View
 
 Der GDV-Editor als eigenständiges Widget für das Hauptfenster.
 Basiert auf dem bestehenden GDV-Editor Code.
@@ -362,7 +362,8 @@ class GDVEditorView(QWidget):
             self.status_label.setText(f"{filename} (Server)")
             self.btn_upload.setEnabled(True)
         else:
-            QMessageBox.warning(self, "Fehler", f"Datei konnte nicht geladen werden.")
+            if hasattr(self, '_toast_manager') and self._toast_manager:
+                self._toast_manager.show_error("Datei konnte nicht geladen werden")
     
     def _load_file(self, filepath: str):
         """Lädt eine GDV-Datei."""
@@ -394,7 +395,8 @@ class GDVEditorView(QWidget):
             self.btn_upload.setEnabled(True)
             
         except Exception as e:
-            QMessageBox.critical(self, "Fehler", f"Datei konnte nicht geladen werden:\n{e}")
+            if hasattr(self, '_toast_manager') and self._toast_manager:
+                self._toast_manager.show_error(f"Datei konnte nicht geladen werden: {e}")
     
     def _update_filter_combo(self):
         """Aktualisiert die Filter-Combobox."""
@@ -493,7 +495,8 @@ class GDVEditorView(QWidget):
             self.status_label.setText(f"{os.path.basename(filepath)} - Gespeichert")
             self.btn_upload.setEnabled(True)
         except Exception as e:
-            QMessageBox.critical(self, "Fehler", f"Speichern fehlgeschlagen:\n{e}")
+            if hasattr(self, '_toast_manager') and self._toast_manager:
+                self._toast_manager.show_error(f"Speichern fehlgeschlagen: {e}")
     
     def _on_upload_to_archive(self):
         """Aktuelle Datei ins Archiv hochladen."""
@@ -507,12 +510,11 @@ class GDVEditorView(QWidget):
         if self._current_filepath:
             doc = self.docs_api.upload(self._current_filepath, 'manual_upload')
             if doc:
-                QMessageBox.information(
-                    self, "Erfolg",
-                    f"Datei wurde ins Archiv hochgeladen."
-                )
+                if hasattr(self, '_toast_manager') and self._toast_manager:
+                    self._toast_manager.show_success("Datei ins Archiv hochgeladen")
             else:
-                QMessageBox.warning(self, "Fehler", "Upload fehlgeschlagen.")
+                if hasattr(self, '_toast_manager') and self._toast_manager:
+                    self._toast_manager.show_error("Upload fehlgeschlagen")
     
     def _on_view_changed(self, index):
         """Ansicht geändert."""

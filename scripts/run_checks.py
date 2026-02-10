@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Minimal CI Script für BiPRO-GDV Tool.
+Minimal CI Script für ACENCIA ATLAS.
 
 Führt Lint + Tests aus.
 Aufruf: python scripts/run_checks.py

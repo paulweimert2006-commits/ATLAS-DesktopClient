@@ -1,6 +1,6 @@
-# Entwickler-Dokumentation - BiPRO-GDV Tool v0.9.4
+# Entwickler-Dokumentation - ACENCIA ATLAS v1.6.0
 
-**Stand:** 06. Februar 2026
+**Stand:** 10. Februar 2026
 
 ## Lokales Setup
 
@@ -47,59 +47,20 @@ python -c "import logging; logging.basicConfig(level=logging.DEBUG); exec(open('
 
 ## Projekt-Struktur
 
-```
-5510_GDV Tool V1/
-├── run.py                    # Entry Point (fügt src/ zum Path hinzu)
-├── requirements.txt          # Python-Abhängigkeiten
-├── AGENTS.md                 # Agent-Anweisungen
-├── README.md
-│
-├── src/                      # Hauptcode
-│   ├── __init__.py
-│   ├── main.py              # Qt-App, Stylesheet, main()
-│   │
-│   ├── domain/              # Fachliche Modelle
-│   │   ├── __init__.py
-│   │   ├── models.py        # Dataclasses: Contract, Customer, etc.
-│   │   └── mapper.py        # ParsedRecord → Domain-Objekt
-│   │
-│   ├── layouts/             # GDV-Satzart-Definitionen
-│   │   ├── __init__.py
-│   │   └── gdv_layouts.py   # LAYOUT_0001, LAYOUT_0100, etc.
-│   │
-│   ├── parser/              # GDV-Parser
-│   │   ├── __init__.py
-│   │   └── gdv_parser.py    # parse_file(), save_file(), etc.
-│   │
-│   ├── services/            # Business-Logik (NEU v0.8.0)
-│   │   ├── __init__.py
-│   │   └── document_processor.py  # Parallele Dokumentenverarbeitung
-│   │
-│   ├── config/              # Konfiguration (NEU v0.8.0)
-│   │   ├── __init__.py
-│   │   └── processing_rules.py    # Verarbeitungsregeln
-│   │
-│   └── ui/                  # Benutzeroberfläche
-│       ├── __init__.py
-│       ├── main_hub.py      # Navigation
-│       ├── bipro_view.py    # BiPRO-Abruf
-│       ├── archive_boxes_view.py  # Dokumentenarchiv (NEU v0.8.0)
-│       ├── main_window.py   # GDV-Editor
-│       ├── user_detail_view.py
-│       └── partner_view.py
-│
-├── testdata/                # Testdaten
-│   ├── sample.gdv          # Generierte Testdatei
-│   ├── create_testdata.py  # Testdaten erstellen
-│   └── test_roundtrip.py   # Roundtrip-Test
-│
-├── Echte daten Beispiel/    # Echte GDV-Dateien (nicht committen!)
-│
-└── docs/                    # Dokumentation
-    ├── ARCHITECTURE.md
-    ├── DEVELOPMENT.md       # Diese Datei
-    └── DOMAIN.md
-```
+Siehe `README.md` fuer die vollstaendige Projektstruktur.
+
+### Wichtigste Verzeichnisse
+
+| Verzeichnis | Beschreibung | Zeilen (gesamt) |
+|-------------|--------------|-----------------|
+| `src/ui/` | Benutzeroberflaeche (PySide6) | ~21.500 |
+| `src/api/` | Server-API Clients | ~5.800 |
+| `src/bipro/` | BiPRO SOAP Client | ~2.400 |
+| `src/services/` | Business-Logik | ~3.400 |
+| `src/domain/` | Fachliche Modelle | ~1.100 |
+| `src/parser/` | GDV Fixed-Width Parser | ~750 |
+| `src/config/` | Konfiguration + Regeln | ~2.050 |
+| `src/i18n/` | Internationalisierung | ~910 |
 
 ---
 
@@ -200,15 +161,19 @@ def parse_record(raw_line: str, line_number: int = 0) -> ParsedRecord:
 
 ## Debugging
 
-### Logging aktivieren
+### Logging
 
-In `src/main.py` wird Logging konfiguriert:
+Logging ist konfiguriert in `src/main.py`:
+- **Konsole**: `INFO` Level
+- **File-Logging**: `logs/bipro_gdv.log` (RotatingFileHandler, 5 MB, 3 Backups)
+- **Format**: `"%(asctime)s - %(name)s - %(levelname)s - %(message)s"`
 
-```python
-logging.basicConfig(
-    level=logging.INFO,  # Auf DEBUG setzen für mehr Output
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
+```bash
+# Log-Datei ansehen
+type logs\bipro_gdv.log
+
+# Oder in Echtzeit beobachten
+Get-Content logs\bipro_gdv.log -Wait
 ```
 
 ### Parser debuggen
@@ -231,13 +196,17 @@ for name, field in record.fields.items():
 
 ### UI debuggen
 
-Qt-Stylesheets werden in `src/main.py` definiert:
-```python
-app.setStyleSheet("""
-    QMainWindow { background-color: #ffffff; }
-    ...
-""")
-```
+**Design-Tokens** in `src/ui/styles/tokens.py`:
+- Farben (ACENCIA Corporate Design: Primary, Secondary, Accent)
+- Dokumenten-Farbpalette
+- Font-Konfiguration
+
+**UI-Regeln** in `docs/ui/UX_RULES.md`:
+- Keine modalen Popups (QMessageBox) - stattdessen Toast-Benachrichtigungen
+- Toast-System: `ToastManager` in `src/ui/toast.py`
+- Alle UI-Texte aus `src/i18n/de.py`
+
+**QFont Warnings**: `QFont::setPointSize: Point size <= 0 (-1)` beim Start sind bekannt und harmlos (Font-Initialisierung).
 
 ---
 
@@ -309,14 +278,35 @@ colors = {
 
 ## Build & Packaging
 
-### PyInstaller (geplant)
+### Build (PyInstaller + Inno Setup)
 
 ```bash
-pip install pyinstaller
-pyinstaller --onefile --windowed run.py
+# Vollstaendiger Build: PyInstaller + Inno Setup
+build.bat
+
+# Nur PyInstaller (ohne Installer)
+build_simple.bat
+
+# Debug-Build (mit Konsole)
+build_debug.bat
 ```
 
-**Hinweis**: Aktuell nicht konfiguriert/getestet.
+**`build.bat` macht folgendes**:
+1. Liest Version aus `VERSION`-Datei
+2. Generiert `version_info.txt` (Windows-Metadaten)
+3. PyInstaller: Erstellt EXE mit allen Assets (Fonts, Icons)
+4. Inno Setup: Erstellt Installer-EXE mit SHA256-Hash
+5. Output in `Output/ACENCIA-ATLAS-Setup-{version}.exe`
+
+### Release-Prozess
+
+Siehe `RELEASE_HOWTO.md` fuer den vollstaendigen Release-Prozess.
+
+**Kurzfassung**:
+1. `VERSION`-Datei aktualisieren
+2. `build.bat` ausfuehren
+3. Installer in Admin → Releases hochladen
+4. Status auf "active" oder "mandatory" setzen
 
 ---
 
@@ -372,10 +362,6 @@ python -m pytest src/tests/test_stability.py -v
 
 # Alles zusammen (Lint + Tests)
 python scripts/run_checks.py
-```
-
-### Aeltere Tests (manuell)
-pytest tests/
 ```
 
 ---

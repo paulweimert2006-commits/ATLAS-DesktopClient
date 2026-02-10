@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-BiPRO-GDV Tool - Haupteinstiegspunkt
+ACENCIA ATLAS - Haupteinstiegspunkt
 
-Ein Desktop-Tool für BiPRO-Datenabruf und GDV-Bearbeitung.
+Der Datenkern. Desktop-App für BiPRO-Datenabruf und GDV-Bearbeitung.
 Visuelles Design basiert auf ACENCIA Corporate Identity.
 """
 
 import sys
 import os
 import logging
+import ctypes
 from logging.handlers import RotatingFileHandler
 
 from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
@@ -17,6 +18,33 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont, QFontDatabase, QIcon
 
 LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+
+def _read_app_version() -> str:
+    """Liest die App-Version aus der VERSION-Datei (zentrale Versionsquelle)."""
+    # In PyInstaller-Bundle: VERSION liegt neben der EXE im _MEIPASS oder Arbeitsverzeichnis
+    candidates = [
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "VERSION"),
+        os.path.join(os.path.dirname(sys.executable), "VERSION"),
+        os.path.join(getattr(sys, '_MEIPASS', ''), "VERSION"),
+    ]
+    for path in candidates:
+        try:
+            with open(path, 'r', encoding='utf-8-sig') as f:
+                version = f.read().strip()
+                if version:
+                    return version
+        except (FileNotFoundError, OSError):
+            continue
+    return "0.0.0"  # Fallback
+
+
+def is_dev_mode() -> bool:
+    """Erkennt ob die App im Entwicklungsmodus laeuft (python run.py statt EXE)."""
+    return not getattr(sys, 'frozen', False)
+
+
+APP_VERSION = _read_app_version()
 
 def setup_logging():
     """Konfiguriert Logging mit Console + File Output."""
@@ -57,9 +85,56 @@ _src_dir = os.path.dirname(os.path.abspath(__file__))
 if _src_dir not in sys.path:
     sys.path.insert(0, _src_dir)
 
+from PySide6.QtCore import QObject, Signal as QtSignal
+
 from ui.login_dialog import LoginDialog
 from ui.main_hub import MainHub
 from ui.styles.tokens import get_application_stylesheet, FONT_BODY
+from i18n import de as texts
+
+
+class ForcedLogoutHandler(QObject):
+    """
+    Vermittler fuer erzwungenen Logout aus beliebigen Threads.
+    
+    Der APIClient kann den forced_logout_callback aus Worker-Threads aufrufen.
+    Qt-UI-Operationen (MessageBox, close) muessen aber im Main-Thread laufen.
+    Dieses Signal stellt die Thread-Sicherheit sicher.
+    """
+    logout_requested = QtSignal(str)
+    
+    def __init__(self, window: MainHub, auth_api):
+        super().__init__()
+        self._window = window
+        self._auth_api = auth_api
+        self._triggered = False
+        self.logout_requested.connect(self._do_forced_logout)
+    
+    def trigger(self, reason: str) -> None:
+        """Wird vom APIClient (ggf. aus Worker-Thread) aufgerufen."""
+        if not self._triggered:
+            self._triggered = True
+            self.logout_requested.emit(reason)
+    
+    def _do_forced_logout(self, reason: str) -> None:
+        """Wird im Main-Thread ausgefuehrt."""
+        logger.warning(f"Erzwungener Logout durchgefuehrt: {reason}")
+        
+        # Auth-State bereinigen
+        try:
+            self._auth_api.logout()
+        except Exception:
+            pass
+        
+        # Meldung anzeigen
+        QMessageBox.warning(
+            self._window,
+            texts.FORCED_LOGOUT_TITLE,
+            texts.FORCED_LOGOUT_MESSAGE
+        )
+        
+        # Fenster schliessen
+        self._window.close()
 
 
 def load_embedded_fonts():
@@ -86,13 +161,61 @@ def load_embedded_fonts():
     return loaded_fonts
 
 
+# Single-Instance Mutex (global, damit der Handle nicht garbage-collected wird)
+_instance_mutex = None
+
+SINGLE_INSTANCE_MUTEX_NAME = "ACENCIA_ATLAS_SINGLE_INSTANCE"
+
+
+def _acquire_single_instance() -> bool:
+    """
+    Erstellt einen Windows Named Mutex fuer Single-Instance-Schutz.
+    
+    Der gleiche Mutex-Name wird in installer.iss (AppMutex) verwendet,
+    damit der Installer wartet bis die App geschlossen ist.
+    
+    Returns:
+        True wenn diese Instanz die einzige ist, False wenn bereits eine laeuft.
+    """
+    global _instance_mutex
+    
+    if sys.platform != 'win32':
+        return True  # Nur Windows
+    
+    try:
+        kernel32 = ctypes.windll.kernel32
+        _instance_mutex = kernel32.CreateMutexW(None, False, SINGLE_INSTANCE_MUTEX_NAME)
+        last_error = kernel32.GetLastError()
+        
+        # ERROR_ALREADY_EXISTS = 183
+        if last_error == 183:
+            logger.warning("Andere Instanz laeuft bereits (Mutex existiert)")
+            return False
+        
+        logger.info("Single-Instance Mutex erstellt")
+        return True
+    except Exception as e:
+        logger.warning(f"Single-Instance Check fehlgeschlagen: {e}")
+        return True  # Im Zweifel starten
+
+
 def main():
     """Hauptfunktion zum Starten der Anwendung."""
     app = QApplication(sys.argv)
     
+    # Single-Instance Check
+    if not _acquire_single_instance():
+        from i18n import de as _texts
+        QMessageBox.warning(
+            None,
+            _texts.SINGLE_INSTANCE_TITLE,
+            _texts.SINGLE_INSTANCE_MSG
+        )
+        sys.exit(0)
+    
     # Anwendungsweite Einstellungen
-    app.setApplicationName("BiPRO-GDV Tool")
-    app.setApplicationVersion("0.9.4")
+    app.setApplicationName("ACENCIA ATLAS")
+    app.setApplicationVersion(APP_VERSION)
     app.setOrganizationName("ACENCIA GmbH")
     
     # App-Icon setzen (falls vorhanden)
@@ -131,9 +254,51 @@ def main():
         
         logger.info(f"Angemeldet als: {auth_api.current_user.username}")
         
+        # === Update-Check nach Login (nur im Release-Modus) ===
+        _pending_deprecation_warning = None
+        if is_dev_mode():
+            logger.info("Dev-Modus erkannt (python run.py) - Update-Check uebersprungen")
+        else:
+            try:
+                from services.update_service import UpdateService
+                from ui.update_dialog import UpdateDialog
+                
+                update_service = UpdateService(api_client)
+                update_info = update_service.check_for_update(APP_VERSION)
+                
+                if update_info:
+                    if update_info.mandatory:
+                        # Pflicht-Update: Blockiert komplett
+                        logger.info(f"Pflicht-Update erforderlich: {update_info.latest_version}")
+                        dialog = UpdateDialog(update_info, update_service, mode='mandatory')
+                        dialog.exec()
+                        # Falls Dialog geschlossen wird (sollte nicht passieren): App beenden
+                        sys.exit(0)
+                    elif update_info.deprecated and not update_info.update_available:
+                        # Veraltete Version ohne verfuegbares Update
+                        # Toast wird nach MainHub-Erstellung angezeigt (s.u.)
+                        _pending_deprecation_warning = texts.UPDATE_DEPRECATED_MSG.format(version=APP_VERSION)
+                    elif update_info.update_available:
+                        # Optionales Update
+                        dialog = UpdateDialog(update_info, update_service, mode='optional')
+                        if dialog.exec() == QDialog.Accepted:
+                            # Update wird installiert, App beenden
+                            sys.exit(0)
+            except Exception as e:
+                # Update-Check darf App-Start nicht blockieren
+                logger.warning(f"Update-Check fehlgeschlagen: {e}")
+        
         # Neues Hub-Hauptfenster erstellen und anzeigen
         window = MainHub(api_client=api_client, auth_api=auth_api)
         window.show()
+        
+        # Verzoegerte Deprecation-Warnung als Toast (nach MainHub-Erstellung)
+        if _pending_deprecation_warning:
+            window._toast_manager.show_warning(_pending_deprecation_warning, duration_ms=12000)
+        
+        # Forced-Logout-Handler registrieren (Session-Invalidierung)
+        forced_logout_handler = ForcedLogoutHandler(window, auth_api)
+        api_client.set_forced_logout_callback(forced_logout_handler.trigger)
         
         sys.exit(app.exec())
     else:

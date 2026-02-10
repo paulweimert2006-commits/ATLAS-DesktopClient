@@ -11,9 +11,12 @@
 
 require_once __DIR__ . '/lib/jwt.php';
 require_once __DIR__ . '/lib/response.php';
+require_once __DIR__ . '/lib/permissions.php';
+require_once __DIR__ . '/lib/activity_logger.php';
 
 function handleShipmentsRequest(string $idOrAction, string $method): void {
-    $payload = JWT::requireAuth();
+    // Alle BiPRO-Operationen erfordern bipro_fetch
+    $payload = requirePermission('bipro_fetch');
     
     // Spezialfall: ID/acknowledge
     $parts = explode('/', $idOrAction);
@@ -181,11 +184,14 @@ function createShipment(array $user): void {
         [$data['vu_connection_id']]
     );
     
-    // Audit-Log
-    Database::insert(
-        'INSERT INTO audit_log (user_id, action, entity_type, entity_id, details, ip_address) VALUES (?, ?, ?, ?, ?, ?)',
-        [$user['user_id'], 'shipment_create', 'shipment', $id, json_encode(['external_id' => $data['external_shipment_id'] ?? null]), $_SERVER['REMOTE_ADDR'] ?? '']
-    );
+    // Activity-Log
+    ActivityLogger::log([
+        'user_id' => $user['user_id'], 'username' => $user['username'] ?? '',
+        'action_category' => 'bipro', 'action' => 'shipment_create',
+        'entity_type' => 'shipment', 'entity_id' => $id,
+        'description' => 'Lieferung registriert' . ($data['external_shipment_id'] ?? ''),
+        'details' => ['external_id' => $data['external_shipment_id'] ?? null, 'vu_connection_id' => $data['vu_connection_id']]
+    ]);
     
     json_success(['id' => $id], 'Lieferung registriert');
 }
@@ -210,11 +216,13 @@ function acknowledgeShipment(string $id, array $user): void {
         WHERE id = ?
     ", [$id]);
     
-    // Audit-Log
-    Database::insert(
-        'INSERT INTO audit_log (user_id, action, entity_type, entity_id, ip_address) VALUES (?, ?, ?, ?, ?)',
-        [$user['user_id'], 'shipment_acknowledge', 'shipment', $id, $_SERVER['REMOTE_ADDR'] ?? '']
-    );
+    // Activity-Log
+    ActivityLogger::log([
+        'user_id' => $user['user_id'], 'username' => $user['username'] ?? '',
+        'action_category' => 'bipro', 'action' => 'shipment_acknowledge',
+        'entity_type' => 'shipment', 'entity_id' => (int)$id,
+        'description' => "Lieferung quittiert (ID: {$id})"
+    ]);
     
     json_success([], 'Lieferung quittiert');
 }

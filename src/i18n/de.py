@@ -1,12 +1,13 @@
 """
-BiPRO-GDV Tool - Deutsche Texte (i18n)
+ACENCIA ATLAS - Deutsche Texte (i18n)
 
 Zentrale Datei für alle UI-Texte.
 Ermöglicht einfache Übersetzung und Wartung.
 """
 
 # === Allgemein ===
-APP_NAME = "BiPRO-GDV Tool"
+APP_NAME = "ACENCIA ATLAS"
+APP_TAGLINE = "Der Datenkern."
 APP_SUBTITLE = "ACENCIA GmbH"
 LOADING = "Wird geladen..."
 SAVE = "Speichern"
@@ -118,6 +119,30 @@ BIPRO_CATEGORY = "Kategorie"
 BIPRO_CREATED = "Erstellt am"
 BIPRO_DOCUMENTS = "Dokumente"
 
+# === Mail-Import ===
+BIPRO_MAIL_FETCH = "Mails abholen"
+BIPRO_MAIL_FETCH_TOOLTIP = "E-Mail-Postfach abrufen und Anhaenge importieren"
+BIPRO_MAIL_FETCH_RUNNING = "Mails werden abgeholt..."
+BIPRO_MAIL_FETCH_SUCCESS = "{new_mails} neue Mail(s), {imported} Anhang/Anhaenge importiert"
+BIPRO_MAIL_FETCH_NO_NEW = "Keine neuen Mails im Postfach"
+BIPRO_MAIL_FETCH_ERROR = "Fehler beim Mail-Abruf: {error}"
+BIPRO_MAIL_FETCH_NO_ACCOUNT = "Kein IMAP-Konto konfiguriert. Bitte in der Admin-Verwaltung einrichten."
+BIPRO_MAIL_FETCH_PROGRESS = "Verarbeite Anhang {current}/{total}..."
+BIPRO_MAIL_FETCH_PHASE_POLL = "Postfach abrufen..."
+BIPRO_MAIL_FETCH_PHASE_IMPORT = "Anhaenge importieren"
+
+# === Alle VUs abholen ===
+BIPRO_FETCH_ALL = "Alle VUs abholen"
+BIPRO_FETCH_ALL_TOOLTIP = "Holt Lieferungen von allen aktiven VU-Verbindungen nacheinander ab"
+BIPRO_FETCH_ALL_NO_ACTIVE = "Keine aktiven VU-Verbindungen vorhanden."
+BIPRO_FETCH_ALL_START = "=== Starte Abruf fuer alle VUs ({count} aktive Verbindungen) ==="
+BIPRO_FETCH_ALL_VU_START = "--- [{current}/{total}] {vu_name} ---"
+BIPRO_FETCH_ALL_VU_NO_SHIPMENTS = "[{vu_name}] Keine Lieferungen vorhanden - ueberspringe"
+BIPRO_FETCH_ALL_VU_CREDENTIALS_ERROR = "[{vu_name}] Zugangsdaten nicht verfuegbar - ueberspringe"
+BIPRO_FETCH_ALL_VU_DONE = "[{vu_name}] Abgeschlossen: {success} Lieferung(en), {docs} Dokument(e)"
+BIPRO_FETCH_ALL_DONE = "=== Alle VUs abgeschlossen: {total_vus} VUs, {total_shipments} Lieferung(en), {total_docs} Dokument(e) ==="
+BIPRO_FETCH_ALL_IN_PROGRESS = "Alle VUs werden abgeholt... ({current}/{total}): {vu_name}"
+
 # === Dokumentenarchiv ===
 ARCHIVE_TITLE = "Dokumentenarchiv"
 ARCHIVE_BOXES = "Boxen"
@@ -147,6 +172,15 @@ MOVE_SUCCESS_MULTI = "{count} Dokumente nach {box} verschoben"
 MOVE_UNDO = "Rückgängig"
 MOVE_UNDONE = "Verschieben rückgängig gemacht"
 
+# === Verarbeitungs-Ausschluss ===
+PROCESSING_EXCLUDE = "Von Verarbeitung ausschliessen"
+PROCESSING_INCLUDE = "Erneut fuer Verarbeitung freigeben"
+PROCESSING_EXCLUDED_TOAST = "Dokument von Verarbeitung ausgeschlossen"
+PROCESSING_EXCLUDED_MULTI = "{count} Dokument(e) von Verarbeitung ausgeschlossen"
+PROCESSING_INCLUDED_TOAST = "Dokument fuer Verarbeitung freigegeben (zurueck in Eingangsbox)"
+PROCESSING_INCLUDED_MULTI = "{count} Dokument(e) fuer Verarbeitung freigegeben (zurueck in Eingangsbox)"
+PROCESSING_SKIPPED_LOG = "{count} Dokument(e) uebersprungen (manuell bearbeitet)"
+
 # === Archivieren ===
 ARCHIVE = "Archivieren"
 ARCHIVE_DOCUMENTS = "{count} Dokumente archivieren"
@@ -161,6 +195,48 @@ UNARCHIVE_ERROR = "Entarchivierung fehlgeschlagen."
 ARCHIVE_DOWNLOAD_NOTE = "Das Dokument wurde archiviert."
 ARCHIVE_DOWNLOAD_NOTE_MULTI = "{count} Dokument(e) wurden archiviert."
 
+# === Box-Download ===
+BOX_DOWNLOAD_MENU = "Herunterladen"
+BOX_DOWNLOAD_AS_ZIP = "Als ZIP herunterladen"
+BOX_DOWNLOAD_AS_FOLDER = "Als Ordner herunterladen"
+BOX_DOWNLOAD_PROGRESS = "Lade {box} herunter ({current}/{total})..."
+BOX_DOWNLOAD_PROGRESS_TITLE = "Box herunterladen"
+BOX_DOWNLOAD_CREATING_ZIP = "Erstelle ZIP-Datei..."
+BOX_DOWNLOAD_SUCCESS_ZIP = "{count} Dokument(e) als ZIP gespeichert."
+BOX_DOWNLOAD_SUCCESS_FOLDER = "{count} Dokument(e) in Ordner gespeichert."
+BOX_DOWNLOAD_EMPTY = "Die Box '{box}' enthaelt keine Dokumente."
+BOX_DOWNLOAD_ERROR = "Box-Download fehlgeschlagen: {error}"
+BOX_DOWNLOAD_PARTIAL = "{success} heruntergeladen, {failed} fehlgeschlagen."
+BOX_DOWNLOAD_ARCHIVED = "{count} Dokument(e) wurden archiviert."
+BOX_DOWNLOAD_CHOOSE_ZIP = "ZIP-Datei speichern unter"
+BOX_DOWNLOAD_CHOOSE_FOLDER = "Speicherort fuer Ordner '{box}' waehlen"
+
+# === Falsch-Box (Admin-only) ===
+BOX_FALSCH_NAME = "Falsch"
+BOX_FALSCH_TOOLTIP = "Falsch klassifizierte Dokumente (nur Admins)"
+
+# === Tabellen-Vorschau (CSV/Excel) ===
+SPREADSHEET_PREVIEW_TITLE = "Vorschau: {filename}"
+SPREADSHEET_NO_DATA = "Keine Daten vorhanden."
+SPREADSHEET_SHEET_LABEL = "Blatt:"
+SPREADSHEET_ROWS_INFO = "{rows} Zeilen, {cols} Spalten"
+SPREADSHEET_EXTERN_OPEN = "Extern oeffnen"
+SPREADSHEET_CLOSE = "Schliessen"
+SPREADSHEET_LOAD_ERROR = "Datei konnte nicht geladen werden:\n{error}"
+SPREADSHEET_ENCODING_ERROR = "Die Datei konnte nicht gelesen werden (Encoding-Problem)."
+SPREADSHEET_XLSX_NOT_AVAILABLE = (
+    "Excel-Vorschau nicht verfuegbar.\n\n"
+    "Bitte installieren Sie openpyxl:\n"
+    "pip install openpyxl"
+)
+SPREADSHEET_XLS_NOT_SUPPORTED = (
+    "Das alte Excel-Format (.xls) wird nicht unterstuetzt.\n\n"
+    "Bitte die Datei extern oeffnen oder in .xlsx konvertieren."
+)
+SPREADSHEET_PREVIEW_NOT_AVAILABLE = "Fuer '{filename}' ist keine Vorschau verfuegbar."
+SPREADSHEET_CONTEXT_MENU = "Vorschau"
+SPREADSHEET_MAX_ROWS_INFO = "Zeige {shown} von {total} Zeilen"
+
 # === GDV Editor ===
 GDV_EDITOR_TITLE = "GDV Editor"
 GDV_OPEN_FILE = "Datei öffnen"
@@ -173,6 +249,377 @@ GDV_UNSAVED_CHANGES_DESC = "Es gibt ungespeicherte Änderungen.\nWirklich fortfa
 LOGOUT_CONFIRM = "Wirklich abmelden?"
 LOGOUT_TITLE = "Abmelden"
 
+# === Administration ===
+NAV_ADMIN = "ADMINISTRATION"
+NAV_ADMIN_VIEW = "Verwaltung"
+
+# Admin-View: Tabs
+ADMIN_TAB_USERS = "Nutzerverwaltung"
+ADMIN_TAB_SESSIONS = "Sessions"
+ADMIN_TAB_ACTIVITY = "Aktivitaetslog"
+
+# Admin: Nutzerverwaltung
+ADMIN_USERS_TITLE = "Nutzerverwaltung"
+ADMIN_USERS_NEW = "Neuer Nutzer"
+ADMIN_USERS_EDIT = "Nutzer bearbeiten"
+ADMIN_USERS_DELETE = "Nutzer deaktivieren"
+ADMIN_USERS_DELETE_CONFIRM = "Nutzer '{username}' wirklich deaktivieren?\nAlle aktiven Sessions werden beendet."
+ADMIN_USERS_LOCK = "Sperren"
+ADMIN_USERS_UNLOCK = "Entsperren"
+ADMIN_USERS_LOCK_CONFIRM = "Nutzer '{username}' wirklich sperren?\nAlle aktiven Sessions werden beendet."
+ADMIN_USERS_CHANGE_PW = "Passwort aendern"
+ADMIN_USERS_CHANGE_PW_TITLE = "Passwort aendern fuer '{username}'"
+ADMIN_USERS_PW_NEW = "Neues Passwort"
+ADMIN_USERS_PW_CONFIRM = "Passwort wiederholen"
+ADMIN_USERS_PW_MISMATCH = "Passwoerter stimmen nicht ueberein."
+ADMIN_USERS_PW_TOO_SHORT = "Passwort muss mindestens 8 Zeichen lang sein."
+ADMIN_USERS_PW_SUCCESS = "Passwort erfolgreich geaendert. Alle Sessions wurden beendet."
+ADMIN_USERS_CREATED = "Nutzer '{username}' wurde erstellt."
+ADMIN_USERS_UPDATED = "Nutzer '{username}' wurde aktualisiert."
+ADMIN_USERS_LOCKED = "Nutzer '{username}' wurde gesperrt."
+ADMIN_USERS_UNLOCKED = "Nutzer '{username}' wurde entsperrt."
+ADMIN_USERS_DELETED = "Nutzer '{username}' wurde deaktiviert."
+ADMIN_USERS_NAME_TOO_SHORT = "Benutzername muss mindestens 3 Zeichen lang sein."
+ADMIN_USERS_SELF_LOCK = "Sie koennen sich nicht selbst sperren."
+ADMIN_USERS_SELF_DELETE = "Sie koennen sich nicht selbst deaktivieren."
+ADMIN_USERS_LOAD_ERROR = "Fehler beim Laden der Nutzer: {error}"
+
+# Admin: Tabellen-Spalten
+ADMIN_COL_USERNAME = "Benutzername"
+ADMIN_COL_EMAIL = "E-Mail"
+ADMIN_COL_TYPE = "Kontotyp"
+ADMIN_COL_STATUS = "Status"
+ADMIN_COL_LAST_ACTIVITY = "Letzte Aktivitaet"
+ADMIN_COL_CREATED = "Erstellt am"
+ADMIN_COL_PERMISSIONS = "Rechte"
+
+# Admin: Kontotypen
+ADMIN_TYPE_ADMIN = "Administrator"
+ADMIN_TYPE_USER = "Benutzer"
+
+# Admin: Status
+ADMIN_STATUS_ACTIVE = "Aktiv"
+ADMIN_STATUS_LOCKED = "Gesperrt"
+ADMIN_STATUS_INACTIVE = "Deaktiviert"
+
+# Admin: Nutzer-Dialog
+ADMIN_DIALOG_USERNAME = "Benutzername"
+ADMIN_DIALOG_EMAIL = "E-Mail"
+ADMIN_DIALOG_PASSWORD = "Passwort"
+ADMIN_DIALOG_TYPE = "Kontotyp"
+ADMIN_DIALOG_PERMISSIONS = "Berechtigungen"
+ADMIN_DIALOG_PERMISSIONS_HINT = "Administratoren haben automatisch alle Rechte."
+
+# Admin: Sessions
+ADMIN_SESSIONS_TITLE = "Aktive Sessions"
+ADMIN_SESSIONS_KILL = "Session beenden"
+ADMIN_SESSIONS_KILL_ALL = "Alle Sessions beenden"
+ADMIN_SESSIONS_KILL_CONFIRM = "Session wirklich beenden?"
+ADMIN_SESSIONS_KILL_ALL_CONFIRM = "Alle Sessions von '{username}' beenden?"
+ADMIN_SESSIONS_KILLED = "Session wurde beendet."
+ADMIN_SESSIONS_ALL_KILLED = "{count} Session(s) wurden beendet."
+ADMIN_SESSIONS_LOAD_ERROR = "Fehler beim Laden der Sessions: {error}"
+ADMIN_SESSIONS_FILTER_USER = "Nutzer filtern..."
+ADMIN_SESSIONS_FILTER_ALL = "Alle Nutzer"
+ADMIN_COL_USER = "Nutzer"
+ADMIN_COL_IP = "IP-Adresse"
+ADMIN_COL_CLIENT = "Client"
+ADMIN_COL_LAST_ACTIVE = "Letzte Aktivitaet"
+ADMIN_COL_EXPIRES = "Laeuft ab"
+
+# Admin: Aktivitaetslog
+ADMIN_ACTIVITY_TITLE = "Aktivitaetslog"
+ADMIN_ACTIVITY_FILTER_CATEGORY = "Kategorie"
+ADMIN_ACTIVITY_FILTER_STATUS = "Status"
+ADMIN_ACTIVITY_FILTER_FROM = "Von"
+ADMIN_ACTIVITY_FILTER_TO = "Bis"
+ADMIN_ACTIVITY_FILTER_SEARCH = "Suchen..."
+ADMIN_ACTIVITY_FILTER_ALL = "Alle"
+ADMIN_ACTIVITY_LOAD_MORE = "Mehr laden"
+ADMIN_ACTIVITY_LOAD_ERROR = "Fehler beim Laden des Aktivitaetslogs: {error}"
+ADMIN_ACTIVITY_TOTAL = "{total} Eintraege"
+ADMIN_ACTIVITY_PAGE = "Seite {page} von {total_pages}"
+ADMIN_COL_TIMESTAMP = "Zeitpunkt"
+ADMIN_COL_CATEGORY = "Kategorie"
+ADMIN_COL_ACTION = "Aktion"
+ADMIN_COL_DESCRIPTION = "Beschreibung"
+
+# Admin: Aktivitaets-Kategorien
+ACTIVITY_CAT_AUTH = "Authentifizierung"
+ACTIVITY_CAT_DOCUMENT = "Dokumente"
+ACTIVITY_CAT_BIPRO = "BiPRO"
+ACTIVITY_CAT_VU_CONNECTION = "VU-Verbindungen"
+ACTIVITY_CAT_GDV = "GDV"
+ACTIVITY_CAT_ADMIN = "Administration"
+ACTIVITY_CAT_SYSTEM = "System"
+ACTIVITY_CAT_AI = "KI"
+
+# Admin: Status-Anzeige
+ACTIVITY_STATUS_SUCCESS = "Erfolgreich"
+ACTIVITY_STATUS_ERROR = "Fehler"
+ACTIVITY_STATUS_DENIED = "Verweigert"
+
+# === Berechtigungen (Permission-Namen) ===
+PERM_VU_CONNECTIONS_MANAGE = "VU-Verbindungen verwalten"
+PERM_BIPRO_FETCH = "BiPRO abrufen"
+PERM_DOCUMENTS_MANAGE = "Dokumente verwalten"
+PERM_DOCUMENTS_DELETE = "Dokumente loeschen"
+PERM_DOCUMENTS_UPLOAD = "Dokumente hochladen"
+PERM_DOCUMENTS_DOWNLOAD = "Dokumente herunterladen"
+PERM_DOCUMENTS_PROCESS = "Dokumente verarbeiten"
+PERM_GDV_EDIT = "GDV bearbeiten"
+PERM_SMARTSCAN_SEND = "Smart!Scan senden"
+
+# Permission-Beschreibungen
+PERM_DESC_VU_CONNECTIONS_MANAGE = "Erstellen, aendern, loeschen und einsehen von VU-Verbindungen"
+PERM_DESC_BIPRO_FETCH = "BiPRO-Daten von Versicherern abrufen"
+PERM_DESC_DOCUMENTS_MANAGE = "Dokumente umbenennen, verschieben, archivieren und entarchivieren"
+PERM_DESC_DOCUMENTS_DELETE = "Dokumente endgueltig loeschen"
+PERM_DESC_DOCUMENTS_UPLOAD = "Dateien ins Archiv hochladen"
+PERM_DESC_DOCUMENTS_DOWNLOAD = "Dateien aus dem Archiv herunterladen"
+PERM_DESC_DOCUMENTS_PROCESS = "Automatische KI-Klassifikation und Verarbeitung ausloesen"
+PERM_DESC_GDV_EDIT = "GDV-Datensaetze bearbeiten und speichern"
+PERM_DESC_SMARTSCAN_SEND = "Dokumente per Smart!Scan E-Mail versenden"
+
+# Fehlermeldungen bei fehlenden Rechten
+PERM_DENIED_GENERIC = "Sie haben keine Berechtigung fuer diese Aktion."
+PERM_DENIED_UPLOAD = "Sie haben keine Berechtigung, Dokumente hochzuladen."
+PERM_DENIED_DOWNLOAD = "Sie haben keine Berechtigung, Dokumente herunterzuladen."
+PERM_DENIED_DELETE = "Sie haben keine Berechtigung, Dokumente zu loeschen."
+PERM_DENIED_MANAGE = "Sie haben keine Berechtigung, Dokumente zu verwalten."
+PERM_DENIED_PROCESS = "Sie haben keine Berechtigung, Dokumente zu verarbeiten."
+PERM_DENIED_BIPRO = "Sie haben keine Berechtigung, BiPRO-Abrufe durchzufuehren."
+PERM_DENIED_VU = "Sie haben keine Berechtigung, VU-Verbindungen zu verwalten."
+PERM_DENIED_GDV = "Sie haben keine Berechtigung, GDV-Daten zu bearbeiten."
+PERM_DENIED_SMARTSCAN = "Sie haben keine Berechtigung, Smart!Scan zu verwenden."
+
+# Permission-Key zu i18n Mapping
+PERMISSION_NAMES = {
+    'vu_connections_manage': PERM_VU_CONNECTIONS_MANAGE,
+    'bipro_fetch': PERM_BIPRO_FETCH,
+    'documents_manage': PERM_DOCUMENTS_MANAGE,
+    'documents_delete': PERM_DOCUMENTS_DELETE,
+    'documents_upload': PERM_DOCUMENTS_UPLOAD,
+    'documents_download': PERM_DOCUMENTS_DOWNLOAD,
+    'documents_process': PERM_DOCUMENTS_PROCESS,
+    'gdv_edit': PERM_GDV_EDIT,
+    'smartscan_send': PERM_SMARTSCAN_SEND,
+}
+
+# === Forced Logout ===
+FORCED_LOGOUT_TITLE = "Sitzung beendet"
+FORCED_LOGOUT_MESSAGE = (
+    "Ihre Sitzung wurde beendet.\n\n"
+    "Moegliche Gruende:\n"
+    "- Ein Administrator hat Ihre Sitzung beendet\n"
+    "- Ihr Konto wurde gesperrt\n"
+    "- Ihr Passwort wurde geaendert\n\n"
+    "Die Anwendung wird jetzt geschlossen."
+)
+
+# === KI-Kosten ===
+ADMIN_TAB_COSTS = "KI-Kosten"
+
+# KI-Kosten: Statistiken
+COSTS_TITLE = "KI-Verarbeitungskosten"
+COSTS_STATS_TITLE = "Gesamtstatistik"
+COSTS_TOTAL_RUNS = "Verarbeitungslaeufe"
+COSTS_TOTAL_DOCS = "Dokumente gesamt"
+COSTS_TOTAL_COST = "Gesamtkosten"
+COSTS_AVG_COST_PER_DOC = "Durchschnittskosten/Dokument"
+COSTS_AVG_COST_PER_RUN = "Durchschnittskosten/Lauf"
+COSTS_TOTAL_DURATION = "Gesamtdauer"
+COSTS_SUCCESS_RATE = "Zuordnungsrate"
+
+# KI-Kosten: Tabelle
+COSTS_HISTORY_TITLE = "Verarbeitungshistorie"
+COSTS_COL_DATE = "Datum"
+COSTS_COL_TOTAL_COST = "Kosten"
+COSTS_COL_COST_PER_DOC = "$/Dok"
+COSTS_COL_DOC_COUNT = "Doks"
+COSTS_COL_SUCCESS = "OK"
+COSTS_COL_FAILED = "Fehler"
+COSTS_COL_DURATION = "Dauer"
+COSTS_COL_USER = "Nutzer"
+
+# KI-Kosten: Zusammenfassungen
+COSTS_NO_DATA = "Keine Verarbeitungslaeufe vorhanden."
+COSTS_LOAD_ERROR = "Fehler beim Laden der Kosten-Daten: {error}"
+COSTS_REFRESH = "Aktualisieren"
+COSTS_PERIOD_ALL = "Gesamtzeitraum"
+COSTS_PERIOD_7D = "Letzte 7 Tage"
+COSTS_PERIOD_30D = "Letzte 30 Tage"
+COSTS_PERIOD_90D = "Letzte 90 Tage"
+COSTS_PERIOD_LABEL = "Zeitraum:"
+
+# Verzoegerter Guthaben-Check
+COSTS_DELAYED_CHECK = "Kosten werden in {seconds}s berechnet..."
+COSTS_DELAYED_CHECK_DONE = "Kosten berechnet"
+COSTS_DELAYED_CHECK_FAILED = "Kosten-Berechnung fehlgeschlagen"
+COSTS_CALCULATING = "Berechne Kosten..."
+
+# === Auto-Update: Dialog ===
+UPDATE_AVAILABLE_TITLE = "Update verfuegbar"
+UPDATE_MANDATORY_TITLE = "Pflicht-Update erforderlich"
+UPDATE_DEPRECATED_TITLE = "Veraltete Version"
+UPDATE_NEW_VERSION = "Version {version} ist verfuegbar"
+UPDATE_CURRENT_VERSION = "Aktuell: {version}"
+UPDATE_RELEASE_NOTES = "Aenderungen:"
+UPDATE_FILE_SIZE = "Dateigroesse: {size}"
+UPDATE_DOWNLOAD_PROGRESS = "{downloaded} / {total}"
+UPDATE_INSTALL_NOW = "Jetzt installieren"
+UPDATE_LATER = "Spaeter"
+UPDATE_DOWNLOADING = "Download laeuft..."
+UPDATE_VERIFYING = "Wird ueberprueft..."
+UPDATE_INSTALLING = "Installation wird gestartet..."
+UPDATE_ERROR_DOWNLOAD = "Download fehlgeschlagen: {error}"
+UPDATE_ERROR_HASH = "Datei-Pruefung fehlgeschlagen (Hash stimmt nicht ueberein)"
+UPDATE_DEPRECATED_MSG = (
+    "Diese Version ({version}) wird nicht mehr unterstuetzt.\n\n"
+    "Bitte aktualisieren Sie auf die neueste Version."
+)
+UPDATE_MANDATORY_MSG = (
+    "Ein Pflicht-Update ist erforderlich.\n\n"
+    "Die Anwendung kann erst nach der Aktualisierung verwendet werden."
+)
+UPDATE_NOTIFICATION = "Version {version} ist verfuegbar. Klicken Sie hier zum Aktualisieren."
+UPDATE_RESTART_MSG = "Die Anwendung wird jetzt geschlossen. Der Installer startet automatisch."
+UPDATE_CHECK_FAILED = "Update-Pruefung fehlgeschlagen"
+
+# === Auto-Update: Admin Releases-Tab ===
+ADMIN_TAB_RELEASES = "Releases"
+RELEASES_TITLE = "Release-Verwaltung"
+RELEASES_NEW = "Neues Release"
+RELEASES_VERSION = "Version"
+RELEASES_CHANNEL = "Channel"
+RELEASES_STATUS = "Status"
+RELEASES_DOWNLOADS = "Downloads"
+RELEASES_DATE = "Datum"
+RELEASES_SIZE = "Groesse"
+RELEASES_SHA256 = "SHA256"
+RELEASES_ACTIONS = "Aktionen"
+RELEASES_RELEASED_BY = "Erstellt von"
+RELEASES_MIN_VERSION = "Mindestversion"
+RELEASES_NOTES = "Release Notes"
+RELEASES_STATUS_ACTIVE = "Aktiv"
+RELEASES_STATUS_MANDATORY = "Pflicht"
+RELEASES_STATUS_DEPRECATED = "Veraltet"
+RELEASES_STATUS_WITHDRAWN = "Zurueckgezogen"
+RELEASES_CHANNEL_STABLE = "Stable"
+RELEASES_CHANNEL_BETA = "Beta"
+RELEASES_CHANNEL_INTERNAL = "Intern"
+RELEASES_UPLOAD_TITLE = "Neues Release hochladen"
+RELEASES_EDIT_TITLE = "Release bearbeiten"
+RELEASES_EDIT_BTN = "Bearbeiten"
+RELEASES_DELETE_BTN = "Loeschen"
+RELEASES_SELECT_FILE = "Datei auswaehlen..."
+RELEASES_UPLOADING = "Wird hochgeladen..."
+RELEASES_UPLOAD_SUCCESS = "Release {version} erfolgreich hochgeladen"
+RELEASES_UPDATE_SUCCESS = "Release {version} aktualisiert"
+RELEASES_DELETE_CONFIRM = "Release {version} wirklich loeschen?"
+RELEASES_DELETE_HAS_DOWNLOADS = (
+    "Release {version} kann nicht geloescht werden ({count} Downloads).\n\n"
+    "Status stattdessen auf 'Zurueckgezogen' setzen?"
+)
+RELEASES_DELETE_SUCCESS = "Release {version} geloescht"
+RELEASES_ERROR_VERSION_EXISTS = "Version {version} existiert bereits"
+RELEASES_NO_DATA = "Keine Releases vorhanden."
+RELEASES_LOAD_ERROR = "Fehler beim Laden der Releases: {error}"
+RELEASES_FILTER_ALL = "Alle"
+RELEASES_FILTER_CHANNEL = "Channel:"
+RELEASES_FILTER_STATUS = "Status:"
+
+# === Dokumenten-Farbmarkierung ===
+DOC_COLOR_MENU = "Farbe setzen"
+DOC_COLOR_REMOVE = "Farbe entfernen"
+DOC_COLOR_GREEN = "Gruen"
+DOC_COLOR_RED = "Rot"
+DOC_COLOR_BLUE = "Blau"
+DOC_COLOR_ORANGE = "Orange"
+DOC_COLOR_PURPLE = "Lila"
+DOC_COLOR_PINK = "Pink"
+DOC_COLOR_CYAN = "Tuerkis"
+DOC_COLOR_YELLOW = "Gelb"
+DOC_COLOR_SET_SUCCESS = "Farbe fuer {count} Dokument(e) gesetzt"
+DOC_COLOR_REMOVE_SUCCESS = "Farbe fuer {count} Dokument(e) entfernt"
+DOC_COLOR_ERROR = "Fehler beim Setzen der Farbe: {error}"
+
+# === Drag & Drop Upload ===
+DROP_UPLOAD_TITLE = "Dateien hochladen"
+DROP_UPLOAD_PROGRESS = "Lade hoch ({current}/{total}):\n{filename}"
+DROP_UPLOAD_SCANNING = "Dateien werden gesammelt..."
+DROP_UPLOAD_SUCCESS = "{count} Dokument(e) in die Eingangsbox hochgeladen"
+DROP_UPLOAD_PARTIAL = "{erfolge} hochgeladen, {fehler} fehlgeschlagen"
+DROP_UPLOAD_FAILED = "{count} Datei(en) konnten nicht hochgeladen werden"
+DROP_UPLOAD_NO_PERMISSION = "Keine Berechtigung zum Hochladen"
+DROP_UPLOAD_NO_FILES = "Keine unterstuetzten Dateien gefunden."
+DROP_UPLOAD_CANCEL = "Abbrechen"
+DROP_UPLOAD_UNDONE = "Upload rückgängig gemacht – {count} Dokument(e) entfernt."
+
+# === MSG E-Mail Verarbeitung ===
+MSG_EXTRACTING = "E-Mail-Anhaenge werden extrahiert..."
+MSG_NO_ATTACHMENTS = "E-Mail '{filename}' enthaelt keine Anhaenge – nur in Roh-Archiv uebernommen."
+MSG_EXTRACTED = "{count} Anhang/Anhaenge aus '{filename}' extrahiert."
+MSG_EXTRACT_ERROR = "E-Mail '{filename}' konnte nicht verarbeitet werden: {error}"
+
+# === Outlook Direct-Drop ===
+OUTLOOK_DROP_NO_PYWIN32 = "Outlook-Drop nicht verfuegbar (pywin32 fehlt). Bitte E-Mails als .msg speichern und dann ziehen."
+OUTLOOK_DROP_COM_ERROR = "Outlook-Zugriff fehlgeschlagen: {error}"
+
+# === ZIP-Verarbeitung ===
+ZIP_EXTRACTING = "ZIP-Archiv wird entpackt..."
+ZIP_NO_CONTENTS = "ZIP-Archiv '{filename}' ist leer – nur in Roh-Archiv uebernommen."
+ZIP_EXTRACTED = "{count} Datei(en) aus '{filename}' entpackt."
+ZIP_EXTRACT_ERROR = "ZIP-Archiv '{filename}' konnte nicht entpackt werden: {error}"
+ZIP_PASSWORD_FAILED = "ZIP-Archiv '{filename}' ist passwortgeschuetzt – keines der bekannten Passwoerter passt."
+ZIP_NESTED_LIMIT = "Maximale Verschachtelungstiefe erreicht."
+
+# === Admin: Passwort-Verwaltung ===
+ADMIN_TAB_PASSWORDS = "Passwoerter"
+PASSWORDS_TITLE = "Bekannte Passwoerter"
+PASSWORDS_SUBTITLE = "Passwoerter fuer automatisches Entschluesseln von PDF- und ZIP-Dateien"
+PASSWORDS_PDF = "PDF-Passwoerter"
+PASSWORDS_ZIP = "ZIP-Passwoerter"
+PASSWORDS_ALL = "Alle Passwoerter"
+PASSWORD_ADD = "Passwort hinzufuegen"
+PASSWORD_EDIT = "Passwort bearbeiten"
+PASSWORD_DELETE = "Passwort deaktivieren"
+PASSWORD_REACTIVATE = "Passwort reaktivieren"
+PASSWORD_TYPE = "Typ"
+PASSWORD_VALUE = "Passwort"
+PASSWORD_DESCRIPTION = "Beschreibung"
+PASSWORD_CREATED_AT = "Erstellt am"
+PASSWORD_IS_ACTIVE = "Aktiv"
+PASSWORD_TYPE_PDF = "PDF"
+PASSWORD_TYPE_ZIP = "ZIP"
+PASSWORD_CONFIRM_DELETE = "Soll das Passwort '{value}' wirklich deaktiviert werden?"
+PASSWORD_CONFIRM_DELETE_TITLE = "Passwort deaktivieren"
+PASSWORD_CREATED = "Passwort erfolgreich angelegt."
+PASSWORD_UPDATED = "Passwort erfolgreich aktualisiert."
+PASSWORD_DELETED = "Passwort erfolgreich deaktiviert."
+PASSWORD_ERROR_EMPTY = "Passwort darf nicht leer sein."
+PASSWORD_ERROR_DUPLICATE = "Dieses Passwort existiert bereits fuer diesen Typ."
+PASSWORD_ERROR_LOAD = "Fehler beim Laden der Passwoerter: {error}"
+PASSWORD_ERROR_SAVE = "Fehler beim Speichern: {error}"
+PASSWORD_SHOW = "Anzeigen"
+PASSWORD_HIDE = "Verbergen"
+PASSWORD_COUNT = "{count} Passwort/Passwoerter"
+PASSWORD_NONE_CONFIGURED = "Keine Passwoerter konfiguriert"
+PASSWORD_DIALOG_TITLE_ADD = "Neues Passwort hinzufuegen"
+PASSWORD_DIALOG_TITLE_EDIT = "Passwort bearbeiten"
+
+# === Loeschen ===
+CONFIRM_DELETE_TITLE = "Loeschen bestaetigen"
+CONFIRM_DELETE_MESSAGE = "Wirklich {count} Dokument(e) loeschen?"
+
+# === Verarbeitungs-Kostenvoranschlag ===
+PROCESSING_ESTIMATED_COST = "Geschaetzte Verarbeitungskosten fuer die aktuellen {count} Dokumente: ${cost}"
+PROCESSING_PENDING_COUNT = "{count}"
+
+# === Single Instance ===
+SINGLE_INSTANCE_TITLE = "ACENCIA ATLAS laeuft bereits"
+SINGLE_INSTANCE_MSG = "Es laeuft bereits eine Instanz von ACENCIA ATLAS. Es kann nur eine Instanz gleichzeitig ausgefuehrt werden."
+
 # === Fehler ===
 ERR_CONNECTION_FAILED = "Verbindung fehlgeschlagen"
 ERR_AUTH_FAILED = "Authentifizierung fehlgeschlagen"
@@ -181,3 +628,283 @@ ERR_CERTIFICATE_EXPIRED = "Zertifikat ist abgelaufen"
 ERR_CERTIFICATE_INVALID = "Zertifikat ist ungültig"
 ERR_FILE_NOT_FOUND = "Datei nicht gefunden"
 ERR_PERMISSION_DENIED = "Keine Berechtigung"
+
+# ============================================================
+# === Smart!Scan ===
+# ============================================================
+
+# Admin-Tabs
+ADMIN_TAB_EMAIL_ACCOUNTS = "E-Mail-Konten"
+ADMIN_TAB_SMARTSCAN_SETTINGS = "Smart!Scan"
+ADMIN_TAB_SMARTSCAN_HISTORY = "Smart!Scan Historie"
+ADMIN_TAB_EMAIL_INBOX = "E-Mail Posteingang"
+
+# --- Admin-Sidebar ---
+ADMIN_BACK_TO_APP = "\u2190 Zurueck zur App"
+ADMIN_SECTION_MANAGEMENT = "VERWALTUNG"
+ADMIN_SECTION_MONITORING = "MONITORING"
+ADMIN_SECTION_EMAIL = "E-MAIL"
+ADMIN_SIDEBAR_TITLE = "Administration"
+
+# --- E-Mail-Konten ---
+EMAIL_ACCOUNT_TITLE = "E-Mail-Konten"
+EMAIL_ACCOUNT_ADD = "Konto hinzufuegen"
+EMAIL_ACCOUNT_EDIT = "Konto bearbeiten"
+EMAIL_ACCOUNT_DELETE = "Konto deaktivieren"
+EMAIL_ACCOUNT_TEST = "Verbindung testen"
+EMAIL_ACCOUNT_NAME = "Kontoname"
+EMAIL_ACCOUNT_TYPE = "Typ"
+EMAIL_ACCOUNT_TYPE_SMTP = "SMTP (Versand)"
+EMAIL_ACCOUNT_TYPE_IMAP = "IMAP (Empfang)"
+EMAIL_ACCOUNT_TYPE_BOTH = "Beides (SMTP + IMAP)"
+EMAIL_ACCOUNT_SMTP_HOST = "SMTP-Server"
+EMAIL_ACCOUNT_SMTP_PORT = "SMTP-Port"
+EMAIL_ACCOUNT_IMAP_HOST = "IMAP-Server"
+EMAIL_ACCOUNT_IMAP_PORT = "IMAP-Port"
+EMAIL_ACCOUNT_ENCRYPTION = "Verschluesselung"
+EMAIL_ACCOUNT_ENCRYPTION_TLS = "TLS (empfohlen)"
+EMAIL_ACCOUNT_ENCRYPTION_SSL = "SSL"
+EMAIL_ACCOUNT_ENCRYPTION_NONE = "Keine"
+EMAIL_ACCOUNT_USERNAME = "Benutzername"
+EMAIL_ACCOUNT_PASSWORD = "Passwort"
+EMAIL_ACCOUNT_FROM_ADDRESS = "Absender-Adresse"
+EMAIL_ACCOUNT_FROM_NAME = "Absender-Name"
+EMAIL_ACCOUNT_ACTIVE = "Aktiv"
+EMAIL_ACCOUNT_CREATED = "Konto erfolgreich erstellt."
+EMAIL_ACCOUNT_UPDATED = "Konto erfolgreich aktualisiert."
+EMAIL_ACCOUNT_DELETED = "Konto erfolgreich deaktiviert."
+EMAIL_ACCOUNT_TEST_SUCCESS = "Verbindungstest erfolgreich! Test-Mail wurde gesendet."
+EMAIL_ACCOUNT_TEST_FAILED = "Verbindungstest fehlgeschlagen: {error}"
+EMAIL_ACCOUNT_TEST_RUNNING = "Teste Verbindung..."
+EMAIL_ACCOUNT_ERROR_LOAD = "Fehler beim Laden der E-Mail-Konten: {error}"
+EMAIL_ACCOUNT_ERROR_SAVE = "Fehler beim Speichern: {error}"
+EMAIL_ACCOUNT_NONE = "Kein E-Mail-Konto konfiguriert"
+EMAIL_ACCOUNT_DIALOG_TITLE_ADD = "Neues E-Mail-Konto"
+EMAIL_ACCOUNT_DIALOG_TITLE_EDIT = "E-Mail-Konto bearbeiten"
+EMAIL_ACCOUNT_CONFIRM_DELETE = "Soll das E-Mail-Konto '{name}' wirklich deaktiviert werden?"
+EMAIL_ACCOUNT_CONFIRM_DELETE_TITLE = "E-Mail-Konto deaktivieren"
+
+# --- Smart!Scan Einstellungen ---
+SMARTSCAN_SETTINGS_TITLE = "Smart!Scan Einstellungen"
+SMARTSCAN_ENABLED = "Smart!Scan aktiviert"
+SMARTSCAN_EMAIL_ACCOUNT = "E-Mail-Konto fuer Versand"
+SMARTSCAN_TARGET_ADDRESS = "Empfaenger-Adresse (SCS SmartScan)"
+SMARTSCAN_SUBJECT_TEMPLATE = "Betreff-Vorlage"
+SMARTSCAN_SUBJECT_HELP = "Verfuegbare Variablen: {box}, {date}, {count}, {user}"
+SMARTSCAN_BODY_TEMPLATE = "Inhalt-Vorlage"
+SMARTSCAN_BODY_HELP = "Verfuegbare Variablen: {box}, {date}, {count}, {user}"
+SMARTSCAN_SEND_MODE = "Standard-Versandmodus"
+SMARTSCAN_MODE_SINGLE = "Einzeln (eine E-Mail pro Dokument)"
+SMARTSCAN_MODE_BATCH = "Sammelmail (mehrere Dokumente pro E-Mail)"
+SMARTSCAN_BATCH_MAX_ATTACHMENTS = "Max. Anhaenge pro Mail"
+SMARTSCAN_BATCH_MAX_MB = "Max. Gesamtgroesse pro Mail (MB)"
+SMARTSCAN_ARCHIVE_AFTER_SEND = "Dokumente nach Versand archivieren"
+SMARTSCAN_RECOLOR_AFTER_SEND = "Dokumente nach Versand umfaerben"
+SMARTSCAN_RECOLOR_COLOR = "Farbe fuer Umfaerbung"
+SMARTSCAN_SETTINGS_SAVED = "Smart!Scan Einstellungen gespeichert."
+SMARTSCAN_SETTINGS_ERROR = "Fehler beim Speichern der Einstellungen: {error}"
+SMARTSCAN_SETTINGS_LOAD_ERROR = "Fehler beim Laden der Einstellungen: {error}"
+SMARTSCAN_NOT_CONFIGURED = "Smart!Scan ist nicht konfiguriert. Bitte richten Sie zuerst ein E-Mail-Konto und die Zieladresse ein."
+SMARTSCAN_DISABLED = "Smart!Scan ist deaktiviert."
+
+# --- Smart!Scan IMAP Import Einstellungen ---
+SMARTSCAN_IMAP_SECTION = "E-Mail-Import (IMAP)"
+SMARTSCAN_IMAP_AUTO_IMPORT = "Automatischer Anlagen-Import"
+SMARTSCAN_IMAP_ACCOUNT = "E-Mail-Konto fuer IMAP-Abruf"
+SMARTSCAN_IMAP_FILTER_MODE = "Welche Mails verarbeiten?"
+SMARTSCAN_IMAP_FILTER_ALL = "Alle neuen Mails"
+SMARTSCAN_IMAP_FILTER_KEYWORD = "Nur Mails mit Kennung"
+SMARTSCAN_IMAP_KEYWORD = "Kennung (Betreff oder Inhalt)"
+SMARTSCAN_IMAP_SENDER_MODE = "Absender-Filter"
+SMARTSCAN_IMAP_SENDER_ALL = "Von allen Absendern akzeptieren"
+SMARTSCAN_IMAP_SENDER_WHITELIST = "Nur von bestimmten Absendern"
+SMARTSCAN_IMAP_ALLOWED_SENDERS = "Erlaubte Absender (eine Adresse pro Zeile)"
+SMARTSCAN_IMAP_INFO = "Unterstuetzte Dateitypen: PDF (mit Passwort-Check), ZIP (mit Entpackung), MSG (mit Anhangsextraktion)"
+
+# --- Smart!Scan Versand-Dialog ---
+SMARTSCAN_SEND_TITLE = "Smart!Scan Versand"
+SMARTSCAN_SEND_MODE_LABEL = "Versandmodus"
+SMARTSCAN_SEND_DOCUMENTS = "{count} Dokument(e) ausgewaehlt"
+SMARTSCAN_SEND_ESTIMATED_SIZE = "Geschaetzte Gesamtgroesse: {size}"
+SMARTSCAN_SEND_TARGET = "Empfaenger: {address}"
+SMARTSCAN_SEND_SUBJECT_PREVIEW = "Betreff: {subject}"
+SMARTSCAN_SEND_ARCHIVE = "Nach Versand archivieren"
+SMARTSCAN_SEND_RECOLOR = "Nach Versand umfaerben"
+SMARTSCAN_SEND_BUTTON = "Senden"
+SMARTSCAN_TOOLBAR_BUTTON = "Smart!Scan"
+SMARTSCAN_NO_SELECTION = "Bitte waehlen Sie mindestens ein Dokument aus."
+SMARTSCAN_SEND_CANCEL = "Abbrechen"
+SMARTSCAN_SEND_CONFIRM = "Moechten Sie {count} Dokument(e) per Smart!Scan versenden?"
+SMARTSCAN_SEND_CONFIRM_TITLE = "Smart!Scan Versand bestaetigen"
+
+# --- Smart!Scan Versand-Fortschritt ---
+SMARTSCAN_SENDING = "Versende Dokumente..."
+SMARTSCAN_SENDING_PROGRESS = "Versendet: {current}/{total}"
+SMARTSCAN_SENDING_CHUNK = "Verarbeite Chunk {current}/{total}..."
+SMARTSCAN_SEND_SUCCESS = "{count} Dokument(e) erfolgreich per Smart!Scan versendet."
+SMARTSCAN_SEND_PARTIAL = "{sent} von {total} Dokument(en) versendet. {failed} fehlgeschlagen."
+SMARTSCAN_SEND_FAILED = "Smart!Scan Versand fehlgeschlagen: {error}"
+SMARTSCAN_SEND_ERROR = "Fehler beim Smart!Scan Versand: {error}"
+
+# --- Smart!Scan Kontextmenue ---
+SMARTSCAN_CONTEXT_MENU = "Smart!Scan"
+SMARTSCAN_CONTEXT_BOX = "Box per Smart!Scan senden"
+SMARTSCAN_CONTEXT_SELECTED = "Auswahl per Smart!Scan senden"
+
+# --- Smart!Scan Historie ---
+SMARTSCAN_HISTORY_TITLE = "Smart!Scan Versandhistorie"
+SMARTSCAN_HISTORY_DATE = "Datum"
+SMARTSCAN_HISTORY_USER = "Benutzer"
+SMARTSCAN_HISTORY_MODE = "Modus"
+SMARTSCAN_HISTORY_DOCUMENTS = "Dokumente"
+SMARTSCAN_HISTORY_SENT = "Gesendet"
+SMARTSCAN_HISTORY_FAILED = "Fehlgeschlagen"
+SMARTSCAN_HISTORY_ARCHIVED = "Archiviert"
+SMARTSCAN_HISTORY_RECOLORED = "Umgefaerbt"
+SMARTSCAN_HISTORY_STATUS = "Status"
+SMARTSCAN_HISTORY_DETAILS = "Details"
+SMARTSCAN_HISTORY_NO_JOBS = "Keine Smart!Scan Versandvorgaenge vorhanden."
+SMARTSCAN_HISTORY_LOAD_ERROR = "Fehler beim Laden der Historie: {error}"
+SMARTSCAN_HISTORY_FILTER_ALL = "Alle"
+SMARTSCAN_HISTORY_FILTER_7D = "7 Tage"
+SMARTSCAN_HISTORY_FILTER_30D = "30 Tage"
+SMARTSCAN_HISTORY_FILTER_90D = "90 Tage"
+SMARTSCAN_STATUS_QUEUED = "Wartend"
+SMARTSCAN_STATUS_SENDING = "Wird gesendet"
+SMARTSCAN_STATUS_SENT = "Gesendet"
+SMARTSCAN_STATUS_PARTIAL = "Teilweise"
+SMARTSCAN_STATUS_FAILED = "Fehlgeschlagen"
+
+# --- Smart!Scan Job-Details ---
+SMARTSCAN_DETAIL_TITLE = "Smart!Scan Versanddetails"
+SMARTSCAN_DETAIL_DOCUMENTS = "Dokumente"
+SMARTSCAN_DETAIL_EMAILS = "Gesendete E-Mails"
+SMARTSCAN_DETAIL_DOC_NAME = "Dateiname"
+SMARTSCAN_DETAIL_DOC_HASH = "Hash (SHA256)"
+SMARTSCAN_DETAIL_DOC_STATUS = "Status"
+SMARTSCAN_DETAIL_DOC_ERROR = "Fehler"
+SMARTSCAN_DETAIL_EMAIL_TO = "Empfaenger"
+SMARTSCAN_DETAIL_EMAIL_SUBJECT = "Betreff"
+SMARTSCAN_DETAIL_EMAIL_ATTACHMENTS = "Anhaenge"
+SMARTSCAN_DETAIL_EMAIL_MESSAGE_ID = "Message-ID"
+SMARTSCAN_DETAIL_EMAIL_SENT_AT = "Gesendet am"
+
+# --- E-Mail Posteingang (IMAP Inbox) ---
+EMAIL_INBOX_TITLE = "E-Mail Posteingang"
+EMAIL_INBOX_POLL = "Postfach abrufen"
+EMAIL_INBOX_POLLING = "Rufe Postfach ab..."
+EMAIL_INBOX_POLL_SUCCESS = "{new_mails} neue Mail(s), {new_attachments} Anhang/Anhaenge gefunden."
+EMAIL_INBOX_POLL_NO_NEW = "Keine neuen Mails gefunden."
+EMAIL_INBOX_POLL_ERROR = "Fehler beim Abrufen: {error}"
+EMAIL_INBOX_POLL_RUNNING = "Postfach wird abgerufen..."
+EMAIL_INBOX_NO_IMAP_ACCOUNT = "Kein E-Mail-Konto mit IMAP-Server konfiguriert. Bitte richten Sie zuerst ein E-Mail-Konto mit IMAP-Host ein."
+EMAIL_INBOX_LAST_POLL = "Letzter Abruf: {time}"
+EMAIL_INBOX_FROM = "Von"
+EMAIL_INBOX_SUBJECT = "Betreff"
+EMAIL_INBOX_DATE = "Datum"
+EMAIL_INBOX_ATTACHMENTS = "Anhaenge"
+EMAIL_INBOX_STATUS = "Status"
+EMAIL_INBOX_STATUS_NEW = "Neu"
+EMAIL_INBOX_STATUS_PROCESSED = "Verarbeitet"
+EMAIL_INBOX_STATUS_IGNORED = "Ignoriert"
+EMAIL_INBOX_IMPORT = "Anhaenge importieren"
+EMAIL_INBOX_IGNORE = "Ignorieren"
+EMAIL_INBOX_DETAILS = "Details anzeigen"
+EMAIL_INBOX_NO_MAILS = "Keine E-Mails vorhanden."
+EMAIL_INBOX_LOAD_ERROR = "Fehler beim Laden des Posteingangs: {error}"
+EMAIL_INBOX_IMPORT_SUCCESS = "{count} Anhang/Anhaenge erfolgreich importiert."
+EMAIL_INBOX_IMPORT_PARTIAL = "{imported} von {total} Anhang/Anhaengen importiert. {failed} fehlgeschlagen."
+EMAIL_INBOX_IMPORT_FAILED = "Import fehlgeschlagen: {error}"
+EMAIL_INBOX_IMPORT_PROGRESS = "Importiere Anhaenge: {current}/{total}"
+EMAIL_INBOX_FILTER_ALL = "Alle"
+EMAIL_INBOX_FILTER_NEW = "Neu"
+EMAIL_INBOX_FILTER_PROCESSED = "Verarbeitet"
+EMAIL_INBOX_FILTER_IGNORED = "Ignoriert"
+
+# --- IMAP Import Worker ---
+IMAP_IMPORT_STARTING = "Starte IMAP-Import..."
+IMAP_IMPORT_DOWNLOADING = "Lade Anhang herunter: {filename}"
+IMAP_IMPORT_PROCESSING = "Verarbeite: {filename}"
+IMAP_IMPORT_UPLOADING = "Lade hoch: {filename}"
+IMAP_IMPORT_COMPLETE = "{imported} Datei(en) importiert, {failed} fehlgeschlagen."
+IMAP_IMPORT_NO_PENDING = "Keine ausstehenden Anhaenge zum Import."
+IMAP_IMPORT_ERROR = "IMAP-Import Fehler: {error}"
+
+# === Tastenkuerzel (Archiv) ===
+SHORTCUT_PREVIEW_HINT = "Tastenkuerzel: Enter"
+SHORTCUT_DOWNLOAD_HINT = "Tastenkuerzel: Strg+D"
+SHORTCUT_UPLOAD_HINT = "Tastenkuerzel: Strg+U"
+SHORTCUT_REFRESH_HINT = "Tastenkuerzel: F5"
+SHORTCUT_SEARCH_HINT = "Tastenkuerzel: Strg+F"
+SHORTCUT_SELECT_ALL_HINT = "Tastenkuerzel: Strg+A"
+SHORTCUT_DELETE_HINT = "Tastenkuerzel: Entf"
+SHORTCUT_RENAME_HINT = "Tastenkuerzel: F2"
+SHORTCUT_ARCHIVE_HINT = "Tastenkuerzel: Strg+Umschalt+A"
+SHORTCUT_DESELECT_HINT = "Tastenkuerzel: Esc"
+SHORTCUT_SELECT_ONE_RENAME = "Bitte genau ein Dokument zum Umbenennen auswaehlen."
+SHORTCUT_PREVIEW_TOOLTIP = "Dokument anzeigen (Enter)"
+SHORTCUT_DOWNLOAD_TOOLTIP = "Ausgewaehlte Dokumente herunterladen (Strg+D)"
+SHORTCUT_UPLOAD_TOOLTIP = "Dokumente hochladen (Strg+U)"
+SHORTCUT_REFRESH_TOOLTIP = "Daten vom Server neu laden (F5)"
+SHORTCUT_PROCESS_TOOLTIP = "Dokumente aus der Eingangsbox automatisch verarbeiten"
+SHORTCUT_SEARCH_PLACEHOLDER = "Dateiname suchen... (Strg+F)"
+
+# === Duplikat-Erkennung ===
+DUPLICATE_COLUMN_HEADER = ""
+DUPLICATE_TOOLTIP = "Dopplung von: {original} (ID: {id})"
+DUPLICATE_TOOLTIP_NO_ORIGINAL = "Dopplung (Version {version})"
+DUPLICATE_BADGE = "Dopplung"
+DUPLICATE_DETECTED_TOAST = "Duplikat erkannt: {count} Datei(en) existieren bereits im Archiv"
+DUPLICATE_ICON = "\u26a0"
+
+# === Dokument-Historie (Seitenpanel) ===
+HISTORY_PANEL_TITLE = "Historie"
+HISTORY_PANEL_CLOSE = "Schließen"
+HISTORY_TOGGLE_TOOLTIP = "Dokument-Historie ein-/ausblenden"
+HISTORY_EMPTY = "Keine Historie vorhanden"
+HISTORY_LOADING = "Historie wird geladen..."
+HISTORY_ERROR = "Historie konnte nicht geladen werden"
+HISTORY_ACTION_MOVE = "Verschoben nach {target}"
+HISTORY_ACTION_MOVE_FROM = "Verschoben von {source} nach {target}"
+HISTORY_ACTION_DOWNLOAD = "Heruntergeladen"
+HISTORY_ACTION_UPLOAD = "Hochgeladen"
+HISTORY_ACTION_DELETE = "Gelöscht"
+HISTORY_ACTION_ARCHIVE = "Archiviert"
+HISTORY_ACTION_UNARCHIVE = "Entarchiviert"
+HISTORY_ACTION_RENAME = "Umbenannt"
+HISTORY_ACTION_COLOR = "Farbmarkierung geändert"
+HISTORY_ACTION_CLASSIFY = "KI-klassifiziert"
+HISTORY_ACTION_UPDATE = "Aktualisiert"
+HISTORY_ACTION_UNKNOWN = "Aktion: {action}"
+HISTORY_BY_USER = "von {user}"
+HISTORY_BY_SYSTEM = "System"
+HISTORY_DOWNLOAD_COUNT = "{count}x heruntergeladen"
+HISTORY_NO_PERMISSION = "Keine Berechtigung für Dokument-Historie"
+
+# === PDF-Bearbeitung ===
+PDF_EDIT_ROTATE_CW = "Rechts drehen"
+PDF_EDIT_ROTATE_CCW = "Links drehen"
+PDF_EDIT_DELETE_PAGE = "Seite löschen"
+PDF_EDIT_DELETE_CONFIRM = "Seite {page} wirklich löschen?"
+PDF_EDIT_SAVE = "Speichern"
+PDF_EDIT_SAVING = "Speichere PDF..."
+PDF_EDIT_SAVE_SUCCESS = "PDF erfolgreich gespeichert"
+PDF_EDIT_SAVE_ERROR = "PDF konnte nicht gespeichert werden: {error}"
+PDF_EDIT_STATUS = "Seite {current} von {total}"
+PDF_EDIT_CHANGES = "{count} Änderung(en)"
+PDF_EDIT_NO_CHANGES = "Keine Änderungen"
+PDF_EDIT_LAST_PAGE = "Die letzte Seite kann nicht gelöscht werden"
+PDF_EDIT_UNSAVED = "Ungespeicherte Änderungen"
+PDF_EDIT_UNSAVED_CONFIRM = "Es gibt ungespeicherte Änderungen. Trotzdem schließen?"
+
+# === Schließ-Schutz ===
+CLOSE_BLOCKED_TITLE = "Die Anwendung kann gerade nicht geschlossen werden"
+CLOSE_BLOCKED_PROCESSING = "KI-Dokumentenverarbeitung läuft"
+CLOSE_BLOCKED_COST_CHECK = "KI-Kosten werden ermittelt (Guthaben-Abfrage ausstehend)"
+CLOSE_BLOCKED_SMARTSCAN = "Smart!Scan-Versand wird durchgeführt"
+
+# === Toast-Benachrichtigungen ===
+TOAST_UNDO = "Rückgängig"
+TOAST_RETRY = "Erneut versuchen"
+TOAST_DETAILS = "Details"
+TOAST_DISMISS = "Schließen"

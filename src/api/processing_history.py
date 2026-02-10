@@ -203,6 +203,65 @@ class ProcessingHistoryAPI:
         
         return []
     
+    def get_cost_history(self,
+                         from_date: Optional[str] = None,
+                         to_date: Optional[str] = None,
+                         limit: int = 100,
+                         offset: int = 0) -> tuple[List[Dict], int]:
+        """
+        Holt die Kosten-Historie aller Verarbeitungslaeufe.
+        
+        Returns:
+            Tuple aus (Liste von Kosten-Dicts, Gesamtzahl)
+            Jeder Dict enthaelt:
+            - id, date, total_cost_usd, cost_per_document_usd,
+              total_documents, successful_documents, failed_documents,
+              duration_seconds, credits_before_usd, credits_after_usd,
+              user, source
+        """
+        params = {'limit': limit, 'offset': offset}
+        
+        if from_date:
+            params['from'] = from_date
+        if to_date:
+            params['to'] = to_date
+        
+        response = self.client.get(f'{self._endpoint}/costs', params=params)
+        
+        if response and response.get('success'):
+            data = response.get('data', {})
+            entries = data.get('entries', [])
+            total = data.get('total', len(entries))
+            return entries, total
+        
+        return [], 0
+    
+    def get_cost_stats(self,
+                       from_date: Optional[str] = None,
+                       to_date: Optional[str] = None) -> Optional[Dict]:
+        """
+        Holt aggregierte Kosten-Statistiken.
+        
+        Returns:
+            Dict mit:
+            - total_runs, total_documents, total_successful, total_failed,
+              total_cost_usd, avg_cost_per_document_usd, avg_cost_per_run_usd,
+              total_duration_seconds, success_rate_percent, period
+        """
+        params = {}
+        
+        if from_date:
+            params['from'] = from_date
+        if to_date:
+            params['to'] = to_date
+        
+        response = self.client.get(f'{self._endpoint}/cost_stats', params=params)
+        
+        if response and response.get('success'):
+            return response.get('data')
+        
+        return None
+    
     @contextmanager
     def track_action(self, 
                      document_id: int,

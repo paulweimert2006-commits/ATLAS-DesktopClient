@@ -1,5 +1,5 @@
 """
-BiPRO-GDV Tool - BiPRO Connector
+ACENCIA ATLAS - BiPRO Connector
 
 Abstraktionsschicht für BiPRO-Verbindungen.
 Wählt automatisch zwischen SmartAdmin-Flow und Standard-Flow.

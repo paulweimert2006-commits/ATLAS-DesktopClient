@@ -4,8 +4,8 @@ BiPro API - Authentifizierung
 Login, Logout, Token-Verwaltung.
 """
 
-from typing import Optional, Dict, Any
-from dataclasses import dataclass
+from typing import Optional, Dict, Any, List
+from dataclasses import dataclass, field
 import logging
 import json
 import os
@@ -18,10 +18,23 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class User:
-    """Angemeldeter Benutzer"""
+    """Angemeldeter Benutzer mit Kontotyp und Rechten."""
     id: int
     username: str
     email: Optional[str] = None
+    account_type: str = 'user'
+    permissions: List[str] = field(default_factory=list)
+    is_locked: bool = False
+    last_login_at: Optional[str] = None
+
+    @property
+    def is_admin(self) -> bool:
+        """Ist der Benutzer ein Administrator?"""
+        return self.account_type == 'admin'
+
+    def has_permission(self, perm: str) -> bool:
+        """Prueft ob der Benutzer ein bestimmtes Recht hat. Admins haben alle Rechte."""
+        return self.is_admin or perm in self.permissions
 
 
 @dataclass  
@@ -87,11 +100,13 @@ class AuthAPI:
                 # Token im Client setzen
                 self.client.set_token(token)
                 
-                # User-Objekt erstellen
+                # User-Objekt erstellen (mit Kontotyp und Rechten)
                 self._current_user = User(
                     id=user_data['id'],
                     username=user_data['username'],
-                    email=user_data.get('email')
+                    email=user_data.get('email'),
+                    account_type=user_data.get('account_type', 'user'),
+                    permissions=user_data.get('permissions', [])
                 )
                 
                 # Token speichern falls gewünscht
@@ -186,11 +201,14 @@ class AuthAPI:
         # Token setzen und validieren
         self.client.set_token(token)
         
-        if self.verify_token():
+        verify_result = self._verify_token_with_permissions()
+        if verify_result:
             self._current_user = User(
-                id=user_data['id'],
-                username=user_data['username'],
-                email=user_data.get('email')
+                id=verify_result.get('user_id', user_data['id']),
+                username=verify_result.get('username', user_data['username']),
+                email=user_data.get('email'),
+                account_type=verify_result.get('account_type', user_data.get('account_type', 'user')),
+                permissions=verify_result.get('permissions', user_data.get('permissions', []))
             )
             logger.info(f"Auto-Login erfolgreich: {self._current_user.username}")
             return AuthState(
@@ -234,11 +252,14 @@ class AuthAPI:
         # Neuen Token setzen und pruefen
         self.client.set_token(token)
         
-        if self.verify_token():
+        verify_result = self._verify_token_with_permissions()
+        if verify_result:
             self._current_user = User(
-                id=user_data['id'],
-                username=user_data['username'],
-                email=user_data.get('email')
+                id=verify_result.get('user_id', user_data['id']),
+                username=verify_result.get('username', user_data['username']),
+                email=user_data.get('email'),
+                account_type=verify_result.get('account_type', user_data.get('account_type', 'user')),
+                permissions=verify_result.get('permissions', user_data.get('permissions', []))
             )
             logger.info(f"Re-Authentifizierung erfolgreich: {self._current_user.username}")
             return True
@@ -248,6 +269,29 @@ class AuthAPI:
         logger.warning("Re-Authentifizierung fehlgeschlagen: Token ungueltig")
         return False
     
+    def _verify_token_with_permissions(self) -> Optional[Dict]:
+        """
+        Prueft Token und gibt erweiterte Daten (inkl. account_type, permissions) zurueck.
+        
+        Returns:
+            Dict mit user_id, username, account_type, permissions oder None
+        """
+        if not self.client.is_authenticated():
+            return None
+            
+        try:
+            response = self.client.get('/auth/verify')
+            if response.get('valid', False):
+                return {
+                    'user_id': response.get('user_id'),
+                    'username': response.get('username'),
+                    'account_type': response.get('account_type', 'user'),
+                    'permissions': response.get('permissions', [])
+                }
+        except APIError:
+            pass
+        return None
+
     def _save_token(self, token: str, user_data: Dict) -> None:
         """Speichert Token lokal."""
         try:

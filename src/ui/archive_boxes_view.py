@@ -1,5 +1,5 @@
 """
-BiPRO-GDV Tool - Dokumentenarchiv mit Box-System
+ACENCIA ATLAS - Dokumentenarchiv mit Box-System
 
 Neue Ansicht mit:
 - Sidebar fuer Box-Navigation
@@ -23,10 +23,12 @@ from PySide6.QtWidgets import (
     QHeaderView, QPushButton, QLabel, QComboBox, QLineEdit,
     QFileDialog, QMessageBox, QMenu, QProgressDialog, QFrame,
     QSplitter, QGroupBox, QTreeWidget, QTreeWidgetItem, QToolBar,
-    QApplication, QProgressBar, QInputDialog
+    QApplication, QProgressBar, QInputDialog, QStyledItemDelegate,
+    QDialog, QFormLayout, QCheckBox, QScrollArea
 )
 from PySide6.QtCore import Qt, Signal, QThread, QMimeData, QTimer, QSize
-from PySide6.QtGui import QAction, QFont, QColor, QDrag, QBrush
+from shiboken6 import isValid
+from PySide6.QtGui import QAction, QFont, QColor, QDrag, QBrush, QPainter, QShortcut, QKeySequence
 
 logger = logging.getLogger(__name__)
 
@@ -40,13 +42,14 @@ from ui.styles.tokens import (
     FONT_HEADLINE, FONT_BODY, FONT_MONO,
     FONT_SIZE_H2, FONT_SIZE_BODY, FONT_SIZE_CAPTION,
     RADIUS_MD, SPACING_SM, SPACING_MD,
-    get_button_primary_style, get_button_secondary_style, get_button_ghost_style
+    get_button_primary_style, get_button_secondary_style, get_button_ghost_style,
+    DOCUMENT_DISPLAY_COLORS
 )
 
 from api.client import APIClient
 from api.documents import (
     DocumentsAPI, Document, BoxStats, 
-    BOX_TYPES, BOX_DISPLAY_NAMES, BOX_COLORS
+    BOX_TYPES, BOX_TYPES_ADMIN, BOX_DISPLAY_NAMES, BOX_COLORS
 )
 
 # Boxen aus denen nach Download automatisch archiviert wird
@@ -55,8 +58,438 @@ ARCHIVABLE_BOXES = {'gdv', 'courtage', 'sach', 'leben', 'kranken', 'sonstige'}
 # Import der bestehenden Hilfsklassen aus archive_view
 from ui.archive_view import (
     format_date_german, DocumentLoadWorker, UploadWorker, 
-    AIRenameWorker, PDFViewerDialog, HAS_PDF_VIEW
+    AIRenameWorker, PDFViewerDialog, HAS_PDF_VIEW,
+    SpreadsheetViewerDialog
 )
+
+
+class DocumentHistoryWorker(QThread):
+    """
+    Worker zum asynchronen Laden der Dokument-Historie.
+    
+    Laedt die Aenderungshistorie eines Dokuments aus dem activity_log
+    via GET /documents/{id}/history.
+    """
+    finished = Signal(int, list)    # doc_id, history_entries
+    error = Signal(int, str)        # doc_id, error_message
+    
+    def __init__(self, api_client: APIClient, doc_id: int, parent=None):
+        super().__init__(parent)
+        self.api_client = api_client
+        self.doc_id = doc_id
+    
+    def run(self):
+        try:
+            docs_api = DocumentsAPI(self.api_client)
+            history = docs_api.get_document_history(self.doc_id)
+            if history is not None:
+                self.finished.emit(self.doc_id, history)
+            else:
+                self.error.emit(self.doc_id, "Historie konnte nicht geladen werden")
+        except Exception as e:
+            logger.error(f"Fehler beim Laden der Dokument-Historie: {e}")
+            self.error.emit(self.doc_id, str(e))
+
+
+class DocumentHistoryPanel(QWidget):
+    """
+    Seitenpanel fuer die Aenderungshistorie eines Dokuments.
+    
+    Zeigt alle Aktionen (Verschiebungen, Downloads, Uploads, etc.)
+    farbcodiert mit Zeitstempel und Benutzername.
+    
+    Wird rechts neben der Dokumenten-Tabelle angezeigt.
+    """
+    
+    close_requested = Signal()
+    
+    # Aktions-Farben
+    ACTION_COLORS = {
+        'move': '#3b82f6',              # Blau
+        'download': '#059669',          # Gruen
+        'upload': '#6b7280',            # Grau
+        'delete': '#dc2626',            # Rot
+        'bulk_archive': '#f59e0b',      # Orange
+        'bulk_unarchive': '#f59e0b',    # Orange
+        'archive': '#f59e0b',           # Orange
+        'unarchive': '#f59e0b',         # Orange
+        'bulk_set_color': '#8b5cf6',    # Lila
+        'update': '#6366f1',            # Indigo
+        'classify': '#06b6d4',          # Cyan
+        'list': '#9ca3af',              # Hellgrau (unwichtig)
+    }
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._current_doc_id = None
+        self._history_cache: Dict[int, tuple] = {}  # doc_id -> (timestamp, entries)
+        self._cache_ttl = 60  # Sekunden
+        self._setup_ui()
+    
+    def _setup_ui(self):
+        """Baut das Panel-UI auf."""
+        from i18n.de import (
+            HISTORY_PANEL_TITLE, HISTORY_PANEL_CLOSE,
+            HISTORY_EMPTY, HISTORY_LOADING
+        )
+        
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
+        
+        # Header mit Titel und Schliessen-Button
+        header = QHBoxLayout()
+        self._title_label = QLabel(HISTORY_PANEL_TITLE)
+        self._title_label.setStyleSheet(f"""
+            font-size: 14px;
+            font-weight: bold;
+            color: {TEXT_PRIMARY};
+        """)
+        header.addWidget(self._title_label)
+        
+        header.addStretch()
+        
+        close_btn = QPushButton("✕")
+        close_btn.setFixedSize(24, 24)
+        close_btn.setToolTip(HISTORY_PANEL_CLOSE)
+        close_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent;
+                border: none;
+                color: {TEXT_SECONDARY};
+                font-size: 14px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{
+                color: {TEXT_PRIMARY};
+                background: {BG_SECONDARY};
+                border-radius: 4px;
+            }}
+        """)
+        close_btn.clicked.connect(self.close_requested.emit)
+        header.addWidget(close_btn)
+        
+        layout.addLayout(header)
+        
+        # Trennlinie
+        separator = QFrame()
+        separator.setFrameShape(QFrame.Shape.HLine)
+        separator.setStyleSheet(f"color: {BORDER_DEFAULT};")
+        layout.addWidget(separator)
+        
+        # Dokument-Name
+        self._doc_name_label = QLabel("")
+        self._doc_name_label.setWordWrap(True)
+        self._doc_name_label.setStyleSheet(f"""
+            font-size: 11px;
+            color: {TEXT_SECONDARY};
+            padding: 2px 0;
+        """)
+        layout.addWidget(self._doc_name_label)
+        
+        # Scrollbereich fuer Historie-Eintraege
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setStyleSheet(f"""
+            QScrollArea {{
+                border: none;
+                background: transparent;
+            }}
+            QScrollArea > QWidget > QWidget {{
+                background: transparent;
+            }}
+        """)
+        
+        self._entries_widget = QWidget()
+        self._entries_layout = QVBoxLayout(self._entries_widget)
+        self._entries_layout.setContentsMargins(0, 0, 0, 0)
+        self._entries_layout.setSpacing(4)
+        self._entries_layout.addStretch()
+        
+        scroll.setWidget(self._entries_widget)
+        layout.addWidget(scroll, 1)
+        
+        # Status-Label (Loading / Empty / Error)
+        self._status_label = QLabel(HISTORY_EMPTY)
+        self._status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._status_label.setStyleSheet(f"""
+            color: {TEXT_SECONDARY};
+            font-size: 12px;
+            padding: 20px;
+        """)
+        layout.addWidget(self._status_label)
+        
+        # Panel-Breite
+        self.setMinimumWidth(220)
+        self.setMaximumWidth(400)
+        
+        # Styling
+        self.setStyleSheet(f"""
+            DocumentHistoryPanel {{
+                background-color: {BG_PRIMARY};
+                border-left: 1px solid {BORDER_DEFAULT};
+            }}
+        """)
+    
+    def show_history(self, doc_id: int, doc_name: str, entries: list):
+        """Zeigt die Historie-Eintraege an."""
+        from i18n.de import (
+            HISTORY_EMPTY, HISTORY_ACTION_MOVE, HISTORY_ACTION_MOVE_FROM,
+            HISTORY_ACTION_DOWNLOAD, HISTORY_ACTION_UPLOAD, HISTORY_ACTION_DELETE,
+            HISTORY_ACTION_ARCHIVE, HISTORY_ACTION_UNARCHIVE, HISTORY_ACTION_RENAME,
+            HISTORY_ACTION_COLOR, HISTORY_ACTION_CLASSIFY, HISTORY_ACTION_UPDATE,
+            HISTORY_ACTION_UNKNOWN, HISTORY_BY_USER, HISTORY_BY_SYSTEM
+        )
+        
+        self._current_doc_id = doc_id
+        self._doc_name_label.setText(doc_name)
+        
+        # Alte Eintraege entfernen
+        self._clear_entries()
+        
+        if not entries:
+            self._status_label.setText(HISTORY_EMPTY)
+            self._status_label.setVisible(True)
+            return
+        
+        self._status_label.setVisible(False)
+        
+        # Eintraege aufbauen
+        for entry in entries:
+            widget = self._create_entry_widget(entry)
+            # Vor dem Stretch einfuegen
+            self._entries_layout.insertWidget(
+                self._entries_layout.count() - 1, widget
+            )
+        
+        # Cache aktualisieren
+        import time
+        self._history_cache[doc_id] = (time.time(), entries)
+    
+    def show_loading(self, doc_name: str = ""):
+        """Zeigt den Lade-Indikator."""
+        from i18n.de import HISTORY_LOADING
+        self._doc_name_label.setText(doc_name)
+        self._clear_entries()
+        self._status_label.setText(HISTORY_LOADING)
+        self._status_label.setVisible(True)
+    
+    def show_error(self, message: str):
+        """Zeigt eine Fehlermeldung."""
+        from i18n.de import HISTORY_ERROR
+        self._clear_entries()
+        self._status_label.setText(HISTORY_ERROR)
+        self._status_label.setVisible(True)
+    
+    def get_cached_history(self, doc_id: int) -> Optional[list]:
+        """Gibt gecachte Historie zurueck wenn noch gueltig (< cache_ttl Sekunden)."""
+        import time
+        if doc_id in self._history_cache:
+            ts, entries = self._history_cache[doc_id]
+            if time.time() - ts < self._cache_ttl:
+                return entries
+            else:
+                del self._history_cache[doc_id]
+        return None
+    
+    def invalidate_cache(self, doc_id: Optional[int] = None):
+        """Invalidiert den Cache fuer ein bestimmtes Dokument oder alle."""
+        if doc_id is not None:
+            self._history_cache.pop(doc_id, None)
+        else:
+            self._history_cache.clear()
+    
+    def _clear_entries(self):
+        """Entfernt alle Historie-Eintraege aus dem Layout."""
+        while self._entries_layout.count() > 1:  # Stretch behalten
+            item = self._entries_layout.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
+    
+    def _create_entry_widget(self, entry: dict) -> QWidget:
+        """Erstellt ein Widget fuer einen einzelnen Historie-Eintrag."""
+        from i18n.de import (
+            HISTORY_ACTION_MOVE, HISTORY_ACTION_MOVE_FROM,
+            HISTORY_ACTION_DOWNLOAD, HISTORY_ACTION_UPLOAD, HISTORY_ACTION_DELETE,
+            HISTORY_ACTION_ARCHIVE, HISTORY_ACTION_UNARCHIVE, HISTORY_ACTION_RENAME,
+            HISTORY_ACTION_COLOR, HISTORY_ACTION_CLASSIFY, HISTORY_ACTION_UPDATE,
+            HISTORY_ACTION_UNKNOWN, HISTORY_BY_USER, HISTORY_BY_SYSTEM
+        )
+        
+        action = entry.get('action', '')
+        details = entry.get('details', {}) or {}
+        username = entry.get('username', '')
+        created_at = entry.get('created_at', '')
+        
+        # Farbe fuer diese Aktion
+        color = self.ACTION_COLORS.get(action, '#6b7280')
+        
+        # Aktion menschenlesbar aufbereiten
+        action_text = self._format_action(action, details)
+        
+        # Zeitstempel formatieren (DD.MM. HH:MM)
+        time_text = self._format_timestamp(created_at)
+        
+        # User-Text
+        if username:
+            user_text = HISTORY_BY_USER.format(user=username)
+        else:
+            user_text = HISTORY_BY_SYSTEM
+        
+        # Widget aufbauen
+        widget = QFrame()
+        widget.setStyleSheet(f"""
+            QFrame {{
+                background-color: {BG_SECONDARY};
+                border-radius: 4px;
+                padding: 6px 8px;
+                border-left: 3px solid {color};
+            }}
+        """)
+        
+        entry_layout = QVBoxLayout(widget)
+        entry_layout.setContentsMargins(4, 4, 4, 4)
+        entry_layout.setSpacing(2)
+        
+        # Zeile 1: Zeitstempel + User
+        header_layout = QHBoxLayout()
+        header_layout.setSpacing(4)
+        
+        time_label = QLabel(time_text)
+        time_label.setStyleSheet(f"font-size: 10px; color: {TEXT_SECONDARY}; font-weight: 500;")
+        header_layout.addWidget(time_label)
+        
+        header_layout.addStretch()
+        
+        user_label = QLabel(user_text)
+        user_label.setStyleSheet(f"font-size: 10px; color: {TEXT_SECONDARY};")
+        header_layout.addWidget(user_label)
+        
+        entry_layout.addLayout(header_layout)
+        
+        # Zeile 2: Aktion
+        action_label = QLabel(action_text)
+        action_label.setWordWrap(True)
+        action_label.setStyleSheet(f"font-size: 11px; color: {TEXT_PRIMARY}; font-weight: 500;")
+        entry_layout.addWidget(action_label)
+        
+        return widget
+    
+    def _format_action(self, action: str, details: dict) -> str:
+        """Formatiert eine Aktion in lesbaren Text."""
+        from i18n.de import (
+            HISTORY_ACTION_MOVE, HISTORY_ACTION_MOVE_FROM,
+            HISTORY_ACTION_DOWNLOAD, HISTORY_ACTION_UPLOAD, HISTORY_ACTION_DELETE,
+            HISTORY_ACTION_ARCHIVE, HISTORY_ACTION_UNARCHIVE, HISTORY_ACTION_RENAME,
+            HISTORY_ACTION_COLOR, HISTORY_ACTION_CLASSIFY, HISTORY_ACTION_UPDATE,
+            HISTORY_ACTION_UNKNOWN
+        )
+        
+        if action == 'move':
+            target = details.get('target_box', '')
+            source = details.get('source_box', '')
+            target_display = BOX_DISPLAY_NAMES.get(target, target)
+            if source:
+                source_display = BOX_DISPLAY_NAMES.get(source, source)
+                return HISTORY_ACTION_MOVE_FROM.format(source=source_display, target=target_display)
+            return HISTORY_ACTION_MOVE.format(target=target_display)
+        
+        elif action == 'download':
+            return HISTORY_ACTION_DOWNLOAD
+        
+        elif action == 'upload':
+            return HISTORY_ACTION_UPLOAD
+        
+        elif action == 'delete':
+            return HISTORY_ACTION_DELETE
+        
+        elif action in ('bulk_archive', 'archive'):
+            return HISTORY_ACTION_ARCHIVE
+        
+        elif action in ('bulk_unarchive', 'unarchive'):
+            return HISTORY_ACTION_UNARCHIVE
+        
+        elif action == 'update':
+            changes = details.get('changes', {})
+            if 'original_filename' in changes:
+                return HISTORY_ACTION_RENAME
+            if 'box_type' in changes:
+                old_box = details.get('old_box_type', '')
+                new_box = changes.get('box_type', '')
+                old_display = BOX_DISPLAY_NAMES.get(old_box, old_box)
+                new_display = BOX_DISPLAY_NAMES.get(new_box, new_box)
+                if old_box:
+                    return HISTORY_ACTION_MOVE_FROM.format(source=old_display, target=new_display)
+                return HISTORY_ACTION_MOVE.format(target=new_display)
+            if 'display_color' in changes:
+                return HISTORY_ACTION_COLOR
+            if 'processing_status' in changes and changes.get('processing_status') in ('classified', 'completed'):
+                return HISTORY_ACTION_CLASSIFY
+            return HISTORY_ACTION_UPDATE
+        
+        elif action == 'bulk_set_color':
+            return HISTORY_ACTION_COLOR
+        
+        elif action == 'classify':
+            return HISTORY_ACTION_CLASSIFY
+        
+        return HISTORY_ACTION_UNKNOWN.format(action=action)
+    
+    def _format_timestamp(self, iso_str: str) -> str:
+        """Formatiert einen ISO-Zeitstempel in DD.MM. HH:MM Format."""
+        if not iso_str:
+            return ""
+        try:
+            # Versuche ISO-Format zu parsen
+            dt = datetime.fromisoformat(iso_str.replace('Z', '+00:00'))
+            return dt.strftime('%d.%m. %H:%M')
+        except (ValueError, TypeError):
+            # Fallback: Einfach die ersten 16 Zeichen
+            return iso_str[:16] if len(iso_str) >= 16 else iso_str
+
+
+class CacheDocumentLoadWorker(QThread):
+    """
+    Worker zum Laden von Dokumenten ueber den zentralen Cache-Service.
+    
+    Laedt ALLE Dokumente in einem API-Call in den Cache,
+    filtert dann client-seitig nach box_type und is_archived.
+    
+    Vorteil gegenueber DocumentLoadWorker:
+    - 1 API-Call statt N (pro Box)
+    - Cache wird fuer alle Boxen befuellt
+    - Nachfolgende Box-Wechsel sind instant (aus Cache)
+    """
+    finished = Signal(list)
+    error = Signal(str)
+    
+    def __init__(self, cache_service, box_type: str = None, 
+                 is_archived: bool = None, force_refresh: bool = True):
+        super().__init__()
+        self._cache = cache_service
+        self.box_type = box_type
+        self.is_archived = is_archived
+        self.force_refresh = force_refresh
+    
+    def run(self):
+        try:
+            # Laedt ALLE Dokumente in Cache (1 API-Call), filtert lokal
+            docs = self._cache.get_documents(
+                box_type=self.box_type, 
+                force_refresh=self.force_refresh
+            )
+            
+            # is_archived Filter client-seitig anwenden
+            if self.is_archived is True:
+                docs = [d for d in docs if d.is_archived]
+            elif self.is_archived is False:
+                docs = [d for d in docs if not d.is_archived]
+            
+            self.finished.emit(docs)
+        except Exception as e:
+            self.error.emit(str(e))
 
 
 class LoadingOverlay(QWidget):
@@ -148,129 +581,6 @@ class LoadingOverlay(QWidget):
         painter.fillRect(self.rect(), QC(0, 0, 0, 80))  # Leicht dunkler Hintergrund
         super().paintEvent(event)
 
-
-class ToastNotification(QFrame):
-    """
-    Kleine Toast-Benachrichtigung am unteren Rand.
-    
-    Verschwindet automatisch nach einigen Sekunden.
-    Optional mit Aktions-Button (z.B. "Rückgängig").
-    """
-    
-    action_clicked = Signal()
-    
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setObjectName("toastNotification")
-        
-        # Frame-Styling
-        self.setStyleSheet(f"""
-            QFrame#toastNotification {{
-                background-color: #1a1a2e;
-                border-radius: 8px;
-                border: 1px solid #2d2d44;
-            }}
-        """)
-        
-        # Layout
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(20, 14, 20, 14)
-        layout.setSpacing(20)
-        
-        # Text-Label mit direktem Styling
-        self._text_label = QLabel("")
-        self._text_label.setStyleSheet(f"""
-            QLabel {{
-                color: #ffffff;
-                font-family: {FONT_BODY};
-                font-size: 14px;
-                font-weight: 500;
-                background: transparent;
-                border: none;
-            }}
-        """)
-        layout.addWidget(self._text_label)
-        
-        layout.addStretch()
-        
-        # Aktions-Button mit direktem Styling
-        self._action_btn = QPushButton("")
-        self._action_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: transparent;
-                color: {ACCENT_500};
-                border: none;
-                font-family: {FONT_BODY};
-                font-size: 14px;
-                font-weight: 600;
-                padding: 6px 12px;
-            }}
-            QPushButton:hover {{
-                color: #ffffff;
-                background-color: rgba(255, 255, 255, 0.1);
-                border-radius: 4px;
-            }}
-        """)
-        self._action_btn.setVisible(False)
-        self._action_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._action_btn.clicked.connect(self._on_action_clicked)
-        layout.addWidget(self._action_btn)
-        
-        # Auto-Hide Timer
-        self._hide_timer = QTimer(self)
-        self._hide_timer.setSingleShot(True)
-        self._hide_timer.timeout.connect(self._fade_out)
-        
-        # Initial versteckt
-        self.setVisible(False)
-        self.setFixedHeight(64)
-    
-    def show_message(self, text: str, action_text: str = None, duration_ms: int = 5000):
-        """
-        Zeigt eine Toast-Nachricht an.
-        
-        Args:
-            text: Die anzuzeigende Nachricht
-            action_text: Optional, Text fuer Aktions-Button
-            duration_ms: Anzeigedauer in Millisekunden
-        """
-        self._text_label.setText(text)
-        
-        if action_text:
-            self._action_btn.setText(action_text)
-            self._action_btn.setVisible(True)
-        else:
-            self._action_btn.setVisible(False)
-        
-        # Positionieren (unten mittig im Parent)
-        if self.parent():
-            parent_rect = self.parent().rect()
-            toast_width = min(500, parent_rect.width() - 40)
-            self.setFixedWidth(toast_width)
-            x = (parent_rect.width() - toast_width) // 2
-            y = parent_rect.height() - self.height() - 20
-            self.move(x, y)
-        
-        self.setVisible(True)
-        self.raise_()
-        
-        # Timer starten
-        self._hide_timer.start(duration_ms)
-    
-    def _on_action_clicked(self):
-        """Handler fuer Klick auf Aktions-Button."""
-        self._hide_timer.stop()
-        self.setVisible(False)
-        self.action_clicked.emit()
-    
-    def _fade_out(self):
-        """Versteckt die Toast-Benachrichtigung."""
-        self.setVisible(False)
-    
-    def hide_now(self):
-        """Sofort verstecken."""
-        self._hide_timer.stop()
-        self.setVisible(False)
 
 
 class ProcessingProgressOverlay(QWidget):
@@ -523,10 +833,10 @@ class ProcessingProgressOverlay(QWidget):
         lines = []
         
         if success_count > 0:
-            lines.append(f"✅ {success_count} Dokument(e) erfolgreich verarbeitet")
+            lines.append(f"✅ {success_count} Dokument(e) zugeordnet")
         
         if failed_count > 0:
-            lines.append(f"⚠️ {failed_count} Dokument(e) fehlgeschlagen")
+            lines.append(f"⚠️ {failed_count} Dokument(e) nicht zugeordnet/fehlgeschlagen")
         
         # Dauer anzeigen
         if duration is not None:
@@ -545,6 +855,10 @@ class ProcessingProgressOverlay(QWidget):
             lines.append(f"  • Gesamt: ${total_cost:.4f} USD")
             if cost_per_doc is not None and success_count > 0:
                 lines.append(f"  • Pro Dokument: ${cost_per_doc:.6f} USD")
+        elif isinstance(batch_result, BatchProcessingResult) and batch_result.credits_before is not None:
+            # Kosten werden verzoegert berechnet
+            lines.append("")
+            lines.append("💰 Kosten werden in ~45s berechnet...")
         
         self._summary_label.setText("\n".join(lines))
         self._summary_frame.setVisible(True)
@@ -574,7 +888,15 @@ class ProcessingProgressOverlay(QWidget):
 
 
 class MultiUploadWorker(QThread):
-    """Worker zum Hochladen mehrerer Dateien."""
+    """Worker zum Hochladen mehrerer Dateien.
+    
+    Phase 1: Alle ZIPs/MSGs rekursiv entpacken -> flache Job-Liste
+    Phase 2: Parallele Uploads via ThreadPoolExecutor (max. 5 gleichzeitig)
+    
+    Jeder Upload-Thread bekommt eine eigene requests.Session (thread-safe).
+    """
+    MAX_UPLOAD_WORKERS = 5
+    
     file_finished = Signal(str, object)  # filename, Document or None
     file_error = Signal(str, str)  # filename, error message
     all_finished = Signal(int, int)  # erfolge, fehler
@@ -586,28 +908,204 @@ class MultiUploadWorker(QThread):
         self.file_paths = file_paths
         self.source_type = source_type
     
-    def run(self):
-        erfolge = 0
-        fehler = 0
-        total = len(self.file_paths)
+    def _expand_all_files(self, file_paths):
+        """Phase 1: Entpackt alle ZIPs/MSGs rekursiv und liefert flache Upload-Job-Liste.
         
-        for i, file_path in enumerate(self.file_paths):
-            filename = Path(file_path).name
-            self.progress.emit(i + 1, total, filename)
-            
-            try:
-                doc = self.docs_api.upload(file_path, self.source_type)
-                if doc:
-                    self.file_finished.emit(filename, doc)
+        Returns:
+            Liste von (path, box_type_or_None) Tupeln.
+            box_type=None bedeutet Eingangsbox, 'roh' = Roh-Archiv.
+        """
+        import tempfile
+        from services.msg_handler import is_msg_file, extract_msg_attachments
+        from services.zip_handler import is_zip_file, extract_zip_contents
+        from services.pdf_unlock import unlock_pdf_if_needed
+
+        jobs = []
+
+        for fp in file_paths:
+            if is_zip_file(fp):
+                td = tempfile.mkdtemp(prefix="atlas_zip_")
+                self._temp_dirs.append(td)
+                zr = extract_zip_contents(fp, td, api_client=self.docs_api.client)
+                if zr.error:
+                    self._errors.append((Path(fp).name, zr.error))
+                    jobs.append((fp, 'roh'))
+                    continue
+                for ext in zr.extracted_paths:
+                    if is_msg_file(ext):
+                        md = tempfile.mkdtemp(prefix="atlas_msg_", dir=td)
+                        mr = extract_msg_attachments(ext, md)
+                        if mr.error:
+                            self._errors.append((Path(ext).name, mr.error))
+                        else:
+                            for att in mr.attachment_paths:
+                                unlock_pdf_if_needed(att)
+                                jobs.append((att, None))
+                        jobs.append((ext, 'roh'))
+                    else:
+                        unlock_pdf_if_needed(ext)
+                        jobs.append((ext, None))
+                jobs.append((fp, 'roh'))
+
+            elif is_msg_file(fp):
+                td = tempfile.mkdtemp(prefix="atlas_msg_")
+                self._temp_dirs.append(td)
+                mr = extract_msg_attachments(fp, td)
+                if mr.error:
+                    self._errors.append((Path(fp).name, mr.error))
+                    continue
+                for att in mr.attachment_paths:
+                    if is_zip_file(att):
+                        zd = tempfile.mkdtemp(prefix="atlas_zip_", dir=td)
+                        zr = extract_zip_contents(att, zd, api_client=self.docs_api.client)
+                        if zr.error:
+                            self._errors.append((Path(att).name, zr.error))
+                        else:
+                            for ext in zr.extracted_paths:
+                                unlock_pdf_if_needed(ext)
+                                jobs.append((ext, None))
+                        jobs.append((att, 'roh'))
+                    else:
+                        unlock_pdf_if_needed(att)
+                        jobs.append((att, None))
+                jobs.append((fp, 'roh'))
+
+            else:
+                unlock_pdf_if_needed(fp)
+                jobs.append((fp, None))
+
+        return jobs
+    
+    def _upload_single(self, path: str, source_type: str, box_type: str = None):
+        """Thread-safe Upload einer einzelnen Datei mit per-Thread API-Client.
+        
+        Returns:
+            (filename, success, doc_or_error_str)
+        """
+        import threading
+        name = Path(path).name
+        try:
+            # Per-Thread API-Client (eigene requests.Session)
+            tid = threading.get_ident()
+            if tid not in self._thread_apis:
+                from api.client import APIClient
+                client = APIClient(self.docs_api.client.config)
+                client.set_token(self.docs_api.client._token)
+                self._thread_apis[tid] = DocumentsAPI(client)
+            docs_api = self._thread_apis[tid]
+
+            if box_type:
+                doc = docs_api.upload(path, source_type, box_type=box_type)
+            else:
+                doc = docs_api.upload(path, source_type)
+            if doc:
+                return (name, True, doc)
+            else:
+                return (name, False, "Upload fehlgeschlagen")
+        except Exception as e:
+            return (name, False, str(e))
+    
+    def run(self):
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        self._temp_dirs = []
+        self._errors = []
+        self._thread_apis = {}
+
+        # Phase 1: Alle Dateien entpacken (sequentiell, lokal)
+        jobs = self._expand_all_files(self.file_paths)
+        total = len(jobs)
+        self.progress.emit(0, total, "")
+
+        # Fehler aus Phase 1 emittieren
+        for name, error in self._errors:
+            self.file_error.emit(name, error)
+
+        # Phase 2: Parallele Uploads
+        erfolge = 0
+        fehler = len(self._errors)
+        uploaded = 0
+
+        workers = min(self.MAX_UPLOAD_WORKERS, max(1, total))
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {
+                executor.submit(self._upload_single, path, self.source_type, box_type): path
+                for path, box_type in jobs
+            }
+            for future in as_completed(futures):
+                name, success, result = future.result()
+                uploaded += 1
+                self.progress.emit(uploaded, total, name)
+                if success:
                     erfolge += 1
+                    self.file_finished.emit(name, result)
                 else:
-                    self.file_error.emit(filename, "Upload fehlgeschlagen")
                     fehler += 1
-            except Exception as e:
-                self.file_error.emit(filename, str(e))
-                fehler += 1
+                    self.file_error.emit(name, result)
+
+        # Temporaere Verzeichnisse aufraeumen
+        import shutil
+        for td in self._temp_dirs:
+            try:
+                shutil.rmtree(td, ignore_errors=True)
+            except Exception:
+                pass
         
         self.all_finished.emit(erfolge, fehler)
+
+
+class PreviewDownloadWorker(QThread):
+    """
+    Worker zum Herunterladen einer Datei fuer die Vorschau.
+    
+    Optimierungen:
+    - filename_override: Spart get_document() API-Call (Filename bereits bekannt)
+    - cache_dir: Persistenter Cache fuer Vorschauen (gleiche Datei nur 1x downloaden)
+    """
+    download_finished = Signal(object)  # saved_path oder None
+    download_error = Signal(str)
+    
+    def __init__(self, docs_api: DocumentsAPI, doc_id: int, target_dir: str,
+                 filename: str = None, cache_dir: str = None):
+        super().__init__()
+        self.docs_api = docs_api
+        self.doc_id = doc_id
+        self.target_dir = target_dir
+        self.filename = filename
+        self.cache_dir = cache_dir
+        self._cancelled = False
+    
+    def cancel(self):
+        """Markiert den Download als abgebrochen."""
+        self._cancelled = True
+    
+    def run(self):
+        try:
+            if self._cancelled:
+                self.download_finished.emit(None)
+                return
+            
+            # Cache-Check: Datei bereits lokal vorhanden?
+            if self.cache_dir and self.filename:
+                cached_path = os.path.join(self.cache_dir, f"{self.doc_id}_{self.filename}")
+                if os.path.exists(cached_path) and os.path.getsize(cached_path) > 0:
+                    logger.info(f"Vorschau aus Cache: {cached_path}")
+                    self.download_finished.emit(cached_path)
+                    return
+            
+            # Download mit filename_override (spart get_document API-Call)
+            download_dir = self.cache_dir or self.target_dir
+            result = self.docs_api.download(
+                self.doc_id, download_dir, 
+                filename_override=f"{self.doc_id}_{self.filename}" if self.cache_dir and self.filename else self.filename
+            )
+            
+            if self._cancelled:
+                self.download_finished.emit(None)
+                return
+            self.download_finished.emit(result)
+        except Exception as e:
+            self.download_error.emit(str(e))
 
 
 class MultiDownloadWorker(QThread):
@@ -642,7 +1140,10 @@ class MultiDownloadWorker(QThread):
             self.progress.emit(i + 1, total, doc.original_filename)
             
             try:
-                result = self.docs_api.download(doc.id, self.target_dir)
+                result = self.docs_api.download(
+                    doc.id, self.target_dir,
+                    filename_override=doc.original_filename
+                )
                 if result:
                     self.file_finished.emit(doc.id, doc.original_filename, result)
                     erfolgreiche_doc_ids.append(doc.id)
@@ -661,6 +1162,117 @@ class MultiDownloadWorker(QThread):
         self.all_finished.emit(erfolge, fehler, fehler_liste, erfolgreiche_doc_ids)
 
 
+class BoxDownloadWorker(QThread):
+    """
+    Worker zum Herunterladen aller Dokumente einer Box.
+    
+    Laedt alle nicht-archivierten Dokumente aus einer Box herunter.
+    Optional: ZIP-Erstellung nach Download.
+    """
+    progress = Signal(int, int, str)  # current, total, filename
+    finished = Signal(int, int, list, list)  # erfolge, fehler, fehler_liste, erfolgreiche_doc_ids
+    status = Signal(str)  # Status-Meldung (z.B. "Erstelle ZIP...")
+    error = Signal(str)
+    
+    def __init__(self, docs_api: DocumentsAPI, box_type: str, 
+                 target_path: str, mode: str = 'folder'):
+        """
+        Args:
+            docs_api: DocumentsAPI-Instanz
+            box_type: Box-Typ ('gdv', 'courtage', etc.)
+            target_path: Ziel-Pfad (Ordner fuer 'folder', .zip Datei fuer 'zip')
+            mode: 'zip' oder 'folder'
+        """
+        super().__init__()
+        self.docs_api = docs_api
+        self.box_type = box_type
+        self.target_path = target_path
+        self.mode = mode
+        self._cancelled = False
+    
+    def cancel(self):
+        """Bricht den Download ab."""
+        self._cancelled = True
+    
+    def run(self):
+        import zipfile
+        
+        try:
+            # 1. Alle nicht-archivierten Dokumente der Box laden
+            documents = self.docs_api.list_documents(
+                box_type=self.box_type, 
+                is_archived=False
+            )
+            
+            if not documents:
+                self.finished.emit(0, 0, [], [])
+                return
+            
+            total = len(documents)
+            erfolge = 0
+            fehler = 0
+            fehler_liste = []
+            erfolgreiche_doc_ids = []
+            
+            # 2. Zielverzeichnis bestimmen
+            if self.mode == 'zip':
+                # Temp-Verzeichnis fuer ZIP-Modus
+                temp_dir = tempfile.mkdtemp(prefix='bipro_box_download_')
+                download_dir = temp_dir
+            else:
+                download_dir = self.target_path
+                os.makedirs(download_dir, exist_ok=True)
+            
+            # 3. Dokumente herunterladen
+            for i, doc in enumerate(documents):
+                if self._cancelled:
+                    break
+                
+                self.progress.emit(i + 1, total, doc.original_filename)
+                
+                try:
+                    result = self.docs_api.download(
+                        doc.id, download_dir,
+                        filename_override=doc.original_filename
+                    )
+                    if result:
+                        erfolgreiche_doc_ids.append(doc.id)
+                        erfolge += 1
+                    else:
+                        fehler_liste.append(f"{doc.original_filename}: Download fehlgeschlagen")
+                        fehler += 1
+                except Exception as e:
+                    fehler_liste.append(f"{doc.original_filename}: {str(e)}")
+                    fehler += 1
+            
+            # 4. ZIP erstellen wenn gewuenscht
+            if self.mode == 'zip' and erfolge > 0 and not self._cancelled:
+                from i18n.de import BOX_DOWNLOAD_CREATING_ZIP
+                self.status.emit(BOX_DOWNLOAD_CREATING_ZIP)
+                
+                try:
+                    with zipfile.ZipFile(self.target_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+                        for filename in os.listdir(download_dir):
+                            file_path = os.path.join(download_dir, filename)
+                            if os.path.isfile(file_path):
+                                zf.write(file_path, filename)
+                except Exception as e:
+                    self.error.emit(f"ZIP-Erstellung fehlgeschlagen: {e}")
+                    return
+                finally:
+                    # Temp-Verzeichnis aufraeumen
+                    import shutil
+                    try:
+                        shutil.rmtree(temp_dir, ignore_errors=True)
+                    except Exception:
+                        pass
+            
+            self.finished.emit(erfolge, fehler, fehler_liste, erfolgreiche_doc_ids)
+            
+        except Exception as e:
+            self.error.emit(str(e))
+
+
 class CreditsWorker(QThread):
     """Worker zum Abrufen der OpenRouter Credits."""
     finished = Signal(object)  # dict oder None
@@ -677,6 +1289,95 @@ class CreditsWorker(QThread):
             self.finished.emit(credits)
         except Exception as e:
             logger.debug(f"Credits-Abfrage fehlgeschlagen: {e}")
+            self.finished.emit(None)
+
+
+class CostStatsWorker(QThread):
+    """Worker zum Laden der durchschnittlichen Verarbeitungskosten pro Dokument."""
+    finished = Signal(float)  # avg_cost_per_document_usd
+    
+    def __init__(self, api_client):
+        super().__init__()
+        self._api_client = api_client
+    
+    def run(self):
+        try:
+            from api.processing_history import ProcessingHistoryAPI
+            history_api = ProcessingHistoryAPI(self._api_client)
+            stats = history_api.get_cost_stats()
+            if stats:
+                avg_cost = float(stats.get('avg_cost_per_document_usd', 0))
+                self.finished.emit(avg_cost)
+            else:
+                self.finished.emit(0.0)
+        except Exception as e:
+            logger.debug(f"Kosten-Statistik Abfrage fehlgeschlagen: {e}")
+            self.finished.emit(0.0)
+
+
+class DelayedCostWorker(QThread):
+    """
+    Worker fuer verzoegerten Kosten-Check.
+    
+    Wartet die angegebene Verzoegerung ab, ruft dann das aktuelle
+    OpenRouter-Guthaben ab und berechnet die Kosten.
+    """
+    finished = Signal(object)  # dict mit Kosten oder None
+    countdown = Signal(int)    # Verbleibende Sekunden
+    
+    def __init__(self, api_client, batch_result, history_entry_id: int, delay_seconds: int = 90):
+        super().__init__()
+        self.api_client = api_client
+        self.batch_result = batch_result
+        self.history_entry_id = history_entry_id
+        self.delay_seconds = delay_seconds
+        self._cancelled = False
+    
+    def cancel(self):
+        self._cancelled = True
+    
+    def run(self):
+        import time
+        
+        # Countdown abwarten
+        for remaining in range(self.delay_seconds, 0, -1):
+            if self._cancelled:
+                self.finished.emit(None)
+                return
+            self.countdown.emit(remaining)
+            time.sleep(1)
+        
+        if self._cancelled:
+            self.finished.emit(None)
+            return
+        
+        # Jetzt Credits abrufen
+        try:
+            from api.openrouter import OpenRouterClient
+            from services.document_processor import DocumentProcessor
+            
+            openrouter = OpenRouterClient(self.api_client)
+            credits_info = openrouter.get_credits()
+            
+            if not credits_info:
+                logger.warning("Verzoegerter Kosten-Check: Credits-Abfrage fehlgeschlagen")
+                self.finished.emit(None)
+                return
+            
+            credits_after = credits_info.get('balance', 0.0)
+            
+            # Kosten berechnen und in DB loggen
+            processor = DocumentProcessor(self.api_client)
+            cost_result = processor.log_delayed_costs(
+                history_entry_id=self.history_entry_id,
+                batch_result=self.batch_result,
+                credits_after=credits_after
+            )
+            
+            self.finished.emit(cost_result)
+            
+        except Exception as e:
+            logger.error(f"Verzoegerter Kosten-Check fehlgeschlagen: {e}")
             self.finished.emit(None)
 
 
@@ -702,15 +1403,20 @@ class DocumentMoveWorker(QThread):
     finished = Signal(int)  # Anzahl verschoben
     error = Signal(str)
     
-    def __init__(self, docs_api: DocumentsAPI, doc_ids: List[int], target_box: str):
+    def __init__(self, docs_api: DocumentsAPI, doc_ids: List[int], target_box: str,
+                 processing_status: str = None):
         super().__init__()
         self.docs_api = docs_api
         self.doc_ids = doc_ids
         self.target_box = target_box
+        self.processing_status = processing_status
     
     def run(self):
         try:
-            moved = self.docs_api.move_documents(self.doc_ids, self.target_box)
+            moved = self.docs_api.move_documents(
+                self.doc_ids, self.target_box,
+                processing_status=self.processing_status
+            )
             self.finished.emit(moved)
         except Exception as e:
             self.error.emit(str(e))
@@ -765,6 +1471,25 @@ class SortableTableWidgetItem(QTableWidgetItem):
         if isinstance(other, SortableTableWidgetItem):
             return self._sort_value < other._sort_value
         return super().__lt__(other)
+
+
+class ColorBackgroundDelegate(QStyledItemDelegate):
+    """
+    Custom Delegate der Item-Hintergrundfarben respektiert,
+    auch wenn ein globales Qt-Stylesheet gesetzt ist.
+    
+    Qt-Stylesheets ueberschreiben normalerweise setBackground() auf Items.
+    Dieser Delegate malt die Hintergrundfarbe manuell vor dem Standard-Rendering.
+    """
+    
+    def paint(self, painter: QPainter, option, index):
+        """Malt zuerst die Hintergrundfarbe, dann den normalen Inhalt."""
+        bg = index.data(Qt.ItemDataRole.BackgroundRole)
+        if isinstance(bg, QBrush) and bg.color().alpha() > 0 and bg.style() != Qt.BrushStyle.NoBrush:
+            painter.save()
+            painter.fillRect(option.rect, bg)
+            painter.restore()
+        super().paint(painter, option, index)
 
 
 class DraggableDocumentTable(QTableWidget):
@@ -847,7 +1572,7 @@ class DraggableDocumentTable(QTableWidget):
         # Dokument-IDs sammeln
         doc_ids = []
         for row in selected_rows:
-            id_item = self.item(row, 0)
+            id_item = self.item(row, 1)
             if id_item:
                 doc = id_item.data(Qt.ItemDataRole.UserRole)
                 if doc:
@@ -894,9 +1619,20 @@ class BoxSidebar(QWidget):
     """
     box_selected = Signal(str)  # box_type oder '' fuer alle
     documents_dropped = Signal(list, str)  # doc_ids, target_box
+    box_download_requested = Signal(str, str)  # box_type, mode ('zip' oder 'folder')
+    smartscan_box_requested = Signal(str)  # box_type
     
     # Boxen die als Drop-Ziel erlaubt sind
     DROPPABLE_BOXES = {'gdv', 'courtage', 'sach', 'leben', 'kranken', 'sonstige'}
+    
+    # Admin-only Drop-Ziele (werden bei set_admin_mode hinzugefuegt)
+    DROPPABLE_BOXES_ADMIN = {'falsch'}
+    
+    # Boxen die heruntergeladen werden koennen
+    DOWNLOADABLE_BOXES = {'gdv', 'courtage', 'sach', 'leben', 'kranken', 'sonstige', 'eingang', 'roh'}
+    
+    # Admin-only Downloads
+    DOWNLOADABLE_BOXES_ADMIN = {'falsch'}
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -905,6 +1641,12 @@ class BoxSidebar(QWidget):
         
         self._stats = BoxStats()
         self._current_box = ''
+        self._is_admin = False
+        self._smartscan_enabled = False
+        
+        # Instanz-Kopien der Drop/Download-Sets (damit set_admin_mode sicher ist)
+        self.DROPPABLE_BOXES = set(BoxSidebar.DROPPABLE_BOXES)
+        self.DOWNLOADABLE_BOXES = set(BoxSidebar.DOWNLOADABLE_BOXES)
         
         self._setup_ui()
     
@@ -919,6 +1661,10 @@ class BoxSidebar(QWidget):
         self.tree.setIndentation(12)
         self.tree.setRootIsDecorated(True)
         self.tree.itemClicked.connect(self._on_item_clicked)
+        
+        # Kontextmenue fuer Box-Download
+        self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.tree.customContextMenuRequested.connect(self._show_box_context_menu)
         
         # Modernes Styling für die Sidebar
         self.tree.setStyleSheet(f"""
@@ -1035,7 +1781,95 @@ class BoxSidebar(QWidget):
             # Standardmaessig eingeklappt
             item.setExpanded(False)
         
+        # Admin-only Boxen (initial versteckt)
+        self.admin_box_items: Dict[str, QTreeWidgetItem] = {}
+        self.admin_archived_items: Dict[str, QTreeWidgetItem] = {}
+        
+        admin_box_definitions = [
+            ("falsch", "⚠️", "Falsch"),
+        ]
+        
+        for box_key, emoji, name in admin_box_definitions:
+            item = QTreeWidgetItem(self.tree)
+            item.setText(0, f"{emoji} {name} (0)")
+            item.setData(0, Qt.ItemDataRole.UserRole, box_key)
+            item.setFont(0, QFont("Segoe UI", 11))
+            self.admin_box_items[box_key] = item
+            self.box_items[box_key] = item  # Auch in box_items fuer update_stats
+            
+            # Archiviert-Sub-Box
+            archived_item = QTreeWidgetItem(item)
+            archived_item.setText(0, "📦 Archiviert (0)")
+            archived_item.setData(0, Qt.ItemDataRole.UserRole, f"{box_key}_archived")
+            archived_item.setFont(0, QFont("Segoe UI", 10))
+            self.admin_archived_items[box_key] = archived_item
+            self.archived_items[box_key] = archived_item
+            
+            item.setExpanded(False)
+            # Initial versteckt (wird per set_admin_mode sichtbar)
+            item.setHidden(True)
+        
         layout.addWidget(self.tree)
+        
+        # Kosten-Voranschlag Card (unter dem Tree, initial versteckt)
+        self._cost_estimate_frame = QFrame()
+        self._cost_estimate_frame.setStyleSheet(f"""
+            QFrame {{
+                background-color: {ACCENT_100};
+                border: 2px solid {ACCENT_500};
+                border-radius: {RADIUS_MD};
+                margin: 6px 2px;
+            }}
+        """)
+        cost_layout = QVBoxLayout(self._cost_estimate_frame)
+        cost_layout.setContentsMargins(10, 8, 10, 8)
+        cost_layout.setSpacing(4)
+        
+        # Titel-Zeile mit Icon
+        self._cost_title_label = QLabel("💰 Kostenvoranschlag")
+        self._cost_title_label.setStyleSheet(f"""
+            QLabel {{
+                color: {PRIMARY_900};
+                font-size: {FONT_SIZE_BODY};
+                font-family: {FONT_BODY};
+                font-weight: bold;
+                background: transparent;
+                border: none;
+            }}
+        """)
+        cost_layout.addWidget(self._cost_title_label)
+        
+        # Betrag (gross und prominent)
+        self._cost_amount_label = QLabel()
+        self._cost_amount_label.setStyleSheet(f"""
+            QLabel {{
+                color: {ACCENT_500};
+                font-size: 20px;
+                font-family: {FONT_MONO};
+                font-weight: bold;
+                background: transparent;
+                border: none;
+            }}
+        """)
+        cost_layout.addWidget(self._cost_amount_label)
+        
+        # Beschreibungstext
+        self._cost_desc_label = QLabel()
+        self._cost_desc_label.setWordWrap(True)
+        self._cost_desc_label.setStyleSheet(f"""
+            QLabel {{
+                color: {TEXT_SECONDARY};
+                font-size: {FONT_SIZE_CAPTION};
+                font-family: {FONT_BODY};
+                background: transparent;
+                border: none;
+            }}
+        """)
+        cost_layout.addWidget(self._cost_desc_label)
+        
+        self._cost_estimate_frame.setVisible(False)
+        self._avg_cost_per_doc: float = 0.0
+        layout.addWidget(self._cost_estimate_frame)
         
         # Gesamt Archiv als Standard auswaehlen
         self.gesamt_item.setSelected(True)
@@ -1074,16 +1908,99 @@ class BoxSidebar(QWidget):
         self._current_box = box_type
         self.box_selected.emit(box_type)
     
+    def _show_box_context_menu(self, position):
+        """Zeigt Kontextmenue fuer Rechtsklick auf eine Box."""
+        from i18n.de import BOX_DOWNLOAD_MENU, BOX_DOWNLOAD_AS_ZIP, BOX_DOWNLOAD_AS_FOLDER
+        
+        item = self.tree.itemAt(position)
+        if not item:
+            return
+        
+        box_type = item.data(0, Qt.ItemDataRole.UserRole)
+        
+        # Nur fuer herunterladbare Boxen anzeigen (keine Archiviert-Sub-Boxen, kein Separator)
+        if not box_type or box_type == "processing_group":
+            return
+        
+        # Archiviert-Boxen haben den Suffix "_archived"
+        if box_type.endswith("_archived"):
+            return
+        
+        # Leere Box "" (Gesamt) nicht anbieten - zu viele Dateien
+        if box_type not in self.DOWNLOADABLE_BOXES:
+            return
+        
+        # Pruefen ob Box Dokumente hat
+        count = self._stats.get_count(box_type)
+        if count == 0:
+            return
+        
+        menu = QMenu(self)
+        
+        # Download-Untermenue
+        download_menu = QMenu(BOX_DOWNLOAD_MENU, menu)
+        
+        zip_action = QAction(BOX_DOWNLOAD_AS_ZIP, self)
+        zip_action.triggered.connect(
+            lambda: self.box_download_requested.emit(box_type, 'zip')
+        )
+        download_menu.addAction(zip_action)
+        
+        folder_action = QAction(BOX_DOWNLOAD_AS_FOLDER, self)
+        folder_action.triggered.connect(
+            lambda: self.box_download_requested.emit(box_type, 'folder')
+        )
+        download_menu.addAction(folder_action)
+        
+        menu.addMenu(download_menu)
+        
+        # Smart!Scan Option (nur wenn in Admin-Einstellungen aktiviert)
+        if self._smartscan_enabled:
+            from i18n.de import SMARTSCAN_CONTEXT_BOX
+            smartscan_action = QAction(SMARTSCAN_CONTEXT_BOX, self)
+            smartscan_action.triggered.connect(
+                lambda: self.smartscan_box_requested.emit(box_type)
+            )
+            menu.addAction(smartscan_action)
+        
+        menu.exec(self.tree.viewport().mapToGlobal(position))
+    
+    def set_avg_cost_per_doc(self, avg_cost: float):
+        """Setzt die durchschnittlichen Kosten pro Dokument fuer die Kostenvoranschlag-Anzeige."""
+        self._avg_cost_per_doc = avg_cost
+        self._update_cost_estimate()
+    
+    def _update_cost_estimate(self):
+        """Aktualisiert die Kosten-Voranschlag Anzeige basierend auf Eingangs-Dokumenten."""
+        from i18n import de as texts
+        eingang_count = self._stats.eingang if self._stats else 0
+        
+        if eingang_count > 1 and self._avg_cost_per_doc > 0:
+            estimated_cost = eingang_count * self._avg_cost_per_doc
+            self._cost_amount_label.setText(f"~${estimated_cost:.4f}")
+            self._cost_desc_label.setText(
+                texts.PROCESSING_ESTIMATED_COST.format(
+                    count=eingang_count,
+                    cost=f"{estimated_cost:.4f}"
+                )
+            )
+            self._cost_estimate_frame.setVisible(True)
+        else:
+            self._cost_estimate_frame.setVisible(False)
+    
     def update_stats(self, stats: BoxStats):
         """Aktualisiert die Anzahlen in der Sidebar."""
         self._stats = stats
         
-        # Verarbeitung (Eingang + Roh) - Pfeil basierend auf Expanded-Status
-        processing_total = stats.eingang + stats.roh
+        # Verarbeitung - nur Anzahl der zu verarbeitenden Dokumente (Eingang)
+        pending_count = stats.eingang
         arrow = "▼" if self.processing_item.isExpanded() else "▶"
-        self.processing_item.setText(0, f"{arrow}  📥 Verarbeitung ({processing_total})")
+        self.processing_item.setText(0, f"{arrow}  📥 Verarbeitung ({pending_count})")
         self.eingang_item.setText(0, f"📬 Eingang ({stats.eingang})")
         self.roh_item.setText(0, f"📦 Rohdaten ({stats.roh})")
+        
+        # Kosten-Voranschlag aktualisieren
+        self._update_cost_estimate()
         
         # Gesamt
         self.gesamt_item.setText(0, f"🗂️ Gesamt ({stats.total})")
@@ -1110,9 +2027,37 @@ class BoxSidebar(QWidget):
             if box_key in self.archived_items:
                 self.archived_items[box_key].setText(0, f"📦 Archiviert ({archived_count})")
         
+        # Admin-only Boxen aktualisieren
+        admin_box_definitions = [
+            ("falsch", "⚠️", "Falsch"),
+        ]
+        for box_key, emoji, name in admin_box_definitions:
+            if box_key in self.box_items:
+                count = stats.get_count(box_key)
+                archived_count = stats.get_count(f"{box_key}_archived")
+                self.box_items[box_key].setText(0, f"{emoji} {name} ({count})")
+                if box_key in self.archived_items:
+                    self.archived_items[box_key].setText(0, f"📦 Archiviert ({archived_count})")
+        
         # Verarbeitung ausklappen nur wenn Dokumente in Eingangsbox (nicht Roh)
         if stats.eingang > 0:
             self.processing_item.setExpanded(True)
+    
+    def set_admin_mode(self, is_admin: bool):
+        """Aktiviert/Deaktiviert Admin-only Boxen in der Sidebar."""
+        self._is_admin = is_admin
+        
+        # Admin-Boxen ein-/ausblenden
+        for box_key, item in self.admin_box_items.items():
+            item.setHidden(not is_admin)
+        
+        # Drop-Ziele erweitern/einschraenken
+        if is_admin:
+            self.DROPPABLE_BOXES = self.DROPPABLE_BOXES | self.DROPPABLE_BOXES_ADMIN
+            self.DOWNLOADABLE_BOXES = self.DOWNLOADABLE_BOXES | self.DOWNLOADABLE_BOXES_ADMIN
+        else:
+            self.DROPPABLE_BOXES = self.DROPPABLE_BOXES - self.DROPPABLE_BOXES_ADMIN
+            self.DOWNLOADABLE_BOXES = self.DOWNLOADABLE_BOXES - self.DOWNLOADABLE_BOXES_ADMIN
     
     def _tree_drag_enter(self, event):
         """Akzeptiert Drag-Events wenn gültige Dokument-IDs enthalten sind."""
@@ -1158,6 +2103,107 @@ class BoxSidebar(QWidget):
             event.ignore()
 
 
+class SmartScanWorker(QThread):
+    """Worker fuer SmartScan Versand mit Client-seitigem Chunking."""
+    progress = Signal(int, int, str)  # current, total, status
+    completed = Signal(int, dict)  # job_id, result  (NICHT 'finished' - wuerde QThread.finished ueberschreiben!)
+    error = Signal(str)
+    
+    def __init__(self, api_client, mode: str, document_ids: list = None,
+                 box_type: str = None, archive_after: bool = False,
+                 recolor_after: bool = False, recolor_color: str = None):
+        super().__init__()
+        self._api_client = api_client
+        self._mode = mode
+        self._document_ids = document_ids
+        self._box_type = box_type
+        self._archive_after = archive_after
+        self._recolor_after = recolor_after
+        self._recolor_color = recolor_color
+        self._cancelled = False
+    
+    def cancel(self):
+        self._cancelled = True
+    
+    def run(self):
+        import uuid
+        try:
+            from api.smartscan import SmartScanAPI
+            api = SmartScanAPI(self._api_client)
+            
+            client_request_id = str(uuid.uuid4())[:16]
+            
+            # Job starten
+            result = api.send(
+                mode=self._mode,
+                document_ids=self._document_ids,
+                box_type=self._box_type,
+                client_request_id=client_request_id
+            )
+            
+            if not result or not result.get('job_id'):
+                self.error.emit("Versand konnte nicht gestartet werden.")
+                return
+            
+            job_id = result['job_id']
+            total = result.get('total', 0)
+            processed = result.get('processed', 0)
+            remaining = result.get('remaining', total)
+            
+            self.progress.emit(processed, total, "Versendet...")
+            
+            # Chunks verarbeiten
+            max_iterations = (total // 10) + 5  # Sicherheitslimit
+            iteration = 0
+            
+            while remaining > 0 and not self._cancelled and iteration < max_iterations:
+                iteration += 1
+                chunk_result = api.process_chunk(job_id)
+                
+                if not chunk_result:
+                    self.error.emit("Chunk-Verarbeitung fehlgeschlagen.")
+                    return
+                
+                processed += chunk_result.get('processed', 0)
+                remaining = chunk_result.get('remaining', 0)
+                status = chunk_result.get('status', '')
+                
+                self.progress.emit(processed, total, f"Versendet: {processed}/{total}")
+                
+                if status in ('sent', 'partial', 'failed'):
+                    break
+            
+            if self._cancelled:
+                self.error.emit("Versand abgebrochen.")
+                return
+            
+            # Ergebnis holen
+            final = api.get_job_details(job_id)
+            
+            # Post-Send-Aktionen: Faerben und/oder Archivieren
+            if self._document_ids and (self._recolor_after or self._archive_after):
+                try:
+                    from api.documents import DocumentsAPI
+                    docs_api = DocumentsAPI(self._api_client)
+                    
+                    if self._recolor_after and self._recolor_color:
+                        self.progress.emit(processed, total, "Dokumente werden gefaerbt...")
+                        docs_api.set_documents_color(self._document_ids, self._recolor_color)
+                    
+                    if self._archive_after:
+                        self.progress.emit(processed, total, "Dokumente werden archiviert...")
+                        docs_api.archive_documents(self._document_ids)
+                        
+                except Exception as e:
+                    logger.warning(f"Post-Send-Aktion fehlgeschlagen: {e}")
+            
+            self.completed.emit(job_id, final or result)
+            
+        except Exception as e:
+            logger.error(f"SmartScan Worker Fehler: {e}")
+            self.error.emit(str(e))
+
+
 class ArchiveBoxesView(QWidget):
     """
     Dokumentenarchiv mit Box-System.
@@ -1168,17 +2214,18 @@ class ArchiveBoxesView(QWidget):
     
     Features:
     - Zentraler Cache fuer Server-Daten
-    - Auto-Refresh alle 90 Sekunden
+    - Auto-Refresh alle 30 Sekunden
     - Daten bleiben beim View-Wechsel erhalten
     """
     
     # Signal wenn ein GDV-Dokument geoeffnet werden soll
     open_gdv_requested = Signal(int, str)  # doc_id, original_filename
     
-    def __init__(self, api_client: APIClient, parent=None):
+    def __init__(self, api_client: APIClient, auth_api=None, parent=None):
         super().__init__(parent)
         
         self.api_client = api_client
+        self.auth_api = auth_api
         self.docs_api = DocumentsAPI(api_client)
         
         # Cache-Service initialisieren
@@ -1217,12 +2264,28 @@ class ArchiveBoxesView(QWidget):
         self._download_worker = None
         self._multi_upload_worker = None
         self._credits_worker = None
+        self._preview_worker = None
+        self._cost_stats_worker = None
+        self._history_worker = None
+        
+        # Debounce-Timer fuer Historie-Laden (300ms)
+        self._history_debounce_timer = None
+        self._pending_history_doc_id = None
+        
+        # Persistenter Vorschau-Cache (Dateien werden nur 1x heruntergeladen)
+        self._preview_cache_dir = os.path.join(tempfile.gettempdir(), 'bipro_preview_cache')
+        os.makedirs(self._preview_cache_dir, exist_ok=True)
+        self._preview_progress = None
+        self._preview_cancelled = False
         
         # Liste aller aktiven Worker fuer Cleanup
         self._active_workers: List[QThread] = []
         
         # Flag ob erste Ladung erfolgt ist
         self._initial_load_done = False
+        
+        # Fingerprint der aktuellen Dokumente (verhindert unnoetige Tabellen-Rebuilds)
+        self._documents_fingerprint: str = ""
         
         # Tracking: Wann wurde welche Box zuletzt manuell aktualisiert?
         # Key: box_type (oder '' fuer alle), Value: datetime
@@ -1232,7 +2295,11 @@ class ArchiveBoxesView(QWidget):
         # Key: box_type (oder '' fuer alle), Value: datetime
         self._last_box_load: Dict[str, datetime] = {}
         
+        # SmartScan-Enabled Status (wird nach _setup_ui via _load_smartscan_status aktualisiert)
+        self._smartscan_enabled = False
+        
         self._setup_ui()
+        self._setup_shortcuts()
         
         # Loading-Overlay erstellen (ueber der Tabelle)
         self._loading_overlay = LoadingOverlay(self)
@@ -1242,18 +2309,47 @@ class ArchiveBoxesView(QWidget):
         self._processing_overlay = ProcessingProgressOverlay(self)
         self._processing_overlay.close_requested.connect(self._on_processing_overlay_closed)
         
-        # Toast-Benachrichtigung erstellen
-        self._toast = ToastNotification(self)
-        self._toast.action_clicked.connect(self._on_toast_undo_clicked)
-        
         # Speicher fuer Undo-Funktion beim Verschieben
         self._last_move_data = None  # (doc_ids, original_boxes, target_box)
+        
+        # Admin-Mode fuer Sidebar setzen (Falsch-Box nur fuer Admins)
+        self._is_admin = False
+        if self.auth_api and self.auth_api.current_user:
+            self._is_admin = self.auth_api.current_user.is_admin
+        self.sidebar.set_admin_mode(self._is_admin)
+        
+        # SmartScan-Enabled Status cachen (fuer Kontextmenue- und Button-Sichtbarkeit)
+        self._smartscan_enabled = False
+        self._load_smartscan_status()
+        self.sidebar._smartscan_enabled = self._smartscan_enabled
+        if hasattr(self, '_smartscan_btn'):
+            self._smartscan_btn.setVisible(self._smartscan_enabled)
+        
+        # Historie-Toggle-Button: Nur sichtbar wenn Berechtigung vorhanden
+        self._history_enabled = self._has_history_permission()
+        if hasattr(self, '_history_toggle_btn'):
+            self._history_toggle_btn.setVisible(self._history_enabled)
         
         # Initiales Laden (aus Cache oder Server)
         self._refresh_all(force_refresh=False)
         
-        # Auto-Refresh starten (alle 90 Sekunden)
-        self._cache.start_auto_refresh(90)
+        # Durchschnittliche Verarbeitungskosten laden (fuer Kostenvoranschlag)
+        self._load_avg_cost_stats()
+        
+        # Auto-Refresh starten (alle 30 Sekunden)
+        self._cache.start_auto_refresh(20)
+    
+    def _load_smartscan_status(self):
+        """Laedt den SmartScan-Enabled-Status vom Server (fuer Kontextmenue-Sichtbarkeit)."""
+        try:
+            from api.smartscan import SmartScanAPI
+            smartscan_api = SmartScanAPI(self.api_client)
+            settings = smartscan_api.get_settings()
+            # enabled kann String "0"/"1" oder int 0/1 sein - immer ueber int() konvertieren
+            self._smartscan_enabled = bool(settings and int(settings.get('enabled', 0) or 0))
+        except Exception as e:
+            logger.warning(f"SmartScan-Status konnte nicht geladen werden: {e}")
+            self._smartscan_enabled = False
     
     def _register_worker(self, worker: QThread):
         """Registriert einen Worker fuer sauberes Cleanup."""
@@ -1265,11 +2361,48 @@ class ArchiveBoxesView(QWidget):
         """Entfernt einen Worker aus der aktiven Liste."""
         if worker in self._active_workers:
             self._active_workers.remove(worker)
+        if getattr(self, '_preview_worker', None) is worker:
+            self._preview_worker = None
         # Sicher löschen
         worker.deleteLater()
     
+    def _is_worker_running(self, attr_name: str) -> bool:
+        """Prueft sicher ob ein Worker noch laeuft (C++-Objekt kann bereits geloescht sein)."""
+        worker = getattr(self, attr_name, None)
+        if worker is None:
+            return False
+        try:
+            return worker.isRunning()
+        except RuntimeError:
+            # C++-Objekt bereits geloescht (deleteLater), Referenz aufraeumen
+            setattr(self, attr_name, None)
+            return False
+
+    def get_blocking_operations(self) -> list:
+        """Gibt Liste von laufenden Operationen zurueck, die das Schliessen verhindern."""
+        from i18n import de as texts
+        blocking = []
+
+        # KI-Verarbeitung laeuft
+        if self._is_worker_running('_processing_worker'):
+            blocking.append(texts.CLOSE_BLOCKED_PROCESSING)
+
+        # Verzoegerter Kosten-Check laeuft
+        if self._is_worker_running('_delayed_cost_worker'):
+            blocking.append(texts.CLOSE_BLOCKED_COST_CHECK)
+
+        # SmartScan-Versand laeuft
+        if self._is_worker_running('_smartscan_worker'):
+            blocking.append(texts.CLOSE_BLOCKED_SMARTSCAN)
+
+        return blocking
+
     def closeEvent(self, event):
         """Wird aufgerufen wenn das Widget geschlossen wird."""
+        # Historie-Timer stoppen
+        if self._history_debounce_timer is not None:
+            self._history_debounce_timer.stop()
+        
         # Alle laufenden Worker stoppen
         for worker in self._active_workers[:]:  # Kopie der Liste
             if worker.isRunning():
@@ -1293,14 +2426,6 @@ class ArchiveBoxesView(QWidget):
             self._loading_overlay.setGeometry(self.rect())
         if hasattr(self, '_processing_overlay'):
             self._processing_overlay.setGeometry(self.rect())
-        # Toast neu positionieren wenn sichtbar
-        if hasattr(self, '_toast') and self._toast.isVisible():
-            parent_rect = self.rect()
-            toast_width = min(500, parent_rect.width() - 40)
-            self._toast.setFixedWidth(toast_width)
-            x = (parent_rect.width() - toast_width) // 2
-            y = parent_rect.height() - self._toast.height() - 20
-            self._toast.move(x, y)
     
     def _on_processing_overlay_closed(self):
         """Callback wenn das Processing-Overlay geschlossen wird."""
@@ -1335,6 +2460,8 @@ class ArchiveBoxesView(QWidget):
         self.sidebar = BoxSidebar()
         self.sidebar.box_selected.connect(self._on_box_selected)
         self.sidebar.documents_dropped.connect(self._on_documents_dropped)
+        self.sidebar.box_download_requested.connect(self._download_box)
+        self.sidebar.smartscan_box_requested.connect(self._smartscan_box)
         splitter.addWidget(self.sidebar)
         
         # ========== HAUPTBEREICH ==========
@@ -1360,12 +2487,123 @@ class ArchiveBoxesView(QWidget):
         self.status_label.setStyleSheet("color: gray;")
         main_layout.addWidget(self.status_label)
         
-        splitter.addWidget(main_widget)
+        # Inner-Splitter: Tabelle + Historie-Panel
+        self._inner_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._inner_splitter.addWidget(main_widget)
+        
+        # Historie-Panel (rechts neben Tabelle, standardmaessig ausgeblendet)
+        self._history_panel = DocumentHistoryPanel()
+        self._history_panel.close_requested.connect(self._hide_history_panel)
+        self._history_panel.setVisible(False)
+        self._inner_splitter.addWidget(self._history_panel)
+        
+        # Inner-Splitter-Proportionen (Tabelle : Historie = 3:1)
+        self._inner_splitter.setSizes([800, 0])
+        
+        splitter.addWidget(self._inner_splitter)
         
         # Splitter-Proportionen (Sidebar : Hauptbereich = 1:4)
         splitter.setSizes([200, 800])
         
         layout.addWidget(splitter)
+    
+    # ========================================
+    # Tastenkuerzel / Shortcuts
+    # ========================================
+    
+    def _setup_shortcuts(self):
+        """
+        Richtet Tastenkuerzel fuer das Dokumentenarchiv ein.
+        
+        Alle Shortcuts sind auf WidgetWithChildrenShortcut beschraenkt,
+        d.h. sie wirken nur wenn das Archiv oder ein Kind-Widget den Fokus hat.
+        """
+        shortcuts = [
+            # F2 - Umbenennen
+            (QKeySequence(Qt.Key.Key_F2), self._shortcut_rename),
+            # Entf - Loeschen
+            (QKeySequence(Qt.Key.Key_Delete), self._shortcut_delete),
+            # Strg+A - Alle auswaehlen
+            (QKeySequence.StandardKey.SelectAll, self._shortcut_select_all),
+            # Strg+D - Download
+            (QKeySequence("Ctrl+D"), self._download_selected),
+            # Strg+F - Suchen/Filtern (Fokus auf Suchfeld)
+            (QKeySequence.StandardKey.Find, self._shortcut_focus_search),
+            # Strg+U - Upload
+            (QKeySequence("Ctrl+U"), self._upload_document),
+            # Enter - Vorschau oeffnen
+            (QKeySequence(Qt.Key.Key_Return), self._shortcut_preview),
+            # Esc - Auswahl aufheben / Suche leeren
+            (QKeySequence(Qt.Key.Key_Escape), self._shortcut_escape),
+            # Strg+Shift+A - Archivieren
+            (QKeySequence("Ctrl+Shift+A"), self._shortcut_archive),
+            # F5 - Aktualisieren
+            (QKeySequence(Qt.Key.Key_F5), lambda: self._refresh_all(force_refresh=True)),
+        ]
+        
+        for key_seq, handler in shortcuts:
+            shortcut = QShortcut(key_seq, self)
+            shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+            shortcut.activated.connect(handler)
+    
+    def _shortcut_rename(self):
+        """Shortcut-Handler fuer F2 - Umbenennen eines einzelnen Dokuments."""
+        from i18n.de import SHORTCUT_SELECT_ONE_RENAME
+        
+        selected = self._get_selected_documents()
+        if len(selected) == 1:
+            self._rename_document(selected[0])
+        elif len(selected) > 1:
+            self._toast_manager.show_info(SHORTCUT_SELECT_ONE_RENAME)
+    
+    def _shortcut_delete(self):
+        """Shortcut-Handler fuer Entf - Loeschen."""
+        # Del im Suchfeld soll Text loeschen, nicht Dokumente
+        if self.search_input.hasFocus():
+            return
+        self._delete_selected()
+    
+    def _shortcut_select_all(self):
+        """Shortcut-Handler fuer Strg+A - Alle auswaehlen."""
+        # Im Suchfeld: Text auswaehlen (Standard-Verhalten)
+        if self.search_input.hasFocus():
+            self.search_input.selectAll()
+        else:
+            self.table.selectAll()
+            self.table.setFocus()
+    
+    def _shortcut_focus_search(self):
+        """Shortcut-Handler fuer Strg+F - Fokus auf Suchfeld."""
+        self.search_input.setFocus()
+        self.search_input.selectAll()
+    
+    def _shortcut_preview(self):
+        """Shortcut-Handler fuer Enter - Vorschau oeffnen."""
+        # Enter im Suchfeld oder Filter soll nicht Vorschau oeffnen
+        if self.search_input.hasFocus():
+            return
+        # Auch nicht bei aktiven ComboBoxen
+        for combo in (self.source_filter, self.type_filter, self.ki_filter):
+            if combo.hasFocus():
+                return
+        self._preview_selected()
+    
+    def _shortcut_escape(self):
+        """Shortcut-Handler fuer Esc - Auswahl aufheben / Suche leeren."""
+        if self.search_input.hasFocus():
+            # Erst Suchtext leeren, dann Fokus auf Tabelle
+            if self.search_input.text():
+                self.search_input.clear()
+            self.table.setFocus()
+        else:
+            self.table.clearSelection()
+            self.table.setFocus()
+    
+    def _shortcut_archive(self):
+        """Shortcut-Handler fuer Strg+Shift+A - Ausgewaehlte archivieren."""
+        selected = self._get_selected_documents()
+        if selected:
+            self._archive_documents(selected)
     
     def _create_header(self) -> QHBoxLayout:
         """Erstellt den Header mit Titel und Buttons (ACENCIA Design)."""
@@ -1395,9 +2633,15 @@ class ArchiveBoxesView(QWidget):
         
         header_layout.addSpacing(20)
         
+        from i18n.de import (
+            SHORTCUT_PROCESS_TOOLTIP, SHORTCUT_REFRESH_TOOLTIP,
+            SHORTCUT_PREVIEW_TOOLTIP, SHORTCUT_DOWNLOAD_TOOLTIP,
+            SHORTCUT_UPLOAD_TOOLTIP
+        )
+        
         # Verarbeiten-Button (PRIMÄR - Orange)
         self.process_btn = QPushButton("Verarbeiten")
-        self.process_btn.setToolTip("Dokumente aus der Eingangsbox automatisch verarbeiten")
+        self.process_btn.setToolTip(SHORTCUT_PROCESS_TOOLTIP)
         self.process_btn.setStyleSheet(get_button_primary_style())
         self.process_btn.clicked.connect(self._start_processing)
         header_layout.addWidget(self.process_btn)
@@ -1405,34 +2649,59 @@ class ArchiveBoxesView(QWidget):
         # Aktualisieren (Sekundär) - Erzwingt Server-Reload
         refresh_btn = QPushButton("Aktualisieren")
         refresh_btn.setStyleSheet(get_button_secondary_style())
-        refresh_btn.setToolTip("Daten vom Server neu laden (Cache leeren)")
+        refresh_btn.setToolTip(SHORTCUT_REFRESH_TOOLTIP)
         refresh_btn.clicked.connect(lambda: self._refresh_all(force_refresh=True))
         header_layout.addWidget(refresh_btn)
         
         # Vorschau (Ghost)
         self.preview_btn = QPushButton("Vorschau")
         self.preview_btn.setStyleSheet(get_button_ghost_style())
+        self.preview_btn.setToolTip(SHORTCUT_PREVIEW_TOOLTIP)
         self.preview_btn.clicked.connect(self._preview_selected)
         header_layout.addWidget(self.preview_btn)
         
         # Download (Ghost)
         self.download_btn = QPushButton("Herunterladen")
         self.download_btn.setStyleSheet(get_button_ghost_style())
+        self.download_btn.setToolTip(SHORTCUT_DOWNLOAD_TOOLTIP)
         self.download_btn.clicked.connect(self._download_selected)
         header_layout.addWidget(self.download_btn)
-        
-        # KI-Benennung (Ghost)
-        self.ai_btn = QPushButton("KI-Benennung")
-        self.ai_btn.setToolTip("PDFs automatisch durch KI umbenennen")
-        self.ai_btn.setStyleSheet(get_button_ghost_style())
-        self.ai_btn.clicked.connect(self._ai_rename_selected)
-        header_layout.addWidget(self.ai_btn)
         
         # Upload (Sekundär)
         self.upload_btn = QPushButton("Hochladen")
         self.upload_btn.setStyleSheet(get_button_secondary_style())
+        self.upload_btn.setToolTip(SHORTCUT_UPLOAD_TOOLTIP)
         self.upload_btn.clicked.connect(self._upload_document)
         header_layout.addWidget(self.upload_btn)
+        
+        # Historie-Toggle (Ghost, nur sichtbar mit Berechtigung)
+        from i18n.de import HISTORY_TOGGLE_TOOLTIP, HISTORY_PANEL_TITLE
+        self._history_toggle_btn = QPushButton("⏱ " + HISTORY_PANEL_TITLE)
+        self._history_toggle_btn.setCheckable(True)
+        self._history_toggle_btn.setChecked(False)
+        self._history_toggle_btn.setToolTip(HISTORY_TOGGLE_TOOLTIP)
+        self._history_toggle_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: transparent;
+                color: {TEXT_SECONDARY};
+                border: 1px solid {BORDER_DEFAULT};
+                border-radius: {RADIUS_MD};
+                padding: 6px 12px;
+                font-size: {FONT_SIZE_BODY};
+            }}
+            QPushButton:hover {{
+                background-color: {BG_SECONDARY};
+                color: {TEXT_PRIMARY};
+            }}
+            QPushButton:checked {{
+                background-color: {PRIMARY_100};
+                color: {PRIMARY_900};
+                border-color: {PRIMARY_500};
+            }}
+        """)
+        self._history_toggle_btn.toggled.connect(self._on_history_toggle)
+        self._history_toggle_btn.setVisible(False)  # Sichtbarkeit wird in __init__ gesetzt
+        header_layout.addWidget(self._history_toggle_btn)
         
         return header_layout
     
@@ -1447,6 +2716,7 @@ class ArchiveBoxesView(QWidget):
         self.source_filter.addItem("Alle", "")
         self.source_filter.addItem("BiPRO", "bipro_auto")
         self.source_filter.addItem("Manuell", "manual_upload")
+        self.source_filter.addItem("Scan", "scan")
         self.source_filter.currentIndexChanged.connect(self._apply_filter)
         filter_layout.addWidget(self.source_filter)
         
@@ -1471,9 +2741,10 @@ class ArchiveBoxesView(QWidget):
         filter_layout.addWidget(self.ki_filter)
         
         # Suche
+        from i18n.de import SHORTCUT_SEARCH_PLACEHOLDER
         filter_layout.addWidget(QLabel("Suche:"))
         self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("Dateiname...")
+        self.search_input.setPlaceholderText(SHORTCUT_SEARCH_PLACEHOLDER)
         self.search_input.textChanged.connect(self._filter_table)
         filter_layout.addWidget(self.search_input)
         
@@ -1483,6 +2754,35 @@ class ArchiveBoxesView(QWidget):
         reset_btn.clicked.connect(self._reset_filters)
         filter_layout.addWidget(reset_btn)
         
+        # Smart!Scan Button (gruen, nur sichtbar wenn SmartScan aktiviert)
+        from i18n.de import SMARTSCAN_TOOLBAR_BUTTON
+        self._smartscan_btn = QPushButton(f"  {SMARTSCAN_TOOLBAR_BUTTON}")
+        self._smartscan_btn.setFixedHeight(30)
+        self._smartscan_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: #4CAF50;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 4px 14px;
+                font-size: 13px;
+                font-weight: 600;
+            }}
+            QPushButton:hover {{
+                background-color: #43A047;
+            }}
+            QPushButton:pressed {{
+                background-color: #388E3C;
+            }}
+            QPushButton:disabled {{
+                background-color: #A5D6A7;
+                color: #E8F5E9;
+            }}
+        """)
+        self._smartscan_btn.clicked.connect(self._on_smartscan_btn_clicked)
+        self._smartscan_btn.setVisible(self._smartscan_enabled)
+        filter_layout.addWidget(self._smartscan_btn)
+        
         filter_layout.addStretch()
         
         return filter_group
@@ -1490,25 +2790,28 @@ class ArchiveBoxesView(QWidget):
     def _create_table(self):
         """Erstellt die Dokumenten-Tabelle mit Drag-Unterstützung."""
         self.table = DraggableDocumentTable()
-        self.table.setColumnCount(7)
+        self.table.setColumnCount(8)
+        from i18n.de import DUPLICATE_COLUMN_HEADER
         self.table.setHorizontalHeaderLabels([
-            "Dateiname", "Box", "Quelle", "Art", "KI", "Datum", "Von"
+            DUPLICATE_COLUMN_HEADER, "Dateiname", "Box", "Quelle", "Art", "KI", "Datum", "Von"
         ])
         
         header = self.table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)  # Dateiname
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)  # Box
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)  # Quelle
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)  # Art
-        header.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)  # KI (schmal)
-        header.resizeSection(4, 35)  # Feste Breite für KI-Spalte
-        header.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)  # Datum
-        header.setSectionResizeMode(6, QHeaderView.ResizeMode.ResizeToContents)  # Von
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)   # Duplikat-Icon (schmal)
+        header.resizeSection(0, 30)  # Feste Breite fuer Duplikat-Spalte
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)  # Dateiname
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)  # Box
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)  # Quelle
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)  # Art
+        header.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)  # KI (schmal)
+        header.resizeSection(5, 35)  # Feste Breite für KI-Spalte
+        header.setSectionResizeMode(6, QHeaderView.ResizeMode.ResizeToContents)  # Datum
+        header.setSectionResizeMode(7, QHeaderView.ResizeMode.ResizeToContents)  # Von
         
         # Sortieren aktivieren (Klick auf Header zum Sortieren)
         self.table.setSortingEnabled(True)
         # Standard: Nach Datum absteigend (neueste zuerst)
-        self.table.sortByColumn(5, Qt.SortOrder.DescendingOrder)
+        self.table.sortByColumn(6, Qt.SortOrder.DescendingOrder)
         
         # Zeilenhöhe fest anpassen (nicht vom Nutzer änderbar)
         self.table.verticalHeader().setDefaultSectionSize(36)
@@ -1519,6 +2822,7 @@ class ArchiveBoxesView(QWidget):
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._show_context_menu)
         self.table.doubleClicked.connect(self._on_double_click)
+        self.table.itemSelectionChanged.connect(self._on_table_selection_changed)
         
         # Fokus-Umrandung entfernen
         self.table.setStyleSheet("""
@@ -1530,6 +2834,9 @@ class ArchiveBoxesView(QWidget):
                 outline: none;
             }
         """)
+        
+        # Custom Delegate fuer Hintergrundfarben (trotz Stylesheet)
+        self.table.setItemDelegate(ColorBackgroundDelegate(self.table))
         
         # Drag aktivieren (Drop wird von Sidebar gehandhabt)
         self.table.setDragEnabled(True)
@@ -1568,7 +2875,7 @@ class ArchiveBoxesView(QWidget):
         # Aktuelle Box direkt vom Server laden (Cache fuer diese Box invalidieren)
         box_type = self._current_box if self._current_box else None
         documents = self._cache.get_documents(box_type=box_type, force_refresh=True)
-        self._apply_filters_and_display(documents)
+        self._apply_filters_and_display(documents, force_rebuild=True)
     
     # =========================================================================
     # CACHE-CALLBACKS (fuer Auto-Refresh)
@@ -1598,6 +2905,26 @@ class ArchiveBoxesView(QWidget):
         """Callback wenn Auto-Refresh beendet wurde."""
         logger.debug("Auto-Refresh beendet")
         self._initial_load_done = True
+        # SmartScan-Status aktualisieren (falls Admin ihn zwischenzeitlich geaendert hat)
+        self._load_smartscan_status()
+        self.sidebar._smartscan_enabled = self._smartscan_enabled
+        if hasattr(self, '_smartscan_btn'):
+            self._smartscan_btn.setVisible(self._smartscan_enabled)
+    
+    def _load_avg_cost_stats(self):
+        """Laedt die durchschnittlichen Verarbeitungskosten pro Dokument im Hintergrund."""
+        if self._cost_stats_worker and self._cost_stats_worker.isRunning():
+            return
+        
+        self._cost_stats_worker = CostStatsWorker(self.api_client)
+        self._cost_stats_worker.finished.connect(self._on_avg_cost_loaded)
+        self._register_worker(self._cost_stats_worker)
+        self._cost_stats_worker.start()
+    
+    def _on_avg_cost_loaded(self, avg_cost: float):
+        """Callback wenn durchschnittliche Kosten geladen wurden."""
+        logger.debug(f"Durchschnittliche Verarbeitungskosten/Dokument: ${avg_cost:.6f}")
+        self.sidebar.set_avg_cost_per_doc(avg_cost)
     
     def _load_documents_from_cache(self):
         """
@@ -1605,23 +2932,26 @@ class ArchiveBoxesView(QWidget):
         
         Wird von Auto-Refresh Callbacks aufgerufen, nachdem Daten
         bereits im Hintergrund geladen wurden.
+        
+        WICHTIG: Muss dieselbe Filter-Logik wie _refresh_documents() verwenden,
+        damit Sidebar-Zaehler und Tabelleninhalt konsistent bleiben.
         """
+        # Archived-Box erkennen (z.B. 'courtage_archived' -> box='courtage', is_archived=True)
+        is_archived_box = self._current_box and self._current_box.endswith("_archived")
+        actual_box = self._current_box.replace("_archived", "") if is_archived_box else self._current_box
+        
         # Thread-safe Zugriff ueber oeffentliche API (kein direkter Lock-Zugriff!)
-        # Verhindert Deadlocks bei Auto-Refresh aus Background-Thread
-        box_type = self._current_box if self._current_box else None
-        documents = self._cache.get_documents(box_type=box_type, force_refresh=False)
+        cache_key = actual_box if actual_box else None
+        documents = self._cache.get_documents(box_type=cache_key, force_refresh=False)
         
-        # Filter anwenden (Quelle)
-        source = self.source_filter.currentData() if hasattr(self, 'source_filter') else None
-        if source:
-            documents = [d for d in documents if d.source == source]
+        # is_archived Filter client-seitig (wie CacheDocumentLoadWorker)
+        if is_archived_box:
+            documents = [d for d in documents if d.is_archived]
+        elif actual_box:
+            documents = [d for d in documents if not d.is_archived]
         
-        self._documents = documents
-        self._populate_table()
-        self.table.setEnabled(True)
-        
-        box_name = BOX_DISPLAY_NAMES.get(self._current_box, "Gesamt Archiv")
-        self.status_label.setText(f"{len(documents)} Dokument(e) in {box_name}")
+        # Alle Filter anwenden und anzeigen (Quelle, Typ, KI, Suche)
+        self._apply_filters_and_display(documents)
     
     def _refresh_credits(self):
         """Laedt das OpenRouter-Guthaben im Hintergrund."""
@@ -1701,7 +3031,10 @@ class ArchiveBoxesView(QWidget):
         """
         Laedt die Dokumente fuer die aktuelle Box.
         
-        WICHTIG: Verwendet immer Worker fuer Server-Calls um UI nicht zu blockieren.
+        Strategie (optimiert):
+        1. Cache-Check: Wenn frische Daten im RAM -> direkt anzeigen (instant)
+        2. Cache-Load: Worker laedt ALLE Dokumente in Cache (1 API-Call)
+           -> Nachfolgende Box-Wechsel sind instant aus Cache
         
         Args:
             force_refresh: True = Vom Server, False = Aus Cache (falls vorhanden)
@@ -1712,20 +3045,20 @@ class ArchiveBoxesView(QWidget):
         is_archived_box = self._current_box and self._current_box.endswith("_archived")
         actual_box = self._current_box.replace("_archived", "") if is_archived_box else self._current_box
         
-        # Cache nur fuer normale Boxen verwenden (nicht fuer archivierte)
-        # Der Cache-Service kennt keine is_archived Filter
-        if not force_refresh and not is_archived_box:
-            cache_key = self._current_box if self._current_box else None
+        # Cache-Check: Frische Daten im RAM?
+        if not force_refresh:
+            cache_key = actual_box if actual_box else None
             # Schneller Check ob Daten im RAM-Cache sind (ohne API-Call!)
             # WICHTIG: Oeffentliche API verwenden, NICHT direkten Lock-Zugriff!
-            # Direkter Zugriff auf _cache_lock kann zu Deadlocks fuehren wenn
-            # der Background-Thread den Lock haelt.
-            documents = self._cache.get_documents(box_type=cache_key, force_refresh=False)
-            if documents:
-                # Daten sind im RAM -> direkt anzeigen (schnell!)
-                # Bei normalen Boxen nur nicht-archivierte anzeigen
-                documents = [d for d in documents if not d.is_archived]
-                self._apply_filters_and_display(documents)
+            documents = self._cache.get_documents_cached_only(box_type=cache_key)
+            if documents is not None:
+                # Daten sind im RAM -> direkt anzeigen (instant!)
+                # is_archived Filter client-seitig
+                if is_archived_box:
+                    documents = [d for d in documents if d.is_archived]
+                elif actual_box:
+                    documents = [d for d in documents if not d.is_archived]
+                self._apply_filters_and_display(documents, force_rebuild=True)
                 return
         
         # Daten nicht im Cache oder force_refresh -> Worker starten
@@ -1737,26 +3070,22 @@ class ArchiveBoxesView(QWidget):
         self._show_loading(f"{box_name} wird geladen...")
         self.table.setEnabled(False)
         
-        filters = {}
-        
-        # Box-Filter - bei archivierten Boxen den Basis-Box-Typ verwenden
-        if actual_box:
-            filters['box_type'] = actual_box
-        
-        # is_archived Filter
+        # is_archived Filter bestimmen
+        is_archived_filter = None  # Gesamt Archiv: alle
         if is_archived_box:
-            filters['is_archived'] = True
+            is_archived_filter = True
         elif actual_box:
-            # Normale Box: Nur nicht-archivierte anzeigen
-            filters['is_archived'] = False
-        # Gesamt Archiv (None): Alle Dokumente (archiviert + nicht archiviert)
+            is_archived_filter = False
         
-        # Quelle-Filter
-        source = self.source_filter.currentData()
-        if source:
-            filters['source'] = source
-        
-        self._load_worker = DocumentLoadWorker(self.docs_api, filters)
+        # CacheDocumentLoadWorker: Laedt ALLE Dokumente in Cache (1 API-Call),
+        # filtert lokal nach box_type und is_archived.
+        # Nachfolgende Box-Wechsel sind instant (aus Cache).
+        self._load_worker = CacheDocumentLoadWorker(
+            self._cache,
+            box_type=actual_box or None,
+            is_archived=is_archived_filter,
+            force_refresh=force_refresh
+        )
         self._load_worker.finished.connect(self._on_documents_loaded)
         self._load_worker.error.connect(self._on_load_error)
         self._register_worker(self._load_worker)
@@ -1767,13 +3096,35 @@ class ArchiveBoxesView(QWidget):
         # Loading-Overlay verstecken
         self._hide_loading()
         
-        self._apply_filters_and_display(documents)
+        self._apply_filters_and_display(documents, force_rebuild=True)
         
         # Cache wird automatisch durch get_documents() bei Bedarf befuellt
         # Kein manuelles Befuellen noetig (und kein direkter Lock-Zugriff!)
     
-    def _apply_filters_and_display(self, documents: List[Document]):
+    @staticmethod
+    def _compute_documents_fingerprint(documents: List[Document]) -> str:
+        """
+        Berechnet einen Fingerprint fuer die Dokumentliste.
+        
+        Aendert sich nur wenn Dokumente hinzukommen, entfernt werden,
+        umbenannt, verschoben oder anderweitig aktualisiert werden.
+        """
+        parts = []
+        for doc in documents:
+            parts.append(
+                f"{doc.id}:{doc.original_filename}:{doc.box_type}:"
+                f"{doc.display_color or ''}:{doc.ai_renamed}:{doc.is_archived}:"
+                f"{doc.processing_status or ''}:{doc.created_at or ''}:"
+                f"{doc.version}"
+            )
+        return "|".join(parts)
+    
+    def _apply_filters_and_display(self, documents: List[Document], force_rebuild: bool = False):
         """Wendet Filter an und zeigt Dokumente in der Tabelle."""
+        # Admin-Filter: Falsch-Box Dokumente fuer Nicht-Admins ausblenden
+        if not self._is_admin:
+            documents = [d for d in documents if d.box_type != 'falsch']
+        
         # Quelle-Filter anwenden
         source = self.source_filter.currentData() if hasattr(self, 'source_filter') else None
         if source:
@@ -1791,6 +3142,13 @@ class ArchiveBoxesView(QWidget):
         elif ki_status == "no":
             documents = [d for d in documents if not d.ai_renamed and d.is_pdf]
         
+        # Fingerprint pruefen: Tabelle nur neu bauen wenn sich Daten geaendert haben
+        new_fingerprint = self._compute_documents_fingerprint(documents)
+        if not force_rebuild and new_fingerprint == self._documents_fingerprint:
+            logger.debug("Auto-Refresh: Keine Aenderungen - Tabelle uebersprungen")
+            return
+        
+        self._documents_fingerprint = new_fingerprint
         self._documents = documents
         self._populate_table()
         self.table.setEnabled(True)
@@ -1810,10 +3168,13 @@ class ArchiveBoxesView(QWidget):
         
         self.table.setEnabled(True)
         self.status_label.setText(f"Fehler: {error}")
-        QMessageBox.warning(self, "Fehler", f"Dokumente konnten nicht geladen werden:\n{error}")
+        self._toast_manager.show_error(f"Dokumente konnten nicht geladen werden:\n{error}")
     
     def _populate_table(self):
         """Fuellt die Tabelle mit Dokumenten."""
+        from i18n.de import (DUPLICATE_ICON, DUPLICATE_TOOLTIP,
+                              DUPLICATE_TOOLTIP_NO_ORIGINAL)
+        
         # Sortierung temporär deaktivieren während des Befüllens
         self.table.setSortingEnabled(False)
         self.table.setRowCount(len(self._documents))
@@ -1822,29 +3183,50 @@ class ArchiveBoxesView(QWidget):
         readonly_flags = Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled
         
         for row, doc in enumerate(self._documents):
-            # Dateiname (nicht direkt editierbar - nur ueber Kontextmenue)
+            # Spalte 0: Duplikat-Icon
+            if doc.is_duplicate:
+                dup_item = QTableWidgetItem(DUPLICATE_ICON)
+                dup_item.setForeground(QColor("#f59e0b"))  # Amber/Orange fuer Warnung
+                if doc.duplicate_of_filename:
+                    dup_item.setToolTip(DUPLICATE_TOOLTIP.format(
+                        original=doc.duplicate_of_filename,
+                        id=doc.previous_version_id
+                    ))
+                else:
+                    dup_item.setToolTip(DUPLICATE_TOOLTIP_NO_ORIGINAL.format(
+                        version=doc.version
+                    ))
+            else:
+                dup_item = QTableWidgetItem("")
+            dup_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            dup_item.setFlags(readonly_flags)
+            self.table.setItem(row, 0, dup_item)
+            
+            # Spalte 1: Dateiname (nicht direkt editierbar - nur ueber Kontextmenue)
             # Document-Referenz wird hier als UserRole gespeichert
             name_item = QTableWidgetItem(doc.original_filename)
             name_item.setData(Qt.ItemDataRole.UserRole, doc)
             name_item.setFlags(readonly_flags)
-            self.table.setItem(row, 0, name_item)
+            self.table.setItem(row, 1, name_item)
             
-            # Box mit Farbkodierung
+            # Spalte 2: Box mit Farbkodierung
             box_item = QTableWidgetItem(doc.box_type_display)
             box_color = QColor(doc.box_color)
             box_item.setForeground(QBrush(box_color))
             box_item.setFont(QFont("Open Sans", 9, QFont.Weight.Medium))
             box_item.setFlags(readonly_flags)
-            self.table.setItem(row, 1, box_item)
+            self.table.setItem(row, 2, box_item)
             
-            # Quelle
+            # Spalte 3: Quelle
             source_item = QTableWidgetItem(doc.source_type_display)
             if doc.source_type == 'bipro_auto':
                 source_item.setForeground(QColor(INFO))  # ACENCIA Hellblau
+            elif doc.source_type == 'scan':
+                source_item.setForeground(QColor("#9C27B0"))  # Lila fuer Scan
             source_item.setFlags(readonly_flags)
-            self.table.setItem(row, 2, source_item)
+            self.table.setItem(row, 3, source_item)
             
-            # Art (Dateityp)
+            # Spalte 4: Art (Dateityp)
             file_type = self._get_file_type(doc)
             type_item = QTableWidgetItem(file_type)
             # Farbkodierung nach Typ
@@ -1855,9 +3237,9 @@ class ArchiveBoxesView(QWidget):
             elif file_type == "XML":
                 type_item.setForeground(QColor(INFO))  # Hellblau
             type_item.setFlags(readonly_flags)
-            self.table.setItem(row, 3, type_item)
+            self.table.setItem(row, 4, type_item)
             
-            # KI-Status (schlanke Spalte)
+            # Spalte 5: KI-Status (schlanke Spalte)
             if doc.ai_renamed:
                 ai_item = QTableWidgetItem("✓")
                 ai_item.setForeground(QColor(SUCCESS))  # Grün
@@ -1872,20 +3254,29 @@ class ArchiveBoxesView(QWidget):
                 ai_item = QTableWidgetItem("")
             ai_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             ai_item.setFlags(readonly_flags)
-            self.table.setItem(row, 4, ai_item)
+            self.table.setItem(row, 5, ai_item)
             
-            # Datum (deutsches Format) - mit ISO-Format für korrekte Sortierung
+            # Spalte 6: Datum (deutsches Format) - mit ISO-Format für korrekte Sortierung
             date_item = SortableTableWidgetItem(
                 format_date_german(doc.created_at),
                 doc.created_at or ""  # ISO-Format für Sortierung
             )
             date_item.setFlags(readonly_flags)
-            self.table.setItem(row, 5, date_item)
+            self.table.setItem(row, 6, date_item)
             
-            # Hochgeladen von
+            # Spalte 7: Hochgeladen von
             by_item = QTableWidgetItem(doc.uploaded_by_name or "")
             by_item.setFlags(readonly_flags)
-            self.table.setItem(row, 6, by_item)
+            self.table.setItem(row, 7, by_item)
+            
+            # Farbmarkierung: Hintergrundfarbe fuer alle Zellen der Zeile
+            if doc.display_color and doc.display_color in DOCUMENT_DISPLAY_COLORS:
+                bg_color = QColor(DOCUMENT_DISPLAY_COLORS[doc.display_color])
+                bg_brush = QBrush(bg_color)
+                for col in range(self.table.columnCount()):
+                    item = self.table.item(row, col)
+                    if item:
+                        item.setBackground(bg_brush)
         
         # Sortierung wieder aktivieren
         self.table.setSortingEnabled(True)
@@ -1937,6 +3328,20 @@ class ArchiveBoxesView(QWidget):
         """Wendet Filter an (aus Cache, kein Server-Request)."""
         self._refresh_documents(force_refresh=False)
     
+    def _on_smartscan_btn_clicked(self):
+        """Smart!Scan Button in der Toolbar geklickt - versendet ausgewaehlte Dokumente."""
+        from i18n.de import SMARTSCAN_NO_SELECTION
+        
+        # BUG-0005 Fix: _get_selected_documents() liest korrekt per UserRole
+        # statt ueber sortierte Zeilen-Indices in unsortierter Liste
+        selected_docs = self._get_selected_documents()
+        
+        if not selected_docs:
+            self._toast_manager.show_info(SMARTSCAN_NO_SELECTION)
+            return
+        
+        self._start_smartscan(selected_docs)
+    
     def _reset_filters(self):
         """Setzt alle Filter und Sortierung auf Standard zurück."""
         # Filter-Signale temporär blockieren um mehrfaches Neuladen zu vermeiden
@@ -1955,8 +3360,8 @@ class ArchiveBoxesView(QWidget):
         self.type_filter.blockSignals(False)
         self.ki_filter.blockSignals(False)
         
-        # Sortierung auf Standard zurücksetzen (Datum absteigend)
-        self.table.sortByColumn(5, Qt.SortOrder.DescendingOrder)
+        # Sortierung auf Standard zurücksetzen (Datum absteigend, Spalte 6)
+        self.table.sortByColumn(6, Qt.SortOrder.DescendingOrder)
         
         # Tabelle neu laden
         self._refresh_documents(force_refresh=False)
@@ -1982,17 +3387,22 @@ class ArchiveBoxesView(QWidget):
         needs_refresh = self._should_refresh_box(box_type)
         
         if needs_refresh:
-            logger.info(f"Box '{box_type}' seit manuellem Refresh noch nicht geladen - hole Daten vom Server")
+            logger.info(f"Box '{box_type}' seit manuellem Refresh noch nicht geladen - lade alle Dokumente in Cache (1 API-Call)")
             self._refresh_documents(force_refresh=True)
-            # Als geladen markieren
+            # Als geladen markieren (fuer Fallback-Logik)
             self._last_box_load[box_type] = datetime.now()
         else:
             # Dokumente aus Cache laden (kein Server-Request!)
+            logger.debug(f"Box '{box_type}' aus Cache (instant)")
             self._refresh_documents(force_refresh=False)
     
     def _should_refresh_box(self, box_type: str) -> bool:
         """
         Prueft ob eine Box seit dem letzten manuellen Refresh neu geladen werden muss.
+        
+        Optimierung: Da der zentrale Cache ALLE Dokumente auf einmal laedt,
+        reicht es zu pruefen ob der Cache NACH dem manuellen Refresh geladen wurde.
+        Wenn ja, haben ALLE Boxen frische Daten (kein erneuter Server-Call noetig).
         
         Returns:
             True wenn die Box seit dem letzten "Aktualisieren"-Klick noch nicht geladen wurde
@@ -2006,10 +3416,14 @@ class ArchiveBoxesView(QWidget):
         if not last_manual:
             return False
         
-        # Wann wurde diese Box zuletzt geladen?
-        last_load = self._last_box_load.get(box_type)
+        # OPTIMIERUNG: Prüfe zentralen Cache-Zeitstempel
+        # Wenn der Cache NACH dem manuellen Refresh geladen wurde, haben ALLE Boxen frische Daten
+        cache_time = self._cache.get_documents_cache_time()
+        if cache_time and cache_time >= last_manual:
+            return False  # Cache ist frisch genug - kein Server-Call noetig
         
-        # Wenn noch nie geladen ODER letzte Ladung vor dem manuellen Refresh
+        # Fallback: Box-spezifisches Tracking (fuer Sonderfaelle)
+        last_load = self._last_box_load.get(box_type)
         if not last_load or last_load < last_manual:
             return True
         
@@ -2035,6 +3449,12 @@ class ArchiveBoxesView(QWidget):
                 preview_action = QAction("Vorschau", self)
                 preview_action.triggered.connect(lambda: self._preview_document(doc))
                 menu.addAction(preview_action)
+            
+            if self._is_spreadsheet(doc):
+                from i18n.de import SPREADSHEET_CONTEXT_MENU
+                spreadsheet_preview_action = QAction(SPREADSHEET_CONTEXT_MENU, self)
+                spreadsheet_preview_action.triggered.connect(lambda: self._preview_spreadsheet(doc))
+                menu.addAction(spreadsheet_preview_action)
             
             if doc.is_gdv:
                 open_gdv_action = QAction("Im GDV-Editor oeffnen", self)
@@ -2066,7 +3486,14 @@ class ArchiveBoxesView(QWidget):
         # Boxen der ausgewaehlten Dokumente ermitteln (diese nicht anbieten)
         current_boxes = set(d.box_type for d in selected_docs if d.box_type)
         
-        for box_type in ['gdv', 'courtage', 'sach', 'leben', 'kranken', 'sonstige']:
+        # Basis-Boxen fuer alle Benutzer
+        move_targets = ['gdv', 'courtage', 'sach', 'leben', 'kranken', 'sonstige']
+        
+        # Admin-only Boxen hinzufuegen
+        if self._is_admin:
+            move_targets.extend(BOX_TYPES_ADMIN)
+        
+        for box_type in move_targets:
             # Box ueberspringen wenn alle Dokumente bereits dort sind
             if box_type in current_boxes and len(current_boxes) == 1:
                 continue
@@ -2077,13 +3504,118 @@ class ArchiveBoxesView(QWidget):
         
         menu.addMenu(move_menu)
         
+        # ===== Farbmarkierung =====
+        from i18n.de import (
+            DOC_COLOR_MENU, DOC_COLOR_REMOVE,
+            DOC_COLOR_GREEN, DOC_COLOR_RED, DOC_COLOR_BLUE, DOC_COLOR_ORANGE,
+            DOC_COLOR_PURPLE, DOC_COLOR_PINK, DOC_COLOR_CYAN, DOC_COLOR_YELLOW
+        )
+        color_menu = QMenu(DOC_COLOR_MENU, menu)
+        
+        color_labels = {
+            'green': DOC_COLOR_GREEN,
+            'red': DOC_COLOR_RED,
+            'blue': DOC_COLOR_BLUE,
+            'orange': DOC_COLOR_ORANGE,
+            'purple': DOC_COLOR_PURPLE,
+            'pink': DOC_COLOR_PINK,
+            'cyan': DOC_COLOR_CYAN,
+            'yellow': DOC_COLOR_YELLOW,
+        }
+        
+        for color_key, color_label in color_labels.items():
+            hex_color = DOCUMENT_DISPLAY_COLORS.get(color_key, '#ffffff')
+            color_action = QAction(f"\u25cf  {color_label}", self)
+            color_action.setData(color_key)
+            # Farbigen Punkt als Icon-Ersatz via Stylesheet nicht moeglich,
+            # daher Unicode-Kreis mit Farbkodierung im Text
+            icon_pixmap = self._create_color_icon(hex_color)
+            if icon_pixmap:
+                color_action.setIcon(icon_pixmap)
+            color_action.triggered.connect(
+                lambda checked, ck=color_key: self._set_document_color(selected_docs, ck)
+            )
+            color_menu.addAction(color_action)
+        
+        # Farbe entfernen - nur anbieten wenn mindestens ein Dokument eine Farbe hat
+        colored_docs = [d for d in selected_docs if d.display_color]
+        if colored_docs:
+            color_menu.addSeparator()
+            remove_color_action = QAction(DOC_COLOR_REMOVE, self)
+            remove_color_action.triggered.connect(
+                lambda: self._set_document_color(selected_docs, None)
+            )
+            color_menu.addAction(remove_color_action)
+        
+        menu.addMenu(color_menu)
+        
+        # ===== Smart!Scan (nur wenn in Admin-Einstellungen aktiviert) =====
+        if self._smartscan_enabled:
+            from i18n.de import SMARTSCAN_CONTEXT_MENU, SMARTSCAN_CONTEXT_SELECTED
+            menu.addSeparator()
+            if len(selected_docs) == 1:
+                smartscan_action = QAction(SMARTSCAN_CONTEXT_MENU, self)
+            else:
+                smartscan_action = QAction(f"{SMARTSCAN_CONTEXT_MENU} ({len(selected_docs)})", self)
+            smartscan_action.triggered.connect(lambda: self._start_smartscan(selected_docs))
+            menu.addAction(smartscan_action)
+        
         # ===== KI-Benennung =====
-        pdf_docs = [d for d in selected_docs if d.is_pdf and not d.ai_renamed]
+        # Nur fuer PDFs die NICHT in Eingangsbox/Verarbeitung sind
+        # (dort soll die volle Verarbeitungs-Pipeline genutzt werden)
+        pdf_docs = [
+            d for d in selected_docs 
+            if d.is_pdf and not d.ai_renamed 
+            and d.box_type not in ('eingang', 'verarbeitung')
+        ]
         if pdf_docs:
             menu.addSeparator()
             ai_action = QAction(f"KI-Benennung ({len(pdf_docs)} PDF{'s' if len(pdf_docs) > 1 else ''})", self)
             ai_action.triggered.connect(lambda: self._ai_rename_documents(pdf_docs))
             menu.addAction(ai_action)
+        
+        # ===== Verarbeitungs-Steuerung =====
+        from i18n.de import PROCESSING_EXCLUDE, PROCESSING_INCLUDE
+        
+        # "Von Verarbeitung ausschliessen" - NUR fuer Dokumente in der Eingangsbox
+        # die noch nicht ausgeschlossen sind (nur dort wartet Verarbeitung)
+        excludable_docs = [
+            d for d in selected_docs 
+            if d.box_type == 'eingang' and d.processing_status != 'manual_excluded'
+        ]
+        if excludable_docs:
+            if len(excludable_docs) == 1:
+                exclude_action = QAction(PROCESSING_EXCLUDE, self)
+            else:
+                exclude_action = QAction(
+                    f"{PROCESSING_EXCLUDE} ({len(excludable_docs)})", self
+                )
+            exclude_action.triggered.connect(
+                lambda: self._exclude_from_processing(excludable_docs)
+            )
+            menu.addAction(exclude_action)
+        
+        # "Erneut fuer Verarbeitung freigeben" - fuer:
+        # 1. Manuell ausgeschlossene Dokumente (egal in welcher Box)
+        # 2. Bereits verarbeitete Dokumente in Ziel-Boxen (erneut verarbeiten)
+        # NICHT fuer Dokumente die bereits in der Eingangsbox mit status 'pending' sind
+        reprocessable_docs = [
+            d for d in selected_docs 
+            if d.processing_status == 'manual_excluded'
+            or (d.box_type not in ('eingang', 'verarbeitung')
+                and d.processing_status != 'pending')
+        ]
+        if reprocessable_docs:
+            if len(reprocessable_docs) == 1:
+                include_action = QAction(PROCESSING_INCLUDE, self)
+            else:
+                include_action = QAction(
+                    f"{PROCESSING_INCLUDE} ({len(reprocessable_docs)})", self
+                )
+            include_action.triggered.connect(
+                lambda: self._include_for_processing(reprocessable_docs)
+            )
+            menu.addAction(include_action)
         
         # ===== Archivieren/Entarchivieren =====
         # Dokumente aus archivierungsfaehigen Boxen filtern
@@ -2145,13 +3677,15 @@ class ArchiveBoxesView(QWidget):
     def _on_double_click(self, index):
         """Handler fuer Doppelklick."""
         row = index.row()
-        doc_item = self.table.item(row, 0)
+        doc_item = self.table.item(row, 1)
         if doc_item:
             doc: Document = doc_item.data(Qt.ItemDataRole.UserRole)
             if doc.is_gdv:
                 self._open_in_gdv_editor(doc)
             elif self._is_pdf(doc):
                 self._preview_document(doc)
+            elif self._is_spreadsheet(doc):
+                self._preview_spreadsheet(doc)
             else:
                 self._download_document(doc)
     
@@ -2164,7 +3698,7 @@ class ArchiveBoxesView(QWidget):
             selected_rows.add(item.row())
         
         for row in selected_rows:
-            doc_item = self.table.item(row, 0)
+            doc_item = self.table.item(row, 1)
             if doc_item:
                 doc = doc_item.data(Qt.ItemDataRole.UserRole)
                 if doc:
@@ -2176,6 +3710,191 @@ class ArchiveBoxesView(QWidget):
         """Prueft ob das Dokument ein PDF ist."""
         return doc.is_pdf
     
+    def _is_spreadsheet(self, doc: Document) -> bool:
+        """Prueft ob das Dokument eine Tabellen-Datei ist (CSV, XLSX, XLS, TSV)."""
+        ext = doc.file_extension.lower() if hasattr(doc, 'file_extension') else ""
+        if not ext and '.' in doc.original_filename:
+            ext = '.' + doc.original_filename.rsplit('.', 1)[-1].lower()
+        return ext in ('.csv', '.xlsx', '.xls', '.tsv')
+    
+    # ========================================
+    # Dokument-Historie (Seitenpanel)
+    # ========================================
+    
+    def _on_history_toggle(self, checked: bool):
+        """Wird aufgerufen wenn der Historie-Toggle-Button geklickt wird."""
+        if not checked:
+            # Toggle aus: Panel verstecken
+            self._hide_history_panel()
+        else:
+            # Toggle an: Wenn ein Dokument ausgewaehlt ist, Historie laden
+            selected = self._get_selected_documents()
+            if len(selected) == 1:
+                self._load_document_history(selected[0])
+    
+    def _on_table_selection_changed(self):
+        """
+        Wird aufgerufen wenn sich die Tabellenauswahl aendert.
+        Laedt die Historie fuer das ausgewaehlte Dokument (mit Debounce).
+        """
+        # Toggle muss aktiv sein UND Berechtigung vorhanden
+        if not self._history_enabled or not self._history_toggle_btn.isChecked():
+            return
+        
+        selected = self._get_selected_documents()
+        
+        if len(selected) != 1:
+            # Kein oder mehrere Dokumente ausgewaehlt: Panel ausblenden
+            if self._history_panel.isVisible():
+                self._hide_history_panel_content()
+            return
+        
+        doc = selected[0]
+        
+        # Debounce: 300ms warten bevor wir laden
+        if self._history_debounce_timer is not None:
+            self._history_debounce_timer.stop()
+        
+        self._pending_history_doc_id = doc.id
+        self._history_debounce_timer = QTimer()
+        self._history_debounce_timer.setSingleShot(True)
+        self._history_debounce_timer.timeout.connect(
+            lambda: self._load_document_history(doc)
+        )
+        self._history_debounce_timer.start(300)
+    
+    def _has_history_permission(self) -> bool:
+        """Prueft ob der aktuelle Benutzer die documents_history Berechtigung hat."""
+        if self.auth_api and self.auth_api.current_user:
+            return self.auth_api.current_user.has_permission('documents_history')
+        return False
+    
+    def _load_document_history(self, doc: Document):
+        """Laedt die Historie fuer ein Dokument (aus Cache oder Server)."""
+        # Pruefen ob das Dokument noch ausgewaehlt ist
+        if self._pending_history_doc_id != doc.id:
+            return
+        
+        # Panel sichtbar machen
+        if not self._history_panel.isVisible():
+            self._show_history_panel()
+        
+        # Cache pruefen
+        cached = self._history_panel.get_cached_history(doc.id)
+        if cached is not None:
+            self._history_panel.show_history(doc.id, doc.original_filename, cached)
+            return
+        
+        # Loading-Indikator anzeigen
+        self._history_panel.show_loading(doc.original_filename)
+        
+        # Worker starten
+        if self._history_worker is not None:
+            try:
+                self._history_worker.finished.disconnect()
+                self._history_worker.error.disconnect()
+            except (RuntimeError, TypeError):
+                pass
+        
+        self._history_worker = DocumentHistoryWorker(self.api_client, doc.id)
+        self._history_worker.finished.connect(self._on_history_loaded)
+        self._history_worker.error.connect(self._on_history_error)
+        self._register_worker(self._history_worker)
+        self._history_worker.start()
+    
+    def _on_history_loaded(self, doc_id: int, entries: list):
+        """Callback wenn die Historie geladen wurde."""
+        # Pruefen ob das Dokument noch ausgewaehlt ist
+        selected = self._get_selected_documents()
+        if len(selected) != 1 or selected[0].id != doc_id:
+            return
+        
+        self._history_panel.show_history(doc_id, selected[0].original_filename, entries)
+    
+    def _on_history_error(self, doc_id: int, error_msg: str):
+        """Callback bei Fehler beim Laden der Historie."""
+        logger.warning(f"Dokument-Historie Fehler (ID {doc_id}): {error_msg}")
+        self._history_panel.show_error(error_msg)
+    
+    def _show_history_panel(self):
+        """Zeigt das Historie-Panel und passt den Splitter an."""
+        self._history_panel.setVisible(True)
+        # Splitter-Proportionen anpassen (Tabelle : Historie = 3:1)
+        total_width = self._inner_splitter.width()
+        history_width = min(300, total_width // 4)
+        self._inner_splitter.setSizes([total_width - history_width, history_width])
+    
+    def _hide_history_panel(self):
+        """Versteckt das Historie-Panel komplett und setzt den Toggle zurueck."""
+        self._history_panel.setVisible(False)
+        self._inner_splitter.setSizes([self._inner_splitter.width(), 0])
+        # Toggle-Button zuruecksetzen (ohne Signal auszuloesen)
+        if hasattr(self, '_history_toggle_btn'):
+            self._history_toggle_btn.blockSignals(True)
+            self._history_toggle_btn.setChecked(False)
+            self._history_toggle_btn.blockSignals(False)
+        # Debounce-Timer stoppen
+        if self._history_debounce_timer is not None:
+            self._history_debounce_timer.stop()
+        self._pending_history_doc_id = None
+    
+    def _hide_history_panel_content(self):
+        """Leert den Inhalt des Historie-Panels (Panel bleibt offen)."""
+        from i18n.de import HISTORY_EMPTY
+        self._history_panel._clear_entries()
+        self._history_panel._doc_name_label.setText("")
+        self._history_panel._status_label.setText(HISTORY_EMPTY)
+        self._history_panel._status_label.setVisible(True)
+        # Debounce-Timer stoppen
+        if self._history_debounce_timer is not None:
+            self._history_debounce_timer.stop()
+        self._pending_history_doc_id = None
+    
+    # ========================================
+    # Farbmarkierung
+    # ========================================
+    
+    def _create_color_icon(self, hex_color: str):
+        """Erstellt ein kleines farbiges Icon (QIcon) fuer das Kontextmenue."""
+        from PySide6.QtGui import QPixmap, QPainter, QIcon
+        pixmap = QPixmap(16, 16)
+        pixmap.fill(QColor(0, 0, 0, 0))  # Transparent
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setBrush(QBrush(QColor(hex_color)))
+        painter.setPen(QColor("#999999"))
+        painter.drawEllipse(2, 2, 12, 12)
+        painter.end()
+        return QIcon(pixmap)
+    
+    def _set_document_color(self, documents: List[Document], color: Optional[str]):
+        """Setzt oder entfernt die Farbmarkierung fuer Dokumente."""
+        if not documents:
+            return
+        
+        doc_ids = [d.id for d in documents]
+        
+        try:
+            count = self.docs_api.set_documents_color(doc_ids, color)
+            
+            if count > 0:
+                # Lokale Dokumente aktualisieren (ohne Server-Refresh)
+                for doc in documents:
+                    doc.display_color = color
+                
+                # Tabelle neu zeichnen
+                self._populate_table()
+                
+                from i18n.de import DOC_COLOR_SET_SUCCESS, DOC_COLOR_REMOVE_SUCCESS
+                if color:
+                    logger.info(DOC_COLOR_SET_SUCCESS.format(count=count))
+                else:
+                    logger.info(DOC_COLOR_REMOVE_SUCCESS.format(count=count))
+        except Exception as e:
+            from i18n.de import DOC_COLOR_ERROR
+            logger.error(DOC_COLOR_ERROR.format(error=str(e)))
+            self._toast_manager.show_error(DOC_COLOR_ERROR.format(error=str(e)))
+    
     # ========================================
     # Aktionen
     # ========================================
@@ -2183,6 +3902,10 @@ class ArchiveBoxesView(QWidget):
     def _move_documents(self, documents: List[Document], target_box: str):
         """
         Verschiebt Dokumente sofort in eine andere Box (ohne Bestätigung).
+        
+        Wenn Dokumente aus der Eingangsbox manuell verschoben werden,
+        werden sie automatisch von der Verarbeitung ausgeschlossen
+        (processing_status='manual_excluded').
         
         Zeigt eine Toast-Benachrichtigung mit Rückgängig-Option.
         """
@@ -2197,8 +3920,15 @@ class ArchiveBoxesView(QWidget):
         # Daten fuer Undo speichern
         self._last_move_data = (doc_ids, original_boxes, target_box)
         
+        # Wenn aus Eingangsbox manuell verschoben: Von Verarbeitung ausschliessen
+        from_eingang = any(d.box_type == 'eingang' for d in documents)
+        processing_status = 'manual_excluded' if from_eingang else None
+        
         # Sofort verschieben (kein Bestätigungsdialog)
-        self._move_worker = DocumentMoveWorker(self.docs_api, doc_ids, target_box)
+        self._move_worker = DocumentMoveWorker(
+            self.docs_api, doc_ids, target_box,
+            processing_status=processing_status
+        )
         self._move_worker.finished.connect(lambda count: self._on_move_finished(count, target_name, len(documents)))
         self._move_worker.error.connect(self._on_move_error)
         self._register_worker(self._move_worker)
@@ -2208,6 +3938,9 @@ class ArchiveBoxesView(QWidget):
         """Callback nach Verschieben - zeigt Toast statt MessageBox."""
         from i18n.de import MOVE_SUCCESS_SINGLE, MOVE_SUCCESS_MULTI, MOVE_UNDO
         
+        # Historie-Cache invalidieren (betroffene Dokumente wurden verschoben)
+        self._history_panel.invalidate_cache()
+        
         # Toast-Nachricht erstellen
         if total == 1:
             message = MOVE_SUCCESS_SINGLE.format(box=target_name)
@@ -2215,14 +3948,14 @@ class ArchiveBoxesView(QWidget):
             message = MOVE_SUCCESS_MULTI.format(count=count, box=target_name)
         
         # Toast anzeigen mit Undo-Button (5 Sekunden)
-        self._toast.show_message(message, action_text=MOVE_UNDO, duration_ms=5000)
+        self._toast_manager.show_success(message, action_text=MOVE_UNDO, action_callback=self._on_toast_undo_clicked, duration_ms=5000)
         
         # Leichtgewichtiger Refresh - nur Stats und aktuelle Ansicht
         self._refresh_after_move()
     
     def _on_move_error(self, error: str):
         """Callback bei Verschiebe-Fehler."""
-        QMessageBox.warning(self, "Fehler", f"Verschieben fehlgeschlagen:\n{error}")
+        self._toast_manager.show_error(f"Verschieben fehlgeschlagen:\n{error}")
         # Undo-Daten loeschen bei Fehler
         self._last_move_data = None
     
@@ -2261,13 +3994,12 @@ class ArchiveBoxesView(QWidget):
                 self.docs_api.archive_documents(doc_ids)
             
             # Cache invalidieren
-            for box_type in affected_boxes:
-                self._cache.invalidate_documents(box_type)
+            self._cache.invalidate_documents()
             
             # Refresh
             self._refresh_stats()
             self._refresh_documents(force_refresh=True)
-            self._toast.show_message(MOVE_UNDONE)
+            self._toast_manager.show_success(MOVE_UNDONE)
             return
         
         # Move-Undo pruefen
@@ -2296,18 +4028,18 @@ class ArchiveBoxesView(QWidget):
         
         # Leichtgewichtiger Refresh
         self._refresh_after_move()
-        self._toast.show_message(MOVE_UNDONE)
+        self._toast_manager.show_success(MOVE_UNDONE)
     
     def _preview_selected(self):
         """Zeigt Vorschau fuer ausgewaehltes Dokument."""
         selected_docs = self._get_selected_documents()
         
         if not selected_docs:
-            QMessageBox.information(self, "Info", "Bitte ein Dokument auswaehlen.")
+            self._toast_manager.show_info("Bitte ein Dokument auswaehlen.")
             return
         
         if len(selected_docs) > 1:
-            QMessageBox.information(self, "Info", "Bitte nur ein Dokument fuer die Vorschau auswaehlen.")
+            self._toast_manager.show_info("Bitte nur ein Dokument fuer die Vorschau auswaehlen.")
             return
         
         doc = selected_docs[0]
@@ -2316,33 +4048,142 @@ class ArchiveBoxesView(QWidget):
             self._preview_document(doc)
         elif doc.is_gdv:
             self._open_in_gdv_editor(doc)
+        elif self._is_spreadsheet(doc):
+            self._preview_spreadsheet(doc)
         else:
-            QMessageBox.information(
-                self,
-                "Keine Vorschau",
-                f"Fuer '{doc.original_filename}' ist keine Vorschau verfuegbar."
-            )
+            from i18n.de import SPREADSHEET_PREVIEW_NOT_AVAILABLE
+            self._toast_manager.show_info(SPREADSHEET_PREVIEW_NOT_AVAILABLE.format(filename=doc.original_filename))
     
     def _preview_document(self, doc: Document):
         """Zeigt PDF-Vorschau."""
-        temp_dir = tempfile.mkdtemp(prefix='bipro_preview_')
+        self._start_preview_download(doc, preview_kind="pdf")
+    
+    def _preview_spreadsheet(self, doc: Document):
+        """Zeigt Tabellen-Vorschau fuer CSV/Excel-Dateien."""
+        self._start_preview_download(doc, preview_kind="spreadsheet")
+
+    def _start_preview_download(self, doc: Document, preview_kind: str):
+        """
+        Startet den Vorschau-Download im Hintergrund.
         
+        Optimierungen:
+        - Filename wird direkt uebergeben (spart get_document() API-Call)
+        - Persistenter Cache: Gleiche Datei wird nur 1x heruntergeladen
+        - Cache-Hit: Kein Progress-Dialog, instant Anzeige
+        """
+        if hasattr(self, '_preview_worker') and self._preview_worker:
+            if not isValid(self._preview_worker):
+                self._preview_worker = None
+            elif self._preview_worker.isRunning():
+                return
+        
+        self._preview_cancelled = False
+        self._preview_doc = doc
+        self._preview_kind = preview_kind
+        
+        # Schnell-Check: Datei bereits im Cache?
+        cached_path = os.path.join(self._preview_cache_dir, f"{doc.id}_{doc.original_filename}")
+        if os.path.exists(cached_path) and os.path.getsize(cached_path) > 0:
+            logger.info(f"Vorschau instant aus Cache: {doc.original_filename}")
+            self._on_preview_download_finished(cached_path)
+            return
+        
+        # Nicht im Cache -> Download mit Progress-Dialog
         progress = QProgressDialog("Lade Vorschau...", "Abbrechen", 0, 0, self)
         progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.canceled.connect(self._on_preview_download_cancelled)
         progress.show()
+        self._preview_progress = progress
         
-        try:
-            result = self.docs_api.download(doc.id, temp_dir)
-            progress.close()
-            
-            if result and os.path.exists(result):
-                viewer = PDFViewerDialog(result, f"Vorschau: {doc.original_filename}", self)
+        self._preview_worker = PreviewDownloadWorker(
+            self.docs_api, doc.id, self._preview_cache_dir,
+            filename=doc.original_filename,
+            cache_dir=self._preview_cache_dir
+        )
+        self._preview_worker.download_finished.connect(self._on_preview_download_finished)
+        self._preview_worker.download_error.connect(self._on_preview_download_error)
+        self._register_worker(self._preview_worker)
+        self._preview_worker.start()
+
+    def _on_preview_download_cancelled(self):
+        """Callback wenn Vorschau-Download abgebrochen wurde."""
+        self._preview_cancelled = True
+        if hasattr(self, '_preview_worker') and self._preview_worker:
+            if isValid(self._preview_worker) and self._preview_worker.isRunning():
+                if hasattr(self._preview_worker, 'cancel'):
+                    self._preview_worker.cancel()
+        if hasattr(self, '_preview_progress') and self._preview_progress:
+            self._preview_progress.close()
+
+    def _on_preview_download_finished(self, result):
+        """Callback wenn Vorschau-Download fertig ist."""
+        # WICHTIG: Cancelled-Flag VOR close() pruefen, weil close() 
+        # das canceled-Signal emittiert und den Flag setzen wuerde
+        was_cancelled = getattr(self, '_preview_cancelled', False)
+        if hasattr(self, '_preview_progress') and self._preview_progress:
+            self._preview_progress.blockSignals(True)
+            self._preview_progress.close()
+            self._preview_progress = None
+        
+        if was_cancelled:
+            return
+        
+        if result and os.path.exists(result):
+            if getattr(self, '_preview_kind', '') == "pdf":
+                doc = getattr(self, '_preview_doc', None)
+                viewer = PDFViewerDialog(
+                    result,
+                    f"Vorschau: {self._preview_doc.original_filename}",
+                    self,
+                    doc_id=doc.id if doc else None,
+                    docs_api=self.docs_api,
+                    editable=True
+                )
+                viewer.pdf_saved.connect(self._on_pdf_saved)
                 viewer.exec()
+            elif getattr(self, '_preview_kind', '') == "spreadsheet":
+                from i18n.de import SPREADSHEET_PREVIEW_TITLE
+                title = SPREADSHEET_PREVIEW_TITLE.format(filename=self._preview_doc.original_filename)
+                viewer = SpreadsheetViewerDialog(result, title, self)
+                viewer.exec()
+        else:
+            if getattr(self, '_preview_kind', '') == "spreadsheet":
+                self._toast_manager.show_error("Datei konnte nicht geladen werden.")
             else:
-                QMessageBox.warning(self, "Fehler", "PDF konnte nicht geladen werden.")
-        except Exception as e:
-            progress.close()
-            QMessageBox.warning(self, "Fehler", f"Vorschau fehlgeschlagen:\n{e}")
+                self._toast_manager.show_error("PDF konnte nicht geladen werden.")
+
+    def _on_preview_download_error(self, error: str):
+        """Callback bei Vorschau-Downloadfehler."""
+        if hasattr(self, '_preview_progress') and self._preview_progress:
+            self._preview_progress.close()
+        if self._preview_cancelled:
+            return
+        self._toast_manager.show_error(f"Vorschau fehlgeschlagen:\n{error}")
+    
+    def _on_pdf_saved(self, doc_id: int):
+        """Callback wenn ein PDF im Editor gespeichert wurde."""
+        from i18n.de import PDF_EDIT_SAVE_SUCCESS
+        
+        # Vorschau-Cache fuer dieses Dokument invalidieren
+        if self._preview_cache_dir:
+            import glob
+            cache_pattern = os.path.join(self._preview_cache_dir, f"{doc_id}_*")
+            for cached_file in glob.glob(cache_pattern):
+                try:
+                    os.unlink(cached_file)
+                    logger.info(f"Vorschau-Cache invalidiert: {cached_file}")
+                except Exception:
+                    pass
+        
+        # Historie-Cache invalidieren
+        if hasattr(self, '_history_panel'):
+            self._history_panel.invalidate_cache(doc_id)
+        
+        # Toast
+        self._toast_manager.show_success(PDF_EDIT_SAVE_SUCCESS)
+        
+        # Dokumente-Cache auch refreshen (file_size/content_hash haben sich geaendert)
+        self._refresh_all(force_refresh=True)
     
     def _open_in_gdv_editor(self, doc: Document):
         """Oeffnet GDV-Dokument im Editor."""
@@ -2376,7 +4217,7 @@ class ArchiveBoxesView(QWidget):
         self._upload_progress.setMinimumDuration(0)
         self._upload_progress.show()
         
-        self._upload_results = {'erfolge': [], 'fehler': []}
+        self._upload_results = {'erfolge': [], 'fehler': [], 'duplikate': 0}
         
         self._multi_upload_worker = MultiUploadWorker(
             self.docs_api, 
@@ -2393,12 +4234,17 @@ class ArchiveBoxesView(QWidget):
     def _on_multi_upload_progress(self, current: int, total: int, filename: str):
         """Aktualisiert Progress-Dialog."""
         if hasattr(self, '_upload_progress') and self._upload_progress:
+            # Maximum dynamisch anpassen (ZIP/MSG koennen mehr Dateien liefern)
+            if total != self._upload_progress.maximum():
+                self._upload_progress.setMaximum(total)
             self._upload_progress.setValue(current)
             self._upload_progress.setLabelText(f"Lade hoch ({current}/{total}):\n{filename}")
     
     def _on_file_uploaded(self, filename: str, doc: Document):
         """Callback wenn eine Datei erfolgreich hochgeladen wurde."""
         self._upload_results['erfolge'].append(filename)
+        if doc and hasattr(doc, 'is_duplicate') and doc.is_duplicate:
+            self._upload_results['duplikate'] += 1
     
     def _on_file_upload_error(self, filename: str, error: str):
         """Callback bei Upload-Fehler einer Datei."""
@@ -2409,25 +4255,15 @@ class ArchiveBoxesView(QWidget):
         if hasattr(self, '_upload_progress') and self._upload_progress:
             self._upload_progress.close()
         
-        # Zusammenfassung anzeigen
-        if fehler == 0:
-            QMessageBox.information(
-                self,
-                "Upload abgeschlossen",
-                f"{erfolge} Dokument(e) erfolgreich in die Eingangsbox hochgeladen."
-            )
-        else:
-            fehler_text = "\n".join(self._upload_results['fehler'][:5])
-            if len(self._upload_results['fehler']) > 5:
-                fehler_text += f"\n... und {len(self._upload_results['fehler']) - 5} weitere"
-            
-            QMessageBox.warning(
-                self,
-                "Upload abgeschlossen",
-                f"Erfolgreich: {erfolge}\nFehlgeschlagen: {fehler}\n\nFehler:\n{fehler_text}"
-            )
-        
         self._refresh_all()
+        
+        # Duplikat-Toast anzeigen wenn Duplikate erkannt wurden
+        dup_count = self._upload_results.get('duplikate', 0)
+        if dup_count > 0:
+            from i18n.de import DUPLICATE_DETECTED_TOAST
+            self._toast_manager.show_warning(
+                DUPLICATE_DETECTED_TOAST.format(count=dup_count)
+            )
         
         # Auto-Refresh wieder aktivieren
         self._cache.resume_auto_refresh()
@@ -2441,7 +4277,7 @@ class ArchiveBoxesView(QWidget):
         if not target_dir:
             return
         
-        result = self.docs_api.download(doc.id, target_dir)
+        result = self.docs_api.download(doc.id, target_dir, filename_override=doc.original_filename)
         
         if result:
             # Auto-Archivierung: Nur wenn aus archivierungsfaehiger Box und nicht bereits archiviert
@@ -2454,23 +4290,23 @@ class ArchiveBoxesView(QWidget):
                         'action': 'archive'
                     }
                     # Cache und Stats aktualisieren
-                    self._cache.invalidate_documents(doc.box_type)
+                    self._cache.invalidate_documents()
                     self._refresh_stats()
                     self._refresh_documents(force_refresh=True)
                     # Toast mit Rueckgaengig
-                    self._toast.show_message(ARCHIVE_DOWNLOAD_NOTE, MOVE_UNDO)
+                    self._toast_manager.show_success(ARCHIVE_DOWNLOAD_NOTE, action_text=MOVE_UNDO, action_callback=self._on_toast_undo_clicked)
             else:
                 # Nur Download-Erfolg ohne Archivierung
-                self._toast.show_message("Download erfolgreich")
+                self._toast_manager.show_success("Download erfolgreich")
         else:
-            self._toast.show_message("Download fehlgeschlagen")
+            self._toast_manager.show_error("Download fehlgeschlagen")
     
     def _download_selected(self):
         """Ladet ausgewaehlte Dokumente im Hintergrund herunter."""
         selected_docs = self._get_selected_documents()
         
         if not selected_docs:
-            QMessageBox.information(self, "Info", "Bitte mindestens ein Dokument auswaehlen.")
+            self._toast_manager.show_info("Bitte mindestens ein Dokument auswaehlen.")
             return
         
         target_dir = QFileDialog.getExistingDirectory(
@@ -2550,14 +4386,16 @@ class ArchiveBoxesView(QWidget):
         for doc_id in erfolgreiche_doc_ids:
             doc = docs_map.get(doc_id)
             if doc and doc.box_type in ARCHIVABLE_BOXES and not doc.is_archived:
-                if self.docs_api.archive_document(doc_id):
-                    archived_count += 1
-                    archived_doc_ids.append(doc_id)
-                    affected_boxes.add(doc.box_type)
+                archived_doc_ids.append(doc_id)
+                affected_boxes.add(doc.box_type)
         
-        # Cache fuer betroffene Boxen invalidieren
-        for box_type in affected_boxes:
-            self._cache.invalidate_documents(box_type)
+        # Bulk-Archivierung (1 API-Call statt N)
+        if archived_doc_ids:
+            archived_count = self.docs_api.archive_documents(archived_doc_ids)
+        
+        # Cache invalidieren
+        if archived_count > 0:
+            self._cache.invalidate_documents()
         
         # Stats und Anzeige aktualisieren wenn archiviert wurde
         if archived_count > 0:
@@ -2576,21 +4414,272 @@ class ArchiveBoxesView(QWidget):
         # Toast anzeigen (still, kein Dialog)
         if fehler == 0:
             if archived_count > 0:
-                self._toast.show_message(
+                self._toast_manager.show_success(
                     ARCHIVE_DOWNLOAD_NOTE_MULTI.format(count=archived_count),
-                    MOVE_UNDO
+                    action_text=MOVE_UNDO, action_callback=self._on_toast_undo_clicked
                 )
             else:
-                self._toast.show_message(f"{erfolge} Dokument(e) heruntergeladen")
+                self._toast_manager.show_success(f"{erfolge} Dokument(e) heruntergeladen")
         else:
             # Bei Fehlern nur Toast mit Zusammenfassung
-            self._toast.show_message(f"{erfolge} heruntergeladen, {fehler} fehlgeschlagen")
+            self._toast_manager.show_warning(f"{erfolge} heruntergeladen, {fehler} fehlgeschlagen")
         
         # Aufraeumen
         self._download_documents_map = {}
     
+    # ========================================
+    # Box-Download (ganze Box als ZIP/Ordner)
+    # ========================================
+    
+    def _download_box(self, box_type: str, mode: str):
+        """
+        Laedt alle nicht-archivierten Dokumente einer Box herunter.
+        
+        Args:
+            box_type: Box-Typ ('gdv', 'courtage', etc.)
+            mode: 'zip' oder 'folder'
+        """
+        from i18n.de import (
+            BOX_DOWNLOAD_EMPTY, BOX_DOWNLOAD_CHOOSE_ZIP,
+            BOX_DOWNLOAD_CHOOSE_FOLDER, BOX_DOWNLOAD_PROGRESS_TITLE
+        )
+        
+        box_name = BOX_DISPLAY_NAMES.get(box_type, box_type)
+        
+        # Pruefen ob Box leer ist
+        count = self.sidebar._stats.get_count(box_type)
+        if count == 0:
+            self._toast_manager.show_info(BOX_DOWNLOAD_EMPTY.format(box=box_name))
+            return
+        
+        # Zielpfad waehlen
+        if mode == 'zip':
+            # ZIP-Datei Speicherort waehlen
+            default_name = f"{box_name}.zip"
+            target_path, _ = QFileDialog.getSaveFileName(
+                self,
+                BOX_DOWNLOAD_CHOOSE_ZIP,
+                default_name,
+                "ZIP-Archiv (*.zip)"
+            )
+        else:
+            # Speicherort waehlen - Ordner mit Box-Name wird dort erstellt
+            parent_dir = QFileDialog.getExistingDirectory(
+                self,
+                BOX_DOWNLOAD_CHOOSE_FOLDER.format(box=box_name),
+                ""
+            )
+            if parent_dir:
+                target_path = os.path.join(parent_dir, box_name)
+            else:
+                target_path = ""
+        
+        if not target_path:
+            return
+        
+        # Auto-Refresh pausieren
+        self._cache.pause_auto_refresh()
+        
+        # Progress-Dialog
+        self._box_download_progress = QProgressDialog(
+            f"Lade {box_name} herunter...",
+            "Abbrechen",
+            0, count,
+            self
+        )
+        self._box_download_progress.setWindowModality(Qt.WindowModality.WindowModal)
+        self._box_download_progress.setWindowTitle(BOX_DOWNLOAD_PROGRESS_TITLE)
+        self._box_download_progress.setMinimumDuration(0)
+        self._box_download_progress.canceled.connect(self._on_box_download_cancelled)
+        self._box_download_progress.show()
+        
+        # Box-Typ speichern fuer Archivierung
+        self._box_download_box_type = box_type
+        
+        # Worker starten
+        self._box_download_worker = BoxDownloadWorker(
+            self.docs_api,
+            box_type,
+            target_path,
+            mode
+        )
+        self._box_download_worker.progress.connect(self._on_box_download_progress)
+        self._box_download_worker.status.connect(self._on_box_download_status)
+        self._box_download_worker.finished.connect(self._on_box_download_finished)
+        self._box_download_worker.error.connect(self._on_box_download_error)
+        self._register_worker(self._box_download_worker)
+        self._box_download_worker.start()
+    
+    def _on_box_download_cancelled(self):
+        """Wird aufgerufen wenn der Box-Download abgebrochen wird."""
+        if hasattr(self, '_box_download_worker') and self._box_download_worker:
+            self._box_download_worker.cancel()
+    
+    def _on_box_download_progress(self, current: int, total: int, filename: str):
+        """Aktualisiert den Box-Download-Progress-Dialog."""
+        if hasattr(self, '_box_download_progress') and self._box_download_progress:
+            self._box_download_progress.setMaximum(total)
+            self._box_download_progress.setValue(current)
+            self._box_download_progress.setLabelText(
+                f"Lade ({current}/{total}):\n{filename}"
+            )
+    
+    def _on_box_download_status(self, status_msg: str):
+        """Aktualisiert die Status-Meldung im Progress-Dialog."""
+        if hasattr(self, '_box_download_progress') and self._box_download_progress:
+            self._box_download_progress.setLabelText(status_msg)
+    
+    def _on_box_download_finished(self, erfolge: int, fehler: int, 
+                                   fehler_liste: list, erfolgreiche_doc_ids: list):
+        """Callback wenn der Box-Download abgeschlossen ist."""
+        from i18n.de import (
+            BOX_DOWNLOAD_SUCCESS_ZIP, BOX_DOWNLOAD_SUCCESS_FOLDER,
+            BOX_DOWNLOAD_PARTIAL, BOX_DOWNLOAD_ARCHIVED, MOVE_UNDO
+        )
+        
+        if hasattr(self, '_box_download_progress') and self._box_download_progress:
+            self._box_download_progress.close()
+        
+        box_type = getattr(self, '_box_download_box_type', '')
+        mode = 'zip'
+        if hasattr(self, '_box_download_worker') and self._box_download_worker:
+            mode = self._box_download_worker.mode
+        
+        # Auto-Archivierung: Alle erfolgreich heruntergeladenen Dokumente archivieren
+        archived_count = 0
+        archived_doc_ids = []
+        
+        if box_type in ARCHIVABLE_BOXES and erfolgreiche_doc_ids:
+            # Bulk-Archivierung (1 API-Call statt N)
+            archived_count = self.docs_api.archive_documents(erfolgreiche_doc_ids)
+            if archived_count > 0:
+                archived_doc_ids = erfolgreiche_doc_ids[:archived_count]
+        
+        # Cache invalidieren und Stats aktualisieren
+        if archived_count > 0:
+            self._cache.invalidate_documents()
+            
+            # Daten fuer Rueckgaengig speichern
+            self._last_archive_data = {
+                'doc_ids': archived_doc_ids,
+                'boxes': {box_type},
+                'action': 'archive'
+            }
+            
+            self._refresh_stats()
+            self._refresh_documents(force_refresh=True)
+        
+        # Auto-Refresh wieder aktivieren
+        self._cache.resume_auto_refresh()
+        
+        # Toast-Nachricht zusammenbauen
+        if fehler == 0:
+            if mode == 'zip':
+                msg = BOX_DOWNLOAD_SUCCESS_ZIP.format(count=erfolge)
+            else:
+                msg = BOX_DOWNLOAD_SUCCESS_FOLDER.format(count=erfolge)
+            
+            if archived_count > 0:
+                msg += " " + BOX_DOWNLOAD_ARCHIVED.format(count=archived_count)
+            
+            self._toast_manager.show_success(msg, action_text=MOVE_UNDO if archived_count > 0 else None, action_callback=self._on_toast_undo_clicked if archived_count > 0 else None)
+        else:
+            msg = BOX_DOWNLOAD_PARTIAL.format(success=erfolge, failed=fehler)
+            if archived_count > 0:
+                msg += " " + BOX_DOWNLOAD_ARCHIVED.format(count=archived_count)
+            self._toast_manager.show_warning(msg, action_text=MOVE_UNDO if archived_count > 0 else None, action_callback=self._on_toast_undo_clicked if archived_count > 0 else None)
+    
+    def _on_box_download_error(self, error: str):
+        """Callback bei Box-Download-Fehler."""
+        from i18n.de import BOX_DOWNLOAD_ERROR
+        
+        if hasattr(self, '_box_download_progress') and self._box_download_progress:
+            self._box_download_progress.close()
+        
+        # Auto-Refresh wieder aktivieren
+        self._cache.resume_auto_refresh()
+        
+        self._toast_manager.show_error(BOX_DOWNLOAD_ERROR.format(error=error))
+    
+    # ========================================
+    # Verarbeitungs-Ausschluss
+    # ========================================
+    
+    def _exclude_from_processing(self, documents: List[Document]):
+        """
+        Schliesst Dokumente von der automatischen Verarbeitung aus.
+        
+        Dokumente in der Eingangsbox werden nach 'sonstige' verschoben,
+        damit der Processor sie nicht mehr sieht (robust gegen Server-Caching).
+        """
+        from i18n.de import PROCESSING_EXCLUDED_TOAST, PROCESSING_EXCLUDED_MULTI
+        
+        if not documents:
+            return
+        
+        count = 0
+        affected_boxes = set()
+        
+        # Eingangsbox-Dokumente: Verschieben + Status setzen (atomar ueber move)
+        eingang_docs = [d for d in documents if d.box_type == 'eingang']
+        if eingang_docs:
+            eingang_ids = [d.id for d in eingang_docs]
+            moved = self.docs_api.move_documents(
+                eingang_ids, 'sonstige', 
+                processing_status='manual_excluded'
+            )
+            count += moved
+            affected_boxes.add('eingang')
+            affected_boxes.add('sonstige')
+        
+        # Andere Boxen: Nur Status setzen (sind ohnehin nicht in Eingangsbox)
+        other_docs = [d for d in documents if d.box_type != 'eingang']
+        for doc in other_docs:
+            if self.docs_api.update(doc.id, processing_status='manual_excluded'):
+                count += 1
+                affected_boxes.add(doc.box_type)
+        
+        if count > 0:
+            # Cache invalidieren und Anzeige aktualisieren
+            for box_type in affected_boxes:
+                self._cache.invalidate_documents(box_type)
+            self._refresh_stats()
+            self._refresh_documents(force_refresh=True)
+            
+            if count == 1:
+                self._toast_manager.show_info(PROCESSING_EXCLUDED_TOAST)
+            else:
+                self._toast_manager.show_info(PROCESSING_EXCLUDED_MULTI.format(count=count))
+    
+    def _include_for_processing(self, documents: List[Document]):
+        """Gibt Dokumente erneut fuer die Verarbeitung frei (zurueck in Eingangsbox)."""
+        from i18n.de import PROCESSING_INCLUDED_TOAST, PROCESSING_INCLUDED_MULTI
+        
+        if not documents:
+            return
+        
+        doc_ids = [d.id for d in documents]
+        affected_boxes = set(d.box_type for d in documents)
+        
+        # Zurueck in Eingangsbox verschieben mit Status 'pending'
+        moved = self.docs_api.move_documents(doc_ids, 'eingang', processing_status='pending')
+        
+        if moved > 0:
+            # Cache invalidieren
+            affected_boxes.add('eingang')
+            for box_type in affected_boxes:
+                self._cache.invalidate_documents(box_type)
+            
+            self._refresh_stats()
+            self._refresh_documents(force_refresh=True)
+            
+            if moved == 1:
+                self._toast_manager.show_success(PROCESSING_INCLUDED_TOAST)
+            else:
+                self._toast_manager.show_success(PROCESSING_INCLUDED_MULTI.format(count=moved))
+    
     def _archive_documents(self, documents: List[Document]):
-        """Archiviert die ausgewaehlten Dokumente."""
+        """Archiviert die ausgewaehlten Dokumente (Bulk-API)."""
         from i18n.de import ARCHIVE_SUCCESS_SINGLE, ARCHIVE_SUCCESS_MULTI, MOVE_UNDO
         
         if not documents:
@@ -2599,7 +4688,7 @@ class ArchiveBoxesView(QWidget):
         doc_ids = [d.id for d in documents]
         affected_boxes = set(d.box_type for d in documents)
         
-        # Archivieren
+        # Archivieren (Bulk: 1 API-Call statt N)
         archived_count = self.docs_api.archive_documents(doc_ids)
         
         if archived_count > 0:
@@ -2610,9 +4699,8 @@ class ArchiveBoxesView(QWidget):
                 'action': 'archive'
             }
             
-            # Cache fuer betroffene Boxen invalidieren
-            for box_type in affected_boxes:
-                self._cache.invalidate_documents(box_type)
+            # Cache invalidieren
+            self._cache.invalidate_documents()
             
             # Stats und Anzeige aktualisieren
             self._refresh_stats()
@@ -2620,15 +4708,15 @@ class ArchiveBoxesView(QWidget):
             
             # Toast mit Rueckgaengig-Option
             if archived_count == 1:
-                self._toast.show_message(ARCHIVE_SUCCESS_SINGLE, MOVE_UNDO)
+                self._toast_manager.show_success(ARCHIVE_SUCCESS_SINGLE, action_text=MOVE_UNDO, action_callback=self._on_toast_undo_clicked)
             else:
-                self._toast.show_message(
+                self._toast_manager.show_success(
                     ARCHIVE_SUCCESS_MULTI.format(count=archived_count),
-                    MOVE_UNDO
+                    action_text=MOVE_UNDO, action_callback=self._on_toast_undo_clicked
                 )
     
     def _unarchive_documents(self, documents: List[Document]):
-        """Entarchiviert die ausgewaehlten Dokumente."""
+        """Entarchiviert die ausgewaehlten Dokumente (Bulk-API)."""
         from i18n.de import UNARCHIVE_SUCCESS_SINGLE, UNARCHIVE_SUCCESS_MULTI, MOVE_UNDO
         
         if not documents:
@@ -2637,7 +4725,7 @@ class ArchiveBoxesView(QWidget):
         doc_ids = [d.id for d in documents]
         affected_boxes = set(d.box_type for d in documents)
         
-        # Entarchivieren
+        # Entarchivieren (Bulk: 1 API-Call statt N)
         unarchived_count = self.docs_api.unarchive_documents(doc_ids)
         
         if unarchived_count > 0:
@@ -2648,9 +4736,8 @@ class ArchiveBoxesView(QWidget):
                 'action': 'unarchive'
             }
             
-            # Cache fuer betroffene Boxen invalidieren
-            for box_type in affected_boxes:
-                self._cache.invalidate_documents(box_type)
+            # Cache invalidieren
+            self._cache.invalidate_documents()
             
             # Stats und Anzeige aktualisieren
             self._refresh_stats()
@@ -2658,11 +4745,11 @@ class ArchiveBoxesView(QWidget):
             
             # Toast mit Rueckgaengig-Option
             if unarchived_count == 1:
-                self._toast.show_message(UNARCHIVE_SUCCESS_SINGLE, MOVE_UNDO)
+                self._toast_manager.show_success(UNARCHIVE_SUCCESS_SINGLE, action_text=MOVE_UNDO, action_callback=self._on_toast_undo_clicked)
             else:
-                self._toast.show_message(
+                self._toast_manager.show_success(
                     UNARCHIVE_SUCCESS_MULTI.format(count=unarchived_count),
-                    MOVE_UNDO
+                    action_text=MOVE_UNDO, action_callback=self._on_toast_undo_clicked
                 )
     
     def _delete_document(self, doc: Document):
@@ -2680,10 +4767,11 @@ class ArchiveBoxesView(QWidget):
                 self._refresh_all()
             else:
                 # Nur bei Fehler eine Meldung anzeigen
-                QMessageBox.warning(self, "Fehler", "Loeschen fehlgeschlagen.")
+                self._toast_manager.show_error("Loeschen fehlgeschlagen.")
     
     def _delete_selected(self):
-        """Loescht ausgewaehlte Dokumente."""
+        """Loescht ausgewaehlte Dokumente (Bulk-API: 1 Request statt N)."""
+        from i18n import de as texts
         selected_docs = self._get_selected_documents()
         
         if not selected_docs:
@@ -2691,8 +4779,8 @@ class ArchiveBoxesView(QWidget):
         
         reply = QMessageBox.question(
             self,
-            "Loeschen bestaetigen",
-            f"Wirklich {len(selected_docs)} Dokument(e) loeschen?",
+            texts.CONFIRM_DELETE_TITLE,
+            texts.CONFIRM_DELETE_MESSAGE.format(count=len(selected_docs)),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         )
         
@@ -2703,36 +4791,11 @@ class ArchiveBoxesView(QWidget):
         self._cache.pause_auto_refresh()
         
         try:
-            # Progress-Dialog mit Fortschrittsanzeige
-            progress = QProgressDialog(
-                "Loesche Dokumente...",
-                "Abbrechen",
-                0, len(selected_docs),
-                self
-            )
-            progress.setWindowModality(Qt.WindowModality.WindowModal)
-            progress.setAutoClose(True)  # Automatisch schließen wenn fertig
-            progress.setMinimumDuration(0)  # Sofort anzeigen
+            doc_ids = [doc.id for doc in selected_docs]
+            deleted = self.docs_api.delete_documents(doc_ids)
+            logger.info(f"Bulk-Delete: {deleted}/{len(doc_ids)} Dokument(e) geloescht")
             
-            success_count = 0
-            for i, doc in enumerate(selected_docs):
-                # Abbruch pruefen
-                if progress.wasCanceled():
-                    break
-                
-                # Fortschritt aktualisieren
-                progress.setValue(i)
-                progress.setLabelText(f"Loesche {i+1}/{len(selected_docs)}: {doc.original_filename}")
-                QApplication.processEvents()  # UI aktualisieren
-                
-                # Dokument loeschen
-                if self.docs_api.delete(doc.id):
-                    success_count += 1
-            
-            # Abschluss
-            progress.setValue(len(selected_docs))
-            
-            # Daten neu laden (kein Pop-up nach Abschluss!)
+            # Daten neu laden
             self._refresh_all()
         
         finally:
@@ -2783,7 +4846,7 @@ class ArchiveBoxesView(QWidget):
         # Leeren Namen pruefen
         new_name_without_ext = new_name_without_ext.strip()
         if not new_name_without_ext:
-            QMessageBox.warning(self, RENAME_DOCUMENT, RENAME_EMPTY_NAME)
+            self._toast_manager.show_warning(RENAME_EMPTY_NAME)
             return
         
         # Vollstaendigen Namen mit urspruenglicher Endung zusammensetzen
@@ -2797,10 +4860,18 @@ class ArchiveBoxesView(QWidget):
         success = self.docs_api.rename_document(doc.id, new_name, mark_ai_renamed=False)
         
         if success:
+            # Wenn in Eingangsbox umbenannt: Von Verarbeitung ausschliessen
+            if doc.box_type == 'eingang':
+                self.docs_api.update(doc.id, processing_status='manual_excluded')
+                logger.info(
+                    f"Dokument {doc.id} manuell umbenannt in Eingangsbox "
+                    f"-> processing_status='manual_excluded'"
+                )
+            
             # Tabelle aktualisieren
             self._refresh_all(force_refresh=True)
         else:
-            QMessageBox.warning(self, RENAME_DOCUMENT, RENAME_ERROR)
+            self._toast_manager.show_error(RENAME_ERROR)
     
     # ========================================
     # KI-Benennung
@@ -2815,11 +4886,7 @@ class ArchiveBoxesView(QWidget):
             all_unrenamed = [d for d in self._documents if d.is_pdf and not d.ai_renamed]
             
             if not all_unrenamed:
-                QMessageBox.information(
-                    self,
-                    "KI-Benennung",
-                    "Keine PDFs ohne KI-Benennung gefunden."
-                )
+                self._toast_manager.show_info("Keine PDFs ohne KI-Benennung gefunden.")
                 return
             
             reply = QMessageBox.question(
@@ -2902,18 +4969,9 @@ class ArchiveBoxesView(QWidget):
         failed_count = len(results) - success_count
         
         if failed_count == 0:
-            QMessageBox.information(
-                self,
-                "KI-Benennung abgeschlossen",
-                f"Alle {success_count} Dokument(e) erfolgreich umbenannt."
-            )
+            self._toast_manager.show_success(f"Alle {success_count} Dokument(e) erfolgreich umbenannt.")
         else:
-            QMessageBox.warning(
-                self,
-                "KI-Benennung mit Fehlern",
-                f"Erfolgreich: {success_count}\n"
-                f"Fehlgeschlagen: {failed_count}"
-            )
+            self._toast_manager.show_warning(f"Erfolgreich: {success_count}\nFehlgeschlagen: {failed_count}")
         
         self._refresh_all()
     
@@ -2925,11 +4983,7 @@ class ArchiveBoxesView(QWidget):
         # Auto-Refresh wieder aktivieren
         self._cache.resume_auto_refresh()
         
-        QMessageBox.critical(
-            self,
-            "KI-Benennung Fehler",
-            f"Ein Fehler ist aufgetreten:\n\n{error}"
-        )
+        self._toast_manager.show_error(f"Ein Fehler ist aufgetreten:\n\n{error}")
     
     # ========================================
     # Automatische Verarbeitung
@@ -2939,19 +4993,12 @@ class ArchiveBoxesView(QWidget):
         """Startet die automatische Verarbeitung."""
         # Pruefen ob Dokumente in der Eingangsbox sind
         if self._stats.eingang == 0:
-            QMessageBox.information(
-                self,
-                "Verarbeitung",
-                "Keine Dokumente in der Eingangsbox.\n\n"
-                "Laden Sie Dokumente hoch oder rufen Sie BiPRO-Lieferungen ab."
-            )
+            self._toast_manager.show_info("Keine Dokumente in der Eingangsbox.\nLaden Sie Dokumente hoch oder rufen Sie BiPRO-Lieferungen ab.")
             return
         
-        # Auto-Refresh pausieren während der Verarbeitung
+        # Auto-Refresh pausieren während der Verarbeitung (BUG-0006 Fix: self._cache statt neue Instanz)
         try:
-            from services.data_cache import DataCacheService
-            cache = DataCacheService()
-            cache.pause_auto_refresh()
+            self._cache.pause_auto_refresh()
             logger.info("Auto-Refresh für Dokumentenverarbeitung pausiert")
         except Exception as e:
             logger.warning(f"Auto-Refresh pausieren fehlgeschlagen: {e}")
@@ -2980,27 +5027,91 @@ class ArchiveBoxesView(QWidget):
     
     def _on_processing_finished(self, batch_result):
         """Callback wenn Verarbeitung fertig."""
-        # Auto-Refresh wieder aktivieren
+        # Auto-Refresh wieder aktivieren (BUG-0006 Fix: self._cache statt neue Instanz)
         try:
-            from services.data_cache import DataCacheService
-            cache = DataCacheService()
-            cache.resume_auto_refresh()
+            self._cache.resume_auto_refresh()
             logger.info("Auto-Refresh nach Dokumentenverarbeitung fortgesetzt")
         except Exception as e:
             logger.warning(f"Auto-Refresh fortsetzen fehlgeschlagen: {e}")
         
         # Fazit im Overlay anzeigen (kein Popup!)
-        # batch_result ist jetzt BatchProcessingResult mit Kosten-Informationen
         if hasattr(self, '_processing_overlay'):
             self._processing_overlay.show_completion(batch_result, auto_close_seconds=10)
+        
+        # Batch-Abschluss in DB loggen (ohne Kosten)
+        history_entry_id = None
+        if batch_result.total_documents > 0:
+            try:
+                from services.document_processor import DocumentProcessor
+                processor = DocumentProcessor(self.api_client)
+                history_entry_id = processor.log_batch_complete(batch_result)
+            except Exception as e:
+                logger.warning(f"Batch-Logging fehlgeschlagen: {e}")
+        
+        # Verzoegerten Kosten-Check starten (90 Sekunden warten)
+        if batch_result.credits_before is not None and history_entry_id:
+            self._start_delayed_cost_check(batch_result, history_entry_id)
+    
+    def _start_delayed_cost_check(self, batch_result, history_entry_id: int):
+        """
+        Startet den verzoegerten Kosten-Check.
+        
+        OpenRouter aktualisiert das Guthaben nicht sofort nach API-Calls.
+        Daher warten wir 45 Sekunden, bevor wir das neue Guthaben abrufen
+        und die Kosten berechnen.
+        """
+        from i18n import de as texts
+        
+        delay_seconds = 45  # 45 Sekunden Verzoegerung
+        
+        logger.info(f"Starte verzoegerten Kosten-Check in {delay_seconds}s")
+        
+        self._delayed_cost_worker = DelayedCostWorker(
+            api_client=self.api_client,
+            batch_result=batch_result,
+            history_entry_id=history_entry_id,
+            delay_seconds=delay_seconds
+        )
+        self._delayed_cost_worker.countdown.connect(self._on_cost_countdown)
+        self._delayed_cost_worker.finished.connect(self._on_delayed_cost_finished)
+        self._register_worker(self._delayed_cost_worker)
+        self._delayed_cost_worker.start()
+    
+    def _on_cost_countdown(self, remaining: int):
+        """Aktualisiert den Credits-Label mit Countdown."""
+        from i18n import de as texts
+        
+        self.credits_label.setText(texts.COSTS_DELAYED_CHECK.format(seconds=remaining))
+        self.credits_label.setStyleSheet(f"""
+            color: {INFO};
+            font-size: {FONT_SIZE_CAPTION};
+            font-family: {FONT_BODY};
+        """)
+    
+    def _on_delayed_cost_finished(self, cost_result):
+        """Callback wenn verzoegerter Kosten-Check fertig."""
+        from i18n import de as texts
+        
+        if cost_result:
+            total_cost = cost_result.get('total_cost_usd', 0)
+            cost_per_doc = cost_result.get('cost_per_document_usd', 0)
+            docs = cost_result.get('successful_documents', 0)
+            
+            logger.info(
+                f"Verzoegerte Kosten: ${total_cost:.4f} USD "
+                f"(${cost_per_doc:.6f}/Dok, {docs} Dokumente)"
+            )
+        else:
+            logger.warning("Verzoegerter Kosten-Check: Kein Ergebnis")
+        
+        # Credits aktualisieren (zeigt jetzt das aktuelle Guthaben)
+        self._refresh_credits()
     
     def _on_processing_error(self, error: str):
         """Callback bei Verarbeitungs-Fehler."""
         # Auto-Refresh wieder aktivieren
         try:
-            from services.data_cache import DataCacheService
-            cache = DataCacheService()
-            cache.resume_auto_refresh()
+            self._cache.resume_auto_refresh()
             logger.info("Auto-Refresh nach Verarbeitungs-Fehler fortgesetzt")
         except Exception as e:
             logger.warning(f"Auto-Refresh fortsetzen fehlgeschlagen: {e}")
@@ -3009,8 +5120,258 @@ class ArchiveBoxesView(QWidget):
         if hasattr(self, '_processing_overlay'):
             self._processing_overlay.hide()
         
-        QMessageBox.critical(
+        self._toast_manager.show_error(f"Ein Fehler ist aufgetreten:\n\n{error}")
+    
+    # ================================================================
+    # Smart!Scan Versand
+    # ================================================================
+    
+    def _smartscan_box(self, box_type: str):
+        """Smart!Scan fuer eine ganze Box starten."""
+        from i18n import de as texts
+        
+        # Permission pruefen
+        if not self.auth_api or not self.auth_api.current_user or not self.auth_api.current_user.has_permission('smartscan_send'):
+            self._toast_manager.show_warning(texts.PERM_DENIED_SMARTSCAN)
+            return
+        
+        # Alle Dokumente der Box holen (nicht archiviert)
+        docs = [d for d in self._documents if d.box_type == box_type and not d.is_archived]
+        if not docs:
+            return
+        
+        self._start_smartscan(docs, source_box=box_type)
+    
+    def _start_smartscan(self, docs, source_box: str = None):
+        """Startet SmartScan-Versand mit einfacher Bestaetigung (Einstellungen aus Admin-Config)."""
+        from i18n import de as texts
+        
+        # Permission pruefen
+        if not self.auth_api or not self.auth_api.current_user or not self.auth_api.current_user.has_permission('smartscan_send'):
+            self._toast_manager.show_warning(texts.PERM_DENIED_SMARTSCAN)
+            return
+        
+        # Einstellungen laden
+        try:
+            from api.smartscan import SmartScanAPI
+            smartscan_api = SmartScanAPI(self.api_client)
+            settings = smartscan_api.get_settings()
+        except Exception as e:
+            logger.error(f"SmartScan-Einstellungen konnten nicht geladen werden: {e}")
+            settings = {}
+        
+        if not settings or not int(settings.get('enabled', 0) or 0):
+            self._toast_manager.show_info(texts.SMARTSCAN_DISABLED)
+            return
+        
+        if not settings.get('target_address'):
+            self._toast_manager.show_info(texts.SMARTSCAN_NOT_CONFIGURED)
+            return
+        
+        # Einfache Bestaetigung (kein Dialog)
+        reply = QMessageBox.question(
             self,
-            "Verarbeitung Fehler",
-            f"Ein Fehler ist aufgetreten:\n\n{error}"
+            texts.SMARTSCAN_SEND_CONFIRM_TITLE,
+            texts.SMARTSCAN_SEND_CONFIRM.format(count=len(docs)),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        
+        # Alle Werte direkt aus den gespeicherten Admin-Einstellungen
+        mode = settings.get('send_mode_default', 'single')
+        archive = bool(int(settings.get('archive_after_send', 0) or 0))
+        recolor = bool(int(settings.get('recolor_after_send', 0) or 0))
+        recolor_color = settings.get('recolor_color') if recolor else None
+        
+        doc_ids = [d.id for d in docs]
+        
+        # Worker starten
+        self._smartscan_worker = SmartScanWorker(
+            self.api_client, mode=mode, document_ids=doc_ids,
+            box_type=source_box,
+            archive_after=archive, recolor_after=recolor,
+            recolor_color=recolor_color
+        )
+        self._smartscan_worker.progress.connect(self._on_smartscan_progress)
+        self._smartscan_worker.completed.connect(self._on_smartscan_finished)
+        self._smartscan_worker.error.connect(self._on_smartscan_error)
+        # QThread.finished fuer sauberes Cleanup (wenn run() zurueckkehrt)
+        self._smartscan_worker.finished.connect(self._cleanup_smartscan_worker)
+        
+        if hasattr(self, '_active_workers'):
+            self._active_workers.append(self._smartscan_worker)
+        
+        # Loading-Overlay anzeigen (einfache Statusanzeige fuer SmartScan)
+        self._show_loading(texts.SMARTSCAN_SENDING)
+        
+        self._smartscan_worker.start()
+    
+    def _on_smartscan_progress(self, current: int, total: int, status: str):
+        """Fortschritt des SmartScan-Versands."""
+        if hasattr(self, '_loading_overlay') and self._loading_overlay.isVisible():
+            self._loading_overlay.set_status(status)
+    
+    def _cleanup_smartscan_worker(self):
+        """Raeumt den SmartScan-Worker sauber auf (nicht-blockierend)."""
+        worker = getattr(self, '_smartscan_worker', None)
+        if worker is None:
+            return
+        try:
+            if worker in self._active_workers:
+                self._active_workers.remove(worker)
+            worker.deleteLater()
+        except RuntimeError:
+            pass
+        self._smartscan_worker = None
+    
+    def _on_smartscan_finished(self, job_id: int, result: dict):
+        """SmartScan-Versand abgeschlossen."""
+        from i18n import de as texts
+        
+        self._hide_loading()
+        
+        # Ergebnis anzeigen
+        sent = result.get('sent_emails', 0)
+        failed = result.get('failed_emails', 0)
+        total = result.get('total_documents', 0)
+        
+        if failed == 0:
+            msg = texts.SMARTSCAN_SEND_SUCCESS.format(count=sent if sent else total)
+            self._toast_manager.show_success(msg)
+        else:
+            msg = texts.SMARTSCAN_SEND_PARTIAL.format(sent=sent, total=total, failed=failed)
+            self._toast_manager.show_warning(msg)
+        
+        # Cache invalidieren und neu laden
+        self._refresh_all(force_refresh=True)
+    
+    def _on_smartscan_error(self, error: str):
+        """SmartScan-Versand Fehler."""
+        from i18n import de as texts
+        
+        self._hide_loading()
+        
+        self._toast_manager.show_error(texts.SMARTSCAN_SEND_ERROR.format(error=error))
+
+
+class _SmartScanDialog(QDialog):
+    """Dialog fuer SmartScan Versand-Konfiguration."""
+    
+    def __init__(self, parent, docs, settings: dict, source_box: str = None):
+        super().__init__(parent)
+        from i18n import de as texts
+        from ui.styles.tokens import (
+            get_button_primary_style, get_button_secondary_style,
+            DOCUMENT_DISPLAY_COLORS
+        )
+        
+        self._docs = docs
+        self._settings = settings
+        
+        self.setWindowTitle(texts.SMARTSCAN_SEND_TITLE)
+        self.setMinimumWidth(450)
+        self.setModal(True)
+        
+        layout = QVBoxLayout(self)
+        layout.setSpacing(12)
+        layout.setContentsMargins(20, 20, 20, 20)
+        
+        # Info: Empfaenger
+        target = settings.get('target_address', '')
+        info_label = QLabel(texts.SMARTSCAN_SEND_TARGET.format(address=target))
+        info_label.setStyleSheet("font-weight: bold;")
+        layout.addWidget(info_label)
+        
+        # Info: Anzahl Dokumente
+        doc_label = QLabel(texts.SMARTSCAN_SEND_DOCUMENTS.format(count=len(docs)))
+        layout.addWidget(doc_label)
+        
+        # Geschaetzte Groesse
+        total_bytes = sum(getattr(d, 'file_size', 0) or 0 for d in docs)
+        if total_bytes > 0:
+            if total_bytes > 1024 * 1024:
+                size_str = f"{total_bytes / (1024 * 1024):.1f} MB"
+            else:
+                size_str = f"{total_bytes / 1024:.1f} KB"
+            size_label = QLabel(texts.SMARTSCAN_SEND_ESTIMATED_SIZE.format(size=size_str))
+            layout.addWidget(size_label)
+        
+        # Betreff-Vorschau
+        subject = settings.get('subject_template', '')
+        from datetime import datetime
+        rendered_subject = subject.replace('{box}', source_box or '').replace(
+            '{date}', datetime.now().strftime('%d.%m.%Y')
+        ).replace('{count}', str(len(docs)))
+        if rendered_subject:
+            subject_label = QLabel(texts.SMARTSCAN_SEND_SUBJECT_PREVIEW.format(subject=rendered_subject))
+            subject_label.setWordWrap(True)
+            layout.addWidget(subject_label)
+        
+        layout.addSpacing(10)
+        
+        # Versandmodus
+        form = QFormLayout()
+        
+        self._mode_combo = QComboBox()
+        self._mode_combo.addItem(texts.SMARTSCAN_MODE_SINGLE, 'single')
+        self._mode_combo.addItem(texts.SMARTSCAN_MODE_BATCH, 'batch')
+        default_mode = settings.get('send_mode_default', 'single')
+        idx = self._mode_combo.findData(default_mode)
+        if idx >= 0:
+            self._mode_combo.setCurrentIndex(idx)
+        form.addRow(texts.SMARTSCAN_SEND_MODE_LABEL, self._mode_combo)
+        
+        layout.addLayout(form)
+        
+        # Post-Send Aktionen
+        self._archive_cb = QCheckBox(texts.SMARTSCAN_SEND_ARCHIVE)
+        self._archive_cb.setChecked(bool(settings.get('archive_after_send')))
+        layout.addWidget(self._archive_cb)
+        
+        recolor_layout = QHBoxLayout()
+        self._recolor_cb = QCheckBox(texts.SMARTSCAN_SEND_RECOLOR)
+        self._recolor_cb.setChecked(bool(settings.get('recolor_after_send')))
+        recolor_layout.addWidget(self._recolor_cb)
+        
+        self._recolor_combo = QComboBox()
+        for key, hex_color in DOCUMENT_DISPLAY_COLORS.items():
+            self._recolor_combo.addItem(key.capitalize(), key)
+        color = settings.get('recolor_color')
+        if color:
+            cidx = self._recolor_combo.findData(color)
+            if cidx >= 0:
+                self._recolor_combo.setCurrentIndex(cidx)
+        recolor_layout.addWidget(self._recolor_combo)
+        recolor_layout.addStretch()
+        layout.addLayout(recolor_layout)
+        
+        layout.addSpacing(10)
+        
+        # Buttons
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        
+        cancel_btn = QPushButton(texts.SMARTSCAN_SEND_CANCEL)
+        cancel_btn.setStyleSheet(get_button_secondary_style())
+        cancel_btn.clicked.connect(self.reject)
+        btn_layout.addWidget(cancel_btn)
+        
+        send_btn = QPushButton(texts.SMARTSCAN_SEND_BUTTON)
+        send_btn.setStyleSheet(get_button_primary_style())
+        send_btn.clicked.connect(self.accept)
+        btn_layout.addWidget(send_btn)
+        
+        layout.addLayout(btn_layout)
+    
+    def get_mode(self) -> str:
+        return self._mode_combo.currentData()
+    
+    def get_archive(self) -> bool:
+        return self._archive_cb.isChecked()
+    
+    def get_recolor(self) -> bool:
+        return self._recolor_cb.isChecked()
+    
+    def get_recolor_color(self) -> str:
+        return self._recolor_combo.currentData() if self._recolor_cb.isChecked() else None

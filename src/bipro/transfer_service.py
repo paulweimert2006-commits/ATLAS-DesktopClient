@@ -140,7 +140,6 @@ class BiPROCredentials:
 
 
 @dataclass
-@dataclass
 class ShipmentInfo:
     """Informationen über eine bereitstehende Lieferung."""
     shipment_id: str
@@ -548,6 +547,7 @@ class TransferServiceClient:
         logger.info(f"Hole STS-Token von: {self.sts_url}")
         
         pw_escaped = self._escape_xml(self.credentials.password)
+        user_escaped = self._escape_xml(self.credentials.username)
         
         # Consumer-ID loggen falls vorhanden
         if self.credentials.consumer_id:
@@ -564,7 +564,7 @@ class TransferServiceClient:
       <wsa:Action soapenv:actor="" soapenv:mustUnderstand="0" xmlns:wsa="http://schemas.xmlsoap.org/ws/2004/08/addressing/">http://schemas.xmlsoap.org/ws/2005/02/trust/RST/SCT</wsa:Action>
       <wsse:Security soapenv:actor="" soapenv:mustUnderstand="1" xmlns:wsse="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd">
          <wsse:UsernameToken xmlns:bipro="http://www.bipro.net/namespace">
-            <wsse:Username>{self.credentials.username}</wsse:Username>
+            <wsse:Username>{user_escaped}</wsse:Username>
             <wsse:Password Type="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-username-token-profile-1.0#PasswordText">{pw_escaped}</wsse:Password>
          </wsse:UsernameToken>
       </wsse:Security>
@@ -585,7 +585,7 @@ class TransferServiceClient:
    <soapenv:Header>
       <wsse:Security xmlns:wsse="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd">
          <wsse:UsernameToken>
-            <wsse:Username>{self.credentials.username}</wsse:Username>
+            <wsse:Username>{user_escaped}</wsse:Username>
             <wsse:Password Type="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-username-token-profile-1.0#PasswordText">{pw_escaped}</wsse:Password>
          </wsse:UsernameToken>
       </wsse:Security>
@@ -710,7 +710,7 @@ class TransferServiceClient:
             return f'''<soapenv:Header>
       <wsse:Security xmlns:wsse="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd">
          <wsc:SecurityContextToken xmlns:wsc="http://schemas.xmlsoap.org/ws/2005/02/sc">
-            <wsc:Identifier>{self._token}</wsc:Identifier>
+            <wsc:Identifier>{self._escape_xml(self._token) if self._token else ''}</wsc:Identifier>
          </wsc:SecurityContextToken>
       </wsse:Security>
    </soapenv:Header>'''
@@ -751,7 +751,7 @@ class TransferServiceClient:
         # Consumer-ID (nac: Namespace, nicht pm:!)
         consumer_id_xml = ""
         if self.credentials.consumer_id:
-            consumer_id_xml = f"<nac:ConsumerID>{self.credentials.consumer_id}</nac:ConsumerID>"
+            consumer_id_xml = f"<nac:ConsumerID>{self._escape_xml(self.credentials.consumer_id)}</nac:ConsumerID>"
             logger.info(f"Consumer-ID im Request: {self.credentials.consumer_id}")
         
         # BestaetigeLieferungen: VU-spezifisch
@@ -844,10 +844,10 @@ class TransferServiceClient:
         
         soap_header = self._build_soap_header()
         
-        # Consumer-ID (nac: Namespace!)
+        # Consumer-ID (nac: Namespace!) - BUG-0009 Fix: XML-Escaping
         consumer_id_xml = ""
         if self.credentials.consumer_id:
-            consumer_id_xml = f"<nac:ConsumerID>{self.credentials.consumer_id}</nac:ConsumerID>"
+            consumer_id_xml = f"<nac:ConsumerID>{self._escape_xml(self.credentials.consumer_id)}</nac:ConsumerID>"
         
         body = f'''<?xml version="1.0" encoding="UTF-8"?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
@@ -860,7 +860,7 @@ class TransferServiceClient:
          <tran:Request>
             <nac:BiPROVersion>2.6.1.1.0</nac:BiPROVersion>
             {consumer_id_xml}
-            <tran:ID>{shipment_id}</tran:ID>
+            <tran:ID>{self._escape_xml(shipment_id)}</tran:ID>
          </tran:Request>
       </tran:getShipment>
    </soapenv:Body>
@@ -1065,6 +1065,21 @@ class TransferServiceClient:
             if 'xml' in content_type or 'soap' in content_type:
                 xml_part = body
             elif content_id:
+                # Trailing CRLF/LF konsistent strippen (Boundary-Artefakte)
+                if body.endswith(b'\r\n'):
+                    body = body[:-2]
+                elif body.endswith(b'\n'):
+                    body = body[:-1]
+                
+                # Magic-Byte-Validierung: Content-Type vs. tatsaechlicher Inhalt
+                if 'pdf' in content_type and not body[:4].startswith(b'%PDF'):
+                    actual_magic = body[:8] if len(body) >= 8 else body
+                    logger.warning(
+                        f"MTOM: Content-Type ist {content_type} aber Magic-Bytes "
+                        f"sind {actual_magic!r} (kein %PDF). "
+                        f"CID={content_id}, Size={len(body)} Bytes"
+                    )
+                
                 binary_parts[content_id] = (content_type, body)
                 logger.info(f"MTOM Binary Part: {content_id}, Type: {content_type}, Size: {len(body)}")
         
@@ -1223,10 +1238,10 @@ class TransferServiceClient:
         
         soap_header = self._build_soap_header()
         
-        # Consumer-ID (nac: Namespace!)
+        # Consumer-ID (nac: Namespace!) - BUG-0009 Fix: XML-Escaping
         consumer_id_xml = ""
         if self.credentials.consumer_id:
-            consumer_id_xml = f"<nac:ConsumerID>{self.credentials.consumer_id}</nac:ConsumerID>"
+            consumer_id_xml = f"<nac:ConsumerID>{self._escape_xml(self.credentials.consumer_id)}</nac:ConsumerID>"
         
         body = f'''<?xml version="1.0" encoding="UTF-8"?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
@@ -1239,7 +1254,7 @@ class TransferServiceClient:
          <tran:Request>
             <nac:BiPROVersion>2.6.1.1.0</nac:BiPROVersion>
             {consumer_id_xml}
-            <tran:ID>{shipment_id}</tran:ID>
+            <tran:ID>{self._escape_xml(shipment_id)}</tran:ID>
          </tran:Request>
       </tran:acknowledgeShipment>
    </soapenv:Body>

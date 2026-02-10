@@ -1,62 +1,63 @@
-# 06 - Konfiguration und Abhängigkeiten
+# 06 - Konfiguration und Abhaengigkeiten
 
-**Version:** 0.9.3  
-**Analyse-Datum:** 2026-02-05
+**Version:** 1.6.0
+**Analyse-Datum:** 2026-02-10
 
 ---
 
-## Python-Abhängigkeiten
-
-**Quelle:** `requirements.txt`
+## Python-Abhaengigkeiten (Produktion)
 
 | Paket | Version | Zweck |
 |-------|---------|-------|
-| PySide6 | ≥6.6.0 | GUI Framework (Qt 6) |
-| requests | ≥2.31.0 | HTTP Client für API-Kommunikation |
-| cryptography | ≥41.0.0 | PFX-Zertifikate (easy Login) |
-| PyMuPDF | ≥1.23.0 | PDF-Verarbeitung für KI-Benennung |
-| pyjks | ≥20.0.0 | JKS-Zertifikate (Java KeyStore) |
-| pyinstaller | ≥6.0.0 | Packaging (optional) |
+| PySide6 | >=6.6.0 | GUI Framework (Qt 6), QPdfView fuer PDF |
+| requests | >=2.31.0 | HTTP Client (API, BiPRO SOAP) |
+| cryptography | >=41.0.0 | PFX-Zertifikate (BiPRO) |
+| PyMuPDF (fitz) | >=1.23.0 | PDF-Verarbeitung, Thumbnails, Unlock, Reparatur |
+| pyjks | >=20.0.0 | JKS-Zertifikate (Java KeyStore) |
+| openpyxl | >=3.1.0 | Excel-Dateien lesen (Archiv-Vorschau) |
+| extract-msg | >=0.50.0 | Outlook .msg E-Mails parsen |
+| pywin32 | >=306 | Windows COM-Automation (Outlook Drag & Drop) |
+| pyzipper | >=0.3.6 | ZIP mit AES-256 Verschluesselung |
+| pyinstaller | >=6.0.0 | Packaging als EXE |
 
-**Nicht aktiv genutzt (auskommentiert):**
-- `zeep` - SOAP Client (zu strikt für Degenia)
-- `openpyxl` - Excel-Export
+**Quelle:** `requirements.txt`
+
+## Python-Abhaengigkeiten (Entwicklung)
+
+| Paket | Version | Zweck |
+|-------|---------|-------|
+| pytest | >=7.0.0 | Test-Framework |
+| ruff | >=0.1.0 | Linting |
+
+**Quelle:** `requirements-dev.txt`
 
 ---
 
 ## Server-Konfiguration
 
-### PHP API (Strato Webspace)
+### config.php (SENSIBEL!)
 
-**Quelle:** `BiPro-Webspace Spiegelung Live/api/config.php`
+| Konstante | Beschreibung |
+|-----------|--------------|
+| DB_HOST | `database-5019508812.webspace-host.com` |
+| DB_NAME | `dbs15252975` |
+| DB_USER | (in config.php) |
+| DB_PASS | (in config.php) |
+| MASTER_KEY | AES-Verschluesselung fuer E-Mail-Credentials |
+| JWT_SECRET | JWT-Token-Signierung |
+| SCAN_API_KEY | API-Key fuer Power Automate Scans |
+| SCAN_ALLOWED_MIME_TYPES | PDF, JPG, PNG |
 
-| Konfiguration | Wert | Beschreibung |
-|---------------|------|--------------|
-| DB Server | `database-5019508812.webspace-host.com` | MySQL Server |
-| DB Name | `dbs15252975` | Datenbank |
-| DB User | (in config.php) | SENSIBEL |
-| DB Password | (in config.php) | SENSIBEL |
-| Master Key | (in config.php) | Für Verschlüsselung |
-| JWT Secret | (in config.php) | Für Token-Signierung |
-
-**WICHTIG:** `config.php` ist per `.htaccess` geschützt und nicht über HTTP aufrufbar!
+**Schutz:** `.htaccess` blockiert direkten HTTP-Zugriff auf config.php
 
 ### API-Endpunkte
 
-| Endpunkt | Methode | Beschreibung |
-|----------|---------|--------------|
-| `/auth/login` | POST | Login, JWT-Token erhalten |
-| `/auth/logout` | POST | Logout |
-| `/documents` | GET | Alle Dokumente (mit Box-Filter) |
-| `/documents` | POST | Dokument hochladen |
-| `/documents/{id}` | GET | Dokument herunterladen |
-| `/documents/{id}` | PUT | Metadaten aktualisieren |
-| `/documents/{id}` | DELETE | Dokument löschen |
-| `/documents/stats` | GET | Box-Statistiken |
-| `/documents/move` | POST | Dokumente verschieben |
-| `/vu-connections` | GET/POST/DELETE | VU-Verbindungen |
-| `/vu-connections/{id}/credentials` | GET | Zugangsdaten (verschlüsselt) |
-| `/ai/key` | GET | OpenRouter API-Key |
+| Aspekt | Details |
+|--------|---------|
+| Domain | `https://acencia.info/` |
+| API Base | `https://acencia.info/api/` |
+| CORS | Nicht konfiguriert (Desktop-App, kein Browser) |
+| PHP Version | 7.4+ auf Strato Shared Hosting |
 
 ---
 
@@ -64,107 +65,87 @@
 
 **Quelle:** `src/config/processing_rules.py`
 
-### GDV-Dateiendungen
+### GDV-Erkennung
 
-```python
-"gdv_extensions": [".gdv", ".txt", ""]
-```
+| Einstellung | Wert |
+|-------------|------|
+| gdv_extensions | `.gdv`, `.gvo`, `.gdvdaten` |
+| raw_xml_patterns | `application/xml`, `text/xml`, `.xml`, `.xbrl` |
 
-### XML-Rohdateien-Patterns
+### BiPRO-Code-Zuordnung
 
-```python
-"raw_xml_patterns": [
-    "Lieferung_Roh_*.xml",
-    "*_Roh_*.xml",
-    "BiPRO_Raw_*.xml"
-]
-```
+| Code-Bereich | Ziel |
+|--------------|------|
+| 300001000-300003000 | Courtage (direkt, ohne KI) |
+| 999010010 | GDV (direkt, ohne KI) |
+| 100xxxxx | VU-Dokumente (KI-Klassifikation) |
 
-### Courtage-Schlüsselwörter (Auszug)
+### KI-Keywords fuer Klassifikation
 
-```python
-"courtage_keywords": [
-    "Provisionsabrechnung",
-    "Courtage",
-    "Courtageabrechnung",
-    "Vermittlervergütung",
-    ...
-]
-```
+| Kategorie | Beispiel-Keywords |
+|-----------|-------------------|
+| Courtage | provision, courtage, abrechnung, verguetung |
+| Sach | haftpflicht, hausrat, wohngebaeude, kfz, PHV |
+| Leben | lebensversicherung, pensionskasse, rentenanstalt |
+| Kranken | krankenversicherung, krankenzusatz, pflegeversicherung |
 
-### Leben/Sach/Kranken-Schlüsselwörter
+### Download-Konfiguration (BiPRO)
 
-```python
-"leben_keywords": ["leben", "lebensversicherung", "rente", "bu", 
-                   "pensionskasse", "rentenanstalt", ...]  # v0.9.3 erweitert
-"sach_keywords": ["haftpflicht", "hausrat", "kfz", "unfall",
-                  "privathaftpflicht", "phv", "tierhalterhaftpflicht",
-                  "hundehaftpflicht", "bauherrenhaftpflicht",
-                  "jagdhaftpflicht", "gewaesserschadenhaftpflicht", ...]  # v0.9.3 erweitert
-"kranken_keywords": ["kranken", "pkv", "zahnzusatz", "pflege", ...]
-```
-
-**Neu in v0.9.3 - Erweiterte Sach-Klassifikation:**
-- Alle Haftpflichtversicherungen werden korrekt als "Sach" erkannt
-- Pensionskasse/Rentenanstalt werden als "Leben" klassifiziert
-
-### Weitere Regeln
-
-| Regel | Wert | Beschreibung |
-|-------|------|--------------|
-| `max_file_size` | 50 MB | Maximale Dateigröße für Verarbeitung |
-| `max_pdf_pages` | 10 | Maximale Seiten für OCR |
-| `auto_processing_enabled` | true | Automatische Verarbeitung aktiv |
-| `processing_delay` | 1.0s | Verzögerung zwischen Dokumenten |
+| Einstellung | Wert |
+|-------------|------|
+| max_parallel_workers | 10 |
+| min_workers_on_rate_limit | 2 |
+| token_refresh_margin_seconds | 120 |
+| retry_on_status_codes | [429, 503] |
 
 ---
 
 ## OpenRouter-Konfiguration
 
-**Quelle:** `src/api/openrouter.py`
+| Einstellung | Wert | Quelle |
+|-------------|------|--------|
+| Base URL | `https://openrouter.ai/api/v1` | `openrouter.py` |
+| Triage-Modell | `openai/gpt-4o-mini` | `openrouter.py` |
+| Detail-Modell | `openai/gpt-4o` | `openrouter.py` |
+| Vision-Modell | `openai/gpt-4o` (OCR-Fallback) | `openrouter.py` |
+| Max Retries | 3 | `openrouter.py` |
+| API-Key | Vom Server (`GET /ai/key`) | `ai.php` |
+| Credits-Endpoint | OpenRouter `/auth/key` | `openrouter.py` |
 
-| Konfiguration | Wert |
-|---------------|------|
-| Base URL | `https://openrouter.ai/api/v1` |
-| Vision Model | `openai/gpt-4o` |
-| Extract Model | `openai/gpt-4o` |
-| Max Retries | 4 |
-| Retry Status Codes | 429, 502, 503, 504 |
-| Retry Backoff Factor | 1.5 |
-| **Credits Endpoint** | `/api/v1/auth/key` (v0.9.3) |
+### Text-Extraktion
 
-**API-Key:** Wird vom Server abgerufen (`/api/ai/key`)
-
-**Kosten-Tracking (v0.9.3):**
-- Guthaben wird vor und nach Batch-Verarbeitung abgefragt
-- Differenz wird als Gesamtkosten berechnet
-- Pro-Dokument-Kosten = Gesamtkosten / Anzahl erfolgreicher Dokumente
+| Stufe | Seiten | Zeichen | Trigger |
+|-------|--------|---------|---------|
+| Triage (Stufe 1) | 2 | 3000 | Immer |
+| Detail (Stufe 2) | 5 | 5000 | Nur bei low Confidence |
+| OCR (Vision) | 2 | - | Bei Bild-PDFs (150 DPI) |
 
 ---
 
 ## BiPRO-Konfiguration
 
-**Quelle:** `src/bipro/transfer_service.py`
+### Bekannte VU-Endpunkte (~40 Stueck)
 
-### Bekannte Endpoints
+**Quelle:** `src/config/vu_endpoints.py` -> `KNOWN_ENDPOINTS`
 
-```python
-KNOWN_ENDPOINTS = {
-    'degenia': {
-        'transfer': 'https://transfer.degenia.de/X4/httpstarter/ReST/BiPRO/430_Transfer/Service_2.6.1.1.0',
-        'sts': 'https://transfer.degenia.de/X4/httpstarter/ReST/BiPRO/410_STS/UserPasswordLogin_2.6.1.1.0'
-    }
-}
-```
+| VU | Auth-Typ | Beschreibung |
+|----|----------|--------------|
+| Degenia | Passwort | Standard BiPRO 410/430 |
+| VEMA | Passwort | VEMA-spezifisches STS-Format, Consumer-ID |
+| AIG | Zertifikat (WS) | - |
+| Alte Leipziger | Zertifikat (WS) | - |
+| Allianz | Passwort | - |
+| ARAG | Passwort | - |
+| ... | ... | ~36 weitere |
 
 ### Authentifizierungs-Methoden
 
-| Methode | Felder | Beschreibung |
-|---------|--------|--------------|
-| STS-Token | username, password, sts_endpoint_url | Standard (Degenia) |
-| PFX-Zertifikat | pfx_path, pfx_password | easy Login |
-| JKS-Zertifikat | jks_path, jks_password, jks_alias | Java KeyStore |
-| PEM-Zertifikat | cert_path, key_path | Separate Dateien |
+| Typ-ID | Bezeichnung | Beschreibung |
+|--------|-------------|--------------|
+| 0 | AUTH_TYPE_PASSWORD | Username/Password ueber BiPRO 410 STS |
+| 3 | AUTH_TYPE_CERT_WS | WS-Security mit X.509 Zertifikat |
+| 4 | AUTH_TYPE_CERT_TGIC | TGIC-Zertifikat |
+| 6 | AUTH_TYPE_CERT_DEGENIA | Degenia-spezifisch |
 
 ---
 
@@ -176,79 +157,74 @@ KNOWN_ENDPOINTS = {
 
 | Token | Wert | Verwendung |
 |-------|------|------------|
-| `PRIMARY_900` | #001f3d | Sidebar, Titel, Primärtext |
-| `PRIMARY_500` | #88a9c3 | Sekundärtext, Icons |
-| `PRIMARY_100` | #e3ebf2 | Hover, Backgrounds |
-| `PRIMARY_0` | #ffffff | Content-Hintergrund |
-| `ACCENT_500` | #fa9939 | CTAs, Active States |
-| `ACCENT_100` | #f8dcbf | Badges, Highlights |
+| PRIMARY_900 | #001f3d | Sidebar, Buttons, Text |
+| PRIMARY_500 | #88a9c3 | Sekundaer-Elemente |
+| PRIMARY_100 | #e3ebf2 | Hintergruende |
+| ACCENT_500 | #fa9939 | Akzente, aktive Elemente |
+| ACCENT_100 | #f8dcbf | Hover-States |
 
 ### Typografie
 
+| Token | Wert | Verwendung |
+|-------|------|------------|
+| FONT_HEADLINE | "Tenor Sans" | Ueberschriften, Navigation |
+| FONT_BODY | "Open Sans" | Fliesstext, Tabellen |
+| FONT_SIZE_BASE | 14px | Standard-Schriftgroesse |
+
+### Spacing
+
 | Token | Wert |
 |-------|------|
-| `FONT_HEADLINE` | "Tenor Sans", "Segoe UI", sans-serif |
-| `FONT_BODY` | "Open Sans", "Segoe UI", sans-serif |
-| `FONT_SIZE_H1` | 20px |
-| `FONT_SIZE_BODY` | 13px |
-| `FONT_SIZE_CAPTION` | 11px |
+| SPACING_XS | 4px |
+| SPACING_SM | 8px |
+| SPACING_MD | 16px |
+| SPACING_LG | 24px |
+| SPACING_XL | 32px |
 
-### Box-Farben
+---
 
-| Box | Farbe |
-|-----|-------|
-| eingang | #f59e0b (Amber) |
-| verarbeitung | #f97316 (Orange) |
-| gdv | #10b981 (Grün) |
-| courtage | #6366f1 (Indigo) |
-| sach | #3b82f6 (Blau) |
-| leben | #8b5cf6 (Violett) |
-| kranken | #06b6d4 (Cyan) |
-| sonstige | #64748b (Grau) |
-| roh | #78716c (Steingrau) |
+## Internationalisierung (i18n)
+
+**Quelle:** `src/i18n/de.py` (~910 Konstanten)
+
+| Sektion | Ungefaehre Key-Anzahl |
+|---------|----------------------|
+| Allgemein (APP_, LOADING, SAVE, etc.) | ~30 |
+| Navigation (NAV_) | ~10 |
+| Login (LOGIN_) | ~15 |
+| BiPRO (BIPRO_) | ~60 |
+| Archiv (ARCHIVE_, BOX_) | ~80 |
+| GDV (GDV_) | ~40 |
+| Admin (ADMIN_) | ~80 |
+| Smart!Scan (SMARTSCAN_) | ~50 |
+| E-Mail (EMAIL_ACCOUNT_, EMAIL_INBOX_) | ~40 |
+| Passwoerter (PASSWORD_) | ~35 |
+| Releases (RELEASE_) | ~40 |
+| KI-Kosten (AI_COST_) | ~30 |
+| Shortcuts (SHORTCUT_) | ~16 |
+| Duplikate (DUPLICATE_) | ~6 |
+| Historie (HISTORY_) | ~20 |
+| PDF-Bearbeitung (PDF_EDIT_) | ~14 |
+| Schliess-Schutz (CLOSE_BLOCKED_) | ~4 |
+| Toast (TOAST_) | ~4 |
+| Drag & Drop (DROP_) | ~10 |
 
 ---
 
 ## Umgebungsvariablen
 
-| Variable | Verwendung | Notwendig |
-|----------|------------|-----------|
-| - | (Keine erforderlich) | - |
-
-**Hinweis:** Alle Konfiguration ist in der App/Server fest definiert.
-
----
-
-## Dateipfade
-
-### Lokale Verzeichnisse
-
-| Pfad | Beschreibung |
-|------|--------------|
-| `X:\projekte\5510_GDV Tool V1\` | Projekt-Root |
-| `testdata/` | Testdaten |
-| `docs/` | Dokumentation |
-| `Kontext/` | Diese Dokumentation |
-
-### Server-Verzeichnisse
-
-| Pfad (Webspace) | Beschreibung |
-|-----------------|--------------|
-| `/BiPro/api/` | PHP REST API |
-| `/BiPro/dokumente/` | Datei-Storage |
+Keine Umgebungsvariablen erforderlich. Alle Konfiguration ist in:
+- `src/config/` (Python-seitig)
+- `BiPro-Webspace Spiegelung Live/api/config.php` (Server-seitig)
 
 ---
 
 ## Encoding-Konfiguration
 
-### GDV-Dateien
-
 | Aspekt | Wert |
 |--------|------|
-| Standard | CP1252 (Windows-1252) |
-| Fallback 1 | Latin-1 (ISO-8859-1) |
+| GDV-Standard | CP1252 (Windows-1252) |
+| Fallback 1 | Latin-1 (ISO 8859-1) |
 | Fallback 2 | UTF-8 |
-| Zeilenbreite | 256 Bytes |
-| Zeilenende | Variabel (wird erkannt) |
-
-**Quelle:** `src/parser/gdv_parser.py`
+| Zeilenbreite | 256 Bytes (fest) |
+| API-Kommunikation | UTF-8 (JSON) |

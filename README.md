@@ -1,9 +1,10 @@
-# BiPRO-GDV Tool v0.9.4
+# ACENCIA ATLAS
 
-Ein Desktop-Tool für Versicherungsvermittler mit:
-- **BiPRO-Datenabruf** - Automatisierter Abruf von Lieferungen von Versicherern
-- **Dokumentenarchiv mit Box-System** - Zentrales Archiv mit KI-Klassifikation
-- **GDV-Editor** - Erstellung, Ansicht und Bearbeitung von GDV-Datensätzen
+**Der Datenkern.** Desktop-App fuer Versicherungsvermittler mit:
+- **BiPRO-Datenabruf** - Automatisierter Abruf von Lieferungen von Versicherern + IMAP Mail-Import
+- **Dokumentenarchiv mit Box-System** - Zentrales Archiv mit KI-Klassifikation und Smart!Scan
+- **GDV-Editor** - Erstellung, Ansicht und Bearbeitung von GDV-Datensaetzen
+- **Administration** - Nutzerverwaltung, E-Mail-Konten, KI-Kosten, Releases
 
 ![Python 3.10+](https://img.shields.io/badge/Python-3.10+-blue.svg)
 ![PySide6](https://img.shields.io/badge/GUI-PySide6-green.svg)
@@ -16,33 +17,55 @@ Ein Desktop-Tool für Versicherungsvermittler mit:
 ## Features
 
 ### BiPRO Datenabruf
-- **Automatischer Abruf** von Lieferungen (Dokumente, Vertragsänderungen)
+- **Automatischer Abruf** von Lieferungen (Dokumente, Vertragsaenderungen)
 - **VU-Verbindungen verwalten** (Degenia, VEMA)
-- **Kategorien-Anzeige** (Vertragsdokumente, Geschäftsvorfälle, etc.)
+- **Kategorien-Anzeige** (Vertragsdokumente, Geschaeftsvorfaelle, etc.)
 - **Download einzeln oder alle** mit automatischem Archiv-Upload
-- **MTOM/XOP-Support** für Binärdaten (PDFs)
-- **Parallele Downloads** (max. 10 Worker, auto-adjustiert) **NEU v0.9.1**
-- **Adaptive Rate Limiting** (dynamische Anpassung bei 429/503) **NEU v0.9.1**
-- **PDF-Validierung** mit automatischer Reparatur **NEU v0.9.1**
+- **Alle VUs abholen**: Alle aktiven VU-Verbindungen nacheinander abrufen
+- **MTOM/XOP-Support** fuer Binaerdaten (PDFs)
+- **Parallele Downloads** (max. 10 Worker, auto-adjustiert)
+- **Adaptive Rate Limiting** (dynamische Anpassung bei 429/503)
+- **PDF-Validierung** mit automatischer Reparatur
+- **Mail-Import**: IMAP-Mails abholen und Anhaenge in Eingangsbox importieren (mit Progress-Toast)
 
-### Dokumentenarchiv mit Box-System (v0.8.0)
-- **7 Boxen**: GDV, Courtage, Sach, Leben, Kranken, Sonstige, Roh
-- **KI-Klassifikation**: Zweistufig mit Confidence-Scoring (GPT-4o-mini + GPT-4o Fallback) **NEU v0.9.4**
+### Dokumentenarchiv mit Box-System
+- **8 Boxen**: GDV, Courtage, Sach, Leben, Kranken, Sonstige, Roh, Falsch
+- **KI-Klassifikation**: Zweistufig mit Confidence-Scoring (GPT-4o-mini + GPT-4o Fallback)
 - **Parallele Verarbeitung**: 4 Dokumente gleichzeitig (ThreadPoolExecutor)
 - **KI-Benennung**: Automatische Umbenennung nach Schema `Versicherer_Typ_Datum.pdf`
-- **Multi-Upload**: Mehrere Dateien gleichzeitig hochladen
-- **PDF-Vorschau** direkt in der App (QPdfView)
+- **Multi-Upload**: Mehrere Dateien gleichzeitig hochladen (inkl. Drag & Drop)
+- **PDF-Vorschau** direkt in der App (QPdfView) + Tabellen-Vorschau (CSV/XLSX)
+- **PDF-Bearbeitung**: Seiten drehen und loeschen direkt in der Vorschau, Speichern auf Server
+- **Smart!Scan**: Dokumente per E-Mail versenden (Toolbar-Button + Kontextmenue)
+- **Box-Download**: Ganze Boxen als ZIP oder in Ordner herunterladen
+- **Farbmarkierung**: 8 Farben fuer visuelle Organisation
+- **Duplikat-Erkennung**: SHA256-Pruefziffer erkennt doppelte Dokumente (inkl. archivierte)
+- **Dokument-Historie**: Seitenpanel zeigt farbcodierte Aenderungshistorie pro Dokument
+- **Tastenkuerzel**: F2, Entf, Strg+A/D/F/U, Enter, Esc, F5
+- **Automatische Verarbeitung**: ZIP-Entpacken, PDF-Entsperren, MSG-Anhaenge extrahieren
 - **OpenRouter Credits**: Guthaben-Anzeige im Header
-- **Robuster Download**: Retry-Logik mit Backoff
+- **Schliess-Schutz**: App kann nicht geschlossen werden waehrend KI-Verarbeitung oder SmartScan laeuft
 
 ### GDV-Editor
-- **GDV-Dateien öffnen**: `.gdv`, `.txt`, `.dat`, `.vwb`
+- **GDV-Dateien oeffnen**: `.gdv`, `.txt`, `.dat`, `.vwb`
 - **Drei Ansichtsmodi**:
-  - 👥 **Partner-Ansicht**: Alle Arbeitgeber und Personen mit ihren Verträgen
-  - 📋 **Benutzer-Ansicht**: Nur wichtige Felder, benutzerfreundlich
-  - ⚙️ **Experten-Ansicht**: Alle Felder, volle Kontrolle
+  - **Partner-Ansicht**: Alle Arbeitgeber und Personen mit ihren Vertraegen
+  - **Benutzer-Ansicht**: Nur wichtige Felder, benutzerfreundlich
+  - **Experten-Ansicht**: Alle Felder, volle Kontrolle
 - **Daten bearbeiten und speichern**
-- **Neue Sätze erstellen**: 0001, 0100, 0200, 0210, 0220, 0230, 9999
+- **Neue Saetze erstellen**: 0001, 0100, 0200, 0210, 0220, 0230, 9999
+
+### Administration (Vollbild-Ansicht mit vertikaler Sidebar)
+- **Nutzerverwaltung**: Erstellen, Bearbeiten, Sperren, 9 granulare Berechtigungen
+- **Session-Management**: Aktive Sessions einsehen und beenden
+- **Passwort-Verwaltung**: PDF/ZIP-Passwoerter zentral verwalten
+- **Aktivitaetslog**: Alle API-Aktionen protokolliert
+- **KI-Kosten**: Verarbeitungshistorie, Kosten-Statistiken, Zeitraum-Filter
+- **Releases**: Auto-Update Verwaltung (Upload, Status, Channel, SHA256)
+- **E-Mail-Konten**: SMTP/IMAP mit verschluesselten Credentials
+- **Smart!Scan-Einstellungen**: Zieladresse, Templates, Modi, Post-Send-Aktionen
+- **Smart!Scan-Historie**: Revisionssichere Versandhistorie
+- **E-Mail-Posteingang**: IMAP Inbox mit Anhang-Details
 
 ---
 
@@ -82,26 +105,39 @@ python run.py
 ### BiPRO Datenabruf
 
 1. **Navigation** → **BiPRO Datenabruf**
-2. VU-Verbindung in der Liste auswählen (Lieferungen laden automatisch)
+2. VU-Verbindung in der Liste auswaehlen (Lieferungen laden automatisch)
 3. Lieferungen werden mit Kategorie und Datum angezeigt
-4. **"Alle herunterladen"** oder einzeln auswählen und **"Ausgewählte herunterladen"**
-5. Dokumente werden automatisch ins Archiv hochgeladen
+4. **"Alle herunterladen"** oder einzeln auswaehlen und **"Ausgewaehlte herunterladen"**
+5. **"Alle VUs abholen"**: Alle aktiven VU-Verbindungen nacheinander abrufen
+6. **"Mails abholen"**: IMAP-Mails abrufen, Anhaenge in Eingangsbox importieren
+7. Dokumente werden automatisch ins Archiv hochgeladen
 
 ### Dokumentenarchiv
 
 1. **Navigation** → **Dokumentenarchiv**
-2. Dokumente werden vom Server geladen
-3. **PDF-Vorschau**: Doppelklick auf PDF oder "👁️ Vorschau" Button
+2. Boxen in der Sidebar auswaehlen (GDV, Courtage, Sach, Leben, etc.)
+3. **PDF-Vorschau**: Doppelklick auf PDF oder Vorschau-Button
 4. **Download**: Rechtsklick → "Herunterladen" oder Toolbar-Button
-5. **Upload**: "📤 Hochladen" Button
+5. **Upload**: Hochladen-Button oder Drag & Drop aus dem Explorer
+6. **Smart!Scan**: Gruener Button in der Toolbar oder Rechtsklick → Smart!Scan
+7. **Box-Download**: Rechtsklick auf Box in Sidebar → Herunterladen (ZIP/Ordner)
+8. **Tastenkuerzel**: F2 (Umbenennen), Entf (Loeschen), Strg+D (Download), F5 (Aktualisieren)
 
 ### GDV-Editor
 
 1. **Navigation** → **GDV Editor**
-2. **Menü** → **Datei** → **GDV-Datei öffnen** (Strg+O)
-3. Sätze werden in der Tabelle angezeigt
+2. **Menue** → **Datei** → **GDV-Datei oeffnen** (Strg+O)
+3. Saetze werden in der Tabelle angezeigt
 4. Felder im rechten Panel bearbeiten
-5. **Menü** → **Datei** → **Speichern** (Strg+S)
+5. **Menue** → **Datei** → **Speichern** (Strg+S)
+
+### Administration
+
+1. **Navigation** → **Administration** (nur fuer Admins sichtbar)
+2. Vertikale Sidebar links mit 10 Panels in 3 Sektionen
+3. **Verwaltung**: Nutzer, Sessions, Passwoerter
+4. **Monitoring**: Aktivitaetslog, KI-Kosten, Releases
+5. **E-Mail**: Konten, SmartScan-Settings, Historie, Posteingang
 
 ---
 
@@ -110,26 +146,51 @@ python run.py
 ```
 5510_GDV Tool V1/
 ├── run.py                     # Entry Point
-├── requirements.txt           # Python-Abhängigkeiten
+├── VERSION                    # Zentrale Versionsdatei (1.6.0)
+├── requirements.txt           # Python-Abhaengigkeiten
+├── requirements-dev.txt       # Dev-Dependencies (pytest, ruff)
 ├── AGENTS.md                  # Agent-Anweisungen (aktuell halten!)
-├── BIPRO_STATUS.md            # BiPRO-Integrationsstatus
 ├── README.md                  # Diese Datei
+├── build.bat                  # Build-Script (PyInstaller + Inno Setup)
+├── installer.iss              # Inno Setup Installer-Konfiguration
 │
 ├── src/                       # Quellcode
 │   ├── main.py               # Qt-Anwendung
 │   │
 │   ├── api/                  # Server-API Clients
-│   │   ├── client.py         # Base-Client mit JWT-Auth
-│   │   ├── documents.py      # Dokumenten-Operationen
-│   │   └── vu_connections.py # VU-Verbindungen
+│   │   ├── client.py         # Base-Client mit JWT-Auth + Retry
+│   │   ├── documents.py      # Dokumenten-Operationen (Box-Support)
+│   │   ├── vu_connections.py # VU-Verbindungen API
+│   │   ├── admin.py          # Admin API (Nutzerverwaltung)
+│   │   ├── smartscan.py      # SmartScan + EmailAccounts API
+│   │   ├── openrouter.py     # KI-Klassifikation (OpenRouter)
+│   │   ├── passwords.py      # Passwort-Verwaltung API
+│   │   ├── releases.py       # Auto-Update API
+│   │   └── processing_history.py  # Audit-Trail API
 │   │
 │   ├── bipro/                # BiPRO SOAP Client
-│   │   ├── transfer_service.py  # BiPRO 410 + 430
+│   │   ├── transfer_service.py  # BiPRO 410 STS + 430 Transfer
+│   │   ├── rate_limiter.py   # AdaptiveRateLimiter
 │   │   └── categories.py     # Kategorie-Mapping
+│   │
+│   ├── services/             # Business-Logik
+│   │   ├── data_cache.py     # Cache + Auto-Refresh
+│   │   ├── document_processor.py  # KI-Klassifikation
+│   │   ├── pdf_unlock.py     # PDF-Entsperrung
+│   │   ├── zip_handler.py    # ZIP-Entpackung
+│   │   ├── msg_handler.py    # Outlook .msg Verarbeitung
+│   │   └── update_service.py # Auto-Update Service
 │   │
 │   ├── domain/               # Datenmodelle
 │   │   ├── models.py         # Contract, Customer, Risk, Coverage
 │   │   └── mapper.py         # ParsedRecord → Domain-Objekt
+│   │
+│   ├── config/               # Konfiguration
+│   │   ├── processing_rules.py  # Verarbeitungsregeln + BiPRO-Codes
+│   │   └── vu_endpoints.py   # VU-Endpunkt-Konfiguration
+│   │
+│   ├── i18n/                 # Internationalisierung
+│   │   └── de.py             # Deutsche UI-Texte (~790 Keys)
 │   │
 │   ├── layouts/
 │   │   └── gdv_layouts.py    # GDV-Satzart-Definitionen
@@ -137,26 +198,35 @@ python run.py
 │   ├── parser/
 │   │   └── gdv_parser.py     # Fixed-Width Parser
 │   │
-│   └── ui/                   # Benutzeroberfläche
-│       ├── main_hub.py       # Navigation
-│       ├── bipro_view.py     # BiPRO Datenabruf
-│       ├── archive_view.py   # Dokumentenarchiv
-│       ├── main_window.py    # GDV-Editor
-│       ├── user_detail_view.py
-│       └── partner_view.py
+│   └── ui/                   # Benutzeroberflaeche
+│       ├── main_hub.py       # Navigation + Drag & Drop
+│       ├── bipro_view.py     # BiPRO Datenabruf + MailImportWorker
+│       ├── archive_boxes_view.py  # Dokumentenarchiv (Box-System)
+│       ├── admin_view.py     # Administration (10 Panels, Sidebar)
+│       ├── gdv_editor_view.py # GDV-Editor
+│       ├── toast.py          # Toast-Benachrichtigungen + Progress
+│       ├── main_window.py    # GDV Hauptfenster
+│       ├── partner_view.py   # Partner-Uebersicht
+│       ├── login_dialog.py   # Login
+│       ├── update_dialog.py  # Auto-Update Dialog
+│       └── styles/tokens.py  # Design-Tokens (Farben, Fonts)
 │
 ├── BiPro-Webspace Spiegelung Live/  # Server-API (LIVE synchronisiert!)
-│   └── api/                  # PHP REST API
+│   └── api/                  # PHP REST API (~20 Endpunkte)
+│       ├── index.php         # Router
+│       ├── lib/              # Shared Libraries (DB, JWT, Permissions)
+│       └── lib/PHPMailer/    # SMTP-Versand
 │
 ├── testdata/                  # Testdaten
 │   ├── sample.gdv
-│   ├── create_testdata.py
-│   └── test_roundtrip.py
+│   └── create_testdata.py
 │
 └── docs/                      # Dokumentation
     ├── ARCHITECTURE.md
     ├── DEVELOPMENT.md
-    └── DOMAIN.md
+    ├── DOMAIN.md
+    ├── BIPRO_ENDPOINTS.md
+    └── ui/UX_RULES.md
 ```
 
 ---
@@ -236,77 +306,70 @@ Proprietär - Nur für internen Gebrauch bei ACENCIA GmbH.
 
 ## Changelog
 
-### v0.9.3 (05. Februar 2026)
-- **NEU**: Kosten-Tracking für OpenRouter-Verarbeitung
-- **NEU**: BatchProcessingResult mit Kosten-Statistiken (Gesamt + pro Dokument)
-- **NEU**: Erweiterte Sach-Keywords (Privathaftpflicht, PHV, Tierhalterhaftpflicht, etc.)
-- **NEU**: Courtage-Benennung mit VU_Name + Datum
-- **FIX**: Privathaftpflichtversicherung wird jetzt korrekt als Sach klassifiziert
-- **FIX**: Pensionskasse wird jetzt korrekt als Leben klassifiziert
+### v1.1.4 (10. Februar 2026)
+- **NEU**: App-Schliess-Schutz: Schliessen blockiert bei laufender KI-Verarbeitung, Kosten-Check oder SmartScan-Versand
+- **NEU**: `get_blocking_operations()` in ArchiveBoxesView prueft blockierende Worker sicher (C++-Object-Schutz)
 
-### v0.9.2 (05. Februar 2026)
-- **FIX**: Timezone-aware Token-Validierung (Degenia-Fix)
-- **FIX**: MIME-Type→Extension Mapping (.pdf statt .bin)
-- **FIX**: Auto Worker-Anpassung bei wenigen Lieferungen
+### v1.1.3 (10. Februar 2026)
+- **NEU**: PDF-Bearbeitung in der Vorschau: Seiten drehen (CW/CCW), loeschen, speichern auf Server
+- **NEU**: Thumbnail-Sidebar im PDF-Viewer mit Seitenvorschauen
+- **NEU**: Server-Endpoint POST /documents/{id}/replace fuer Datei-Ersetzung
+- **NEU**: Cache-Invalidierung nach PDF-Speichern (Vorschau + Historie + Dokumente)
 
-### v0.9.1 (04. Februar 2026)
-- **NEU**: Parallele BiPRO-Downloads (5 Worker, ThreadPoolExecutor)
-- **NEU**: SharedTokenManager für thread-sicheres STS-Token-Management
-- **NEU**: AdaptiveRateLimiter bei HTTP 429/503 (dynamische Worker-Anpassung)
-- **NEU**: PDF-Validierung und automatische Reparatur mit PyMuPDF
-- **NEU**: Auto-Refresh-Kontrolle (pause/resume während Operationen)
-- **NEU**: GDV-Erkennung über BiPRO-Code (999xxx)
-- **FIX**: if/elif-Struktur in document_processor (XML→roh korrekt)
-- **FIX**: MTOM-Parsing verbessert (keine korrupten PDFs mehr)
+### v1.1.2 (10. Februar 2026)
+- **NEU**: Dokument-Historie: Seitenpanel im Archiv zeigt farbcodierte Aenderungshistorie
+- **NEU**: 8 farbcodierte Aktionstypen (Upload, Download, Verschieben, Loeschen, etc.)
+- **NEU**: Neue Berechtigung `documents_history` fuer granulare Kontrolle
+- **NEU**: Verbessertes Move-Logging: Pro-Dokument-Eintraege mit source_box/target_box
 
-### v0.9.0 (Februar 2026)
-- **NEU**: BiPRO-Code-basierte Vorsortierung
-- **NEU**: Token-optimierte KI-Klassifikation (~90% Einsparung)
-- **NEU**: GDV-Metadaten aus Datensatz (VU + Datum ohne KI)
-- **NEU**: Einheitliche Fortschrittsanzeige (BiPRO + Verarbeitung)
-- **NEU**: LoadingOverlay für async Box-Wechsel
+### v1.1.1 (10. Februar 2026)
+- **NEU**: Duplikat-Erkennung: SHA256-Pruefziffer vergleicht gegen alle Dokumente (inkl. archivierte)
+- **NEU**: Duplikat-Spalte in Archiv-Tabelle mit Warn-Icon und Tooltip zum Original
+- **NEU**: Toast-Benachrichtigung bei Upload von Duplikaten
 
-### v0.8.0 (Februar 2026)
-- **NEU**: Kranken-Box für Krankenversicherungs-Dokumente
-- **NEU**: Multi-Upload (mehrere Dateien gleichzeitig)
-- **NEU**: Parallele Dokumentenverarbeitung (ThreadPoolExecutor)
-- **NEU**: Robuster Download mit Retry-Logik (3 Versuche, Backoff)
-- **NEU**: OpenRouter Credits-Anzeige im Header
-- **NEU**: Thread-sicheres Worker-Cleanup (kein Crash bei Schließen)
-- **NEU**: Robustes JSON-Parsing (_safe_json_loads)
-- **NEU**: Sichere Dateinamen-Generierung (slug_de)
-- **NEU**: Verbesserter KI-Prompt (Kontext-Awareness)
-- **NEU**: insurance_type bei Courtage (Leben/Sach/Kranken im Dateinamen)
+### v1.1.0 (10. Februar 2026)
+- **NEU**: Keyword-Conflict-Hints fuer verbesserte KI-Klassifikation
+- **NEU**: PDF Magic-Byte-Validierung nach MTOM-Extraktion
+- **NEU**: Post-Save Cross-Check fuer BiPRO GDV-Dateien
 
-### v0.7.0 (Februar 2026)
-- Box-System für Dokumentenarchiv (7 Boxen)
-- Automatische Dokumenten-Klassifikation
-- KI-basierte PDF-Benennung via OpenRouter
+### v1.0.9 (10. Februar 2026)
+- **NEU**: Admin-Redesign: Vertikale Sidebar statt horizontaler Tabs, Vollbild-Ansicht
+- **NEU**: Mail-Import im BiPRO-Bereich: "Mails abholen" Button mit IMAP-Poll + Attachment-Pipeline
+- **NEU**: ProgressToastWidget: Nicht-blockierender Fortschritts-Toast mit Balken
+- **NEU**: Smart!Scan-Toolbar-Button im Archiv (sichtbar wenn aktiviert)
+- **NEU**: Vereinfachte SmartScan-Bestaetigung (Einfaches Confirm statt Dialog)
 
-### v0.6.0 (Februar 2026)
-- KI-basierte PDF-Analyse und Umbenennung
-- OpenRouter-Integration (GPT-4o Vision + Structured Output)
+### v1.0.8 (10. Februar 2026)
+- **NEU**: Tastenkuerzel im Dokumentenarchiv (F2, Entf, Strg+A/D/F/U, Enter, Esc, F5)
 
-### v0.5.0 (Februar 2026)
-- BiPRO-Integration vollständig funktionsfähig (Degenia)
-- Dokumentenarchiv mit Server-Backend
-- PDF-Vorschau (QPdfView)
-- Multi-Download/Multi-Delete im Archiv
-- Automatische Archivierung von BiPRO-Downloads
+### v1.0.7 (10. Februar 2026)
+- **NEU**: Toast-System ersetzt alle modalen Popups (~137 QMessageBox → Toast)
+- **NEU**: UX-Regeln dokumentiert (docs/ui/UX_RULES.md)
 
-### v0.4.0 (Januar 2026)
-- BiPRO-Client Grundgerüst
-- VU-Verbindungsverwaltung
-- Server-API Integration
+### v1.0.6 (09. Februar 2026)
+- **NEU**: Smart!Scan E-Mail-Versand (Einzel + Sammelmail, Post-Send-Aktionen)
+- **NEU**: E-Mail-Konten-Verwaltung (SMTP/IMAP, AES-256-GCM)
+- **NEU**: IMAP E-Mail-Import (Hybridansatz, Filter, Absender-Whitelist)
+- **NEU**: SmartScan-Versandhistorie (revisionssicher)
 
-### v0.3.0 (Januar 2025)
-- Partner-Ansicht mit Firmen/Personen-Übersicht
-- Teildatensatz-Unterstützung
+### v1.0.5 (09. Februar 2026)
+- **NEU**: ZIP-Entpackung beim Upload (inkl. AES-256, rekursiv)
+- **NEU**: Zentrale Passwort-Verwaltung (DB statt hartcodiert)
 
-### v0.2.0
-- Benutzer- und Experten-Ansicht
-- GDV-Dateien speichern
+### v1.0.4 (09. Februar 2026)
+- **NEU**: Globales Drag & Drop Upload (Dateien/Ordner + Outlook Direct-Drop)
+- **NEU**: MSG E-Mail-Verarbeitung (Anhaenge extrahieren)
+- **NEU**: PDF Passwortschutz-Entsperrung beim Upload
 
-### v0.1.0
-- Initiale Version
-- GDV-Dateien öffnen und anzeigen
+### v1.0.3 (09. Februar 2026)
+- **NEU**: Dokumenten-Farbmarkierung (8 Farben, persistent)
+
+### v1.0.2 (08. Februar 2026)
+- **NEU**: Scan-Upload Endpunkt fuer Power Automate
+
+### v1.0.1 (09. Februar 2026)
+- **RELEASE**: Erste stabile Release-Version
+
+### v0.9.x (04.-07. Februar 2026)
+- Parallele BiPRO-Downloads, KI-Klassifikation, Admin-System, Cache-Optimierung, Auto-Update
+- Siehe AGENTS.md fuer vollstaendige Historie

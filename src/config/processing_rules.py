@@ -433,11 +433,16 @@ PROCESSING_RULES: Dict[str, Any] = {
 # ============================================================================
 
 BIPRO_DOWNLOAD_CONFIG = {
-    # Maximale Anzahl paralleler Download-Worker
+    # Maximale Anzahl paralleler Download-Worker (Standard fuer alle VUs)
     # Hoeherer Wert = schneller, aber mehr Server-Last
-    # Erhöht auf 10 Worker für bessere Performance
-    # AdaptiveRateLimiter reduziert automatisch bei Server-Überlastung
+    # AdaptiveRateLimiter reduziert automatisch bei Server-Ueberlastung
     'max_parallel_workers': 10,
+    
+    # VU-spezifische Overrides fuer max_parallel_workers
+    # Key: Teil des VU-Namens (case-insensitive Substring-Match)
+    'vu_max_workers_overrides': {
+        'vema': 15,
+    },
     
     # Minimale Worker-Anzahl bei Rate Limiting
     # Bei HTTP 429/503 wird auf diesen Wert reduziert
@@ -468,18 +473,32 @@ BIPRO_DOWNLOAD_CONFIG = {
 }
 
 
-def get_bipro_download_config(key: str, default: Any = None) -> Any:
+def get_bipro_download_config(key: str, default: Any = None, vu_name: str = None) -> Any:
     """
     Holt eine BiPRO-Download-Konfiguration.
+    
+    Bei 'max_parallel_workers' wird geprueft ob ein VU-spezifischer
+    Override in 'vu_max_workers_overrides' existiert.
     
     Args:
         key: Konfigurationsschluessel
         default: Standardwert wenn nicht gefunden
+        vu_name: VU-Name fuer VU-spezifische Overrides (optional)
         
     Returns:
         Konfigurationswert oder default
     """
-    return BIPRO_DOWNLOAD_CONFIG.get(key, default)
+    value = BIPRO_DOWNLOAD_CONFIG.get(key, default)
+    
+    # VU-spezifische Overrides fuer max_parallel_workers
+    if key == 'max_parallel_workers' and vu_name:
+        overrides = BIPRO_DOWNLOAD_CONFIG.get('vu_max_workers_overrides', {})
+        vu_lower = vu_name.lower()
+        for vu_pattern, workers in overrides.items():
+            if vu_pattern.lower() in vu_lower:
+                return workers
+    
+    return value
 
 
 def get_rule(key: str, default: Any = None) -> Any:

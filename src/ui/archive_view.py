@@ -1,5 +1,5 @@
 """
-BiPRO-GDV Tool - Dokumentenarchiv
+ACENCIA ATLAS - Dokumentenarchiv
 
 Ansicht fuer alle Dokumente mit Upload/Download-Funktionen, PDF-Vorschau
 und KI-basierter automatischer Benennung.
@@ -159,9 +159,9 @@ class AIRenameWorker(QThread):
                     continue
                 
                 try:
-                    # PDF herunterladen
+                    # PDF herunterladen (filename_override spart extra API-Call)
                     temp_dir = tempfile.mkdtemp(prefix='bipro_ai_')
-                    pdf_path = self.docs_api.download(doc.id, temp_dir)
+                    pdf_path = self.docs_api.download(doc.id, temp_dir, filename_override=doc.original_filename)
                     
                     if not pdf_path or not os.path.exists(pdf_path):
                         raise Exception("Download fehlgeschlagen")
@@ -211,23 +211,62 @@ class AIRenameWorker(QThread):
             self.error.emit(str(e))
 
 
+class PDFSaveWorker(QThread):
+    """Worker zum asynchronen Speichern eines bearbeiteten PDFs auf dem Server."""
+    finished = Signal(bool)   # success
+    error = Signal(str)       # error_message
+    
+    def __init__(self, docs_api, doc_id: int, file_path: str, parent=None):
+        super().__init__(parent)
+        self.docs_api = docs_api
+        self.doc_id = doc_id
+        self.file_path = file_path
+    
+    def run(self):
+        try:
+            success = self.docs_api.replace_document_file(self.doc_id, self.file_path)
+            self.finished.emit(success)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
 class PDFViewerDialog(QDialog):
     """
-    Dialog zur PDF-Vorschau.
+    Dialog zur PDF-Vorschau und -Bearbeitung.
     
     Zeigt PDFs direkt in der App an ohne separaten Download.
     Verwendet QPdfView (Qt6 native) oder öffnet extern als Fallback.
+    
+    Bearbeitungsmodus (editable=True):
+    - Thumbnail-Sidebar links mit Seitenvorschau
+    - Seiten drehen (CW/CCW) und loeschen
+    - Bearbeitetes PDF auf dem Server speichern
     """
     
-    def __init__(self, pdf_path: str, title: str = "PDF-Vorschau", parent=None):
+    # Signal wenn PDF gespeichert wurde (fuer Cache-Invalidierung)
+    pdf_saved = Signal(int)  # doc_id
+    
+    def __init__(self, pdf_path: str, title: str = "PDF-Vorschau", parent=None,
+                 doc_id: int = None, docs_api=None, editable: bool = False):
         super().__init__(parent)
         self.pdf_path = pdf_path
         self.pdf_document = None
+        self._doc_id = doc_id
+        self._docs_api = docs_api
+        self._editable = editable and doc_id is not None and docs_api is not None
+        self._fitz_doc = None
+        self._change_count = 0
+        self._save_worker = None
+        self._temp_pdf_path = None
         self.setWindowTitle(title)
         self.setMinimumSize(900, 700)
-        self.resize(1000, 800)
+        self.resize(1200 if self._editable else 1000, 900 if self._editable else 800)
         
         self._setup_ui()
+        
+        # PyMuPDF laden fuer Bearbeitung
+        if self._editable:
+            self._load_fitz_document()
     
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -246,14 +285,12 @@ class PDFViewerDialog(QDialog):
         
         # Zoom-Buttons (für QPdfView)
         if HAS_PDF_VIEW:
-            zoom_in_btn = QPushButton("+")
-            zoom_in_btn.setFixedWidth(30)
+            zoom_in_btn = QPushButton("Zoom +")
             zoom_in_btn.setToolTip("Vergroessern")
             zoom_in_btn.clicked.connect(self._zoom_in)
             toolbar.addWidget(zoom_in_btn)
             
-            zoom_out_btn = QPushButton("-")
-            zoom_out_btn.setFixedWidth(30)
+            zoom_out_btn = QPushButton("Zoom -")
             zoom_out_btn.setToolTip("Verkleinern")
             zoom_out_btn.clicked.connect(self._zoom_out)
             toolbar.addWidget(zoom_out_btn)
@@ -270,13 +307,98 @@ class PDFViewerDialog(QDialog):
             
             toolbar.addSeparator()
         
-        # Extern öffnen
+        # Bearbeitungs-Buttons (nur im Edit-Modus)
+        if self._editable:
+            from i18n.de import (
+                PDF_EDIT_ROTATE_CCW, PDF_EDIT_ROTATE_CW,
+                PDF_EDIT_DELETE_PAGE, PDF_EDIT_SAVE
+            )
+            
+            _edit_btn_style = """
+                QPushButton {
+                    padding: 4px 10px;
+                    border: 1px solid #cbd5e1;
+                    border-radius: 4px;
+                    background-color: #f8fafc;
+                    font-size: 11px;
+                }
+                QPushButton:hover { background-color: #e2e8f0; }
+                QPushButton:pressed { background-color: #cbd5e1; }
+            """
+            _delete_btn_style = """
+                QPushButton {
+                    padding: 4px 10px;
+                    border: 1px solid #fca5a5;
+                    border-radius: 4px;
+                    background-color: #fef2f2;
+                    color: #dc2626;
+                    font-size: 11px;
+                }
+                QPushButton:hover { background-color: #fee2e2; }
+                QPushButton:pressed { background-color: #fecaca; }
+            """
+            
+            rotate_ccw_btn = QPushButton(PDF_EDIT_ROTATE_CCW)
+            rotate_ccw_btn.setToolTip(PDF_EDIT_ROTATE_CCW)
+            rotate_ccw_btn.setStyleSheet(_edit_btn_style)
+            rotate_ccw_btn.clicked.connect(self._rotate_ccw)
+            toolbar.addWidget(rotate_ccw_btn)
+            
+            rotate_cw_btn = QPushButton(PDF_EDIT_ROTATE_CW)
+            rotate_cw_btn.setToolTip(PDF_EDIT_ROTATE_CW)
+            rotate_cw_btn.setStyleSheet(_edit_btn_style)
+            rotate_cw_btn.clicked.connect(self._rotate_cw)
+            toolbar.addWidget(rotate_cw_btn)
+            
+            self._delete_page_btn = QPushButton(PDF_EDIT_DELETE_PAGE)
+            self._delete_page_btn.setToolTip(PDF_EDIT_DELETE_PAGE)
+            self._delete_page_btn.setStyleSheet(_delete_btn_style)
+            self._delete_page_btn.clicked.connect(self._delete_page)
+            toolbar.addWidget(self._delete_page_btn)
+            
+            toolbar.addSeparator()
+            
+            self._save_btn = QPushButton(PDF_EDIT_SAVE)
+            self._save_btn.setToolTip(PDF_EDIT_SAVE)
+            self._save_btn.setEnabled(False)
+            self._save_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #059669;
+                    color: white;
+                    border: none;
+                    border-radius: 4px;
+                    padding: 4px 12px;
+                    font-weight: bold;
+                }
+                QPushButton:hover { background-color: #047857; }
+                QPushButton:disabled { background-color: #9ca3af; }
+            """)
+            self._save_btn.clicked.connect(self._save_pdf)
+            toolbar.addWidget(self._save_btn)
+            
+            toolbar.addSeparator()
+        
+        # Spacer um die rechten Elemente nach rechts zu druecken
+        if self._editable:
+            from PySide6.QtWidgets import QSizePolicy
+            spacer = QWidget()
+            spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+            toolbar.addWidget(spacer)
+            
+            from i18n.de import PDF_EDIT_NO_CHANGES
+            self._edit_status_label = QLabel(PDF_EDIT_NO_CHANGES)
+            self._edit_status_label.setStyleSheet(
+                "color: #6b7280; font-size: 11px; padding: 0 8px;"
+            )
+            toolbar.addWidget(self._edit_status_label)
+            
+            toolbar.addSeparator()
+        
+        # Extern oeffnen
         open_external_btn = QPushButton("Extern oeffnen")
         open_external_btn.setToolTip("Mit System-PDF-Viewer oeffnen")
         open_external_btn.clicked.connect(self._open_external)
         toolbar.addWidget(open_external_btn)
-        
-        toolbar.addSeparator()
         
         # Schließen
         close_btn = QPushButton("Schliessen")
@@ -285,21 +407,73 @@ class PDFViewerDialog(QDialog):
         
         layout.addWidget(toolbar)
         
-        # PDF-Anzeige
+        # Inline-Status-Label fuer Fehler (statt modaler Dialoge)
+        self._status_label = QLabel("")
+        self._status_label.setVisible(False)
+        self._status_label.setWordWrap(True)
+        layout.addWidget(self._status_label)
+        
+        # Hauptbereich: Thumbnails (optional) + PDF-Viewer
         if HAS_PDF_VIEW:
-            # Qt6 native PDF-Viewer
-            self.pdf_document = QPdfDocument(self)
-            self.pdf_view = QPdfView(self)
-            self.pdf_view.setDocument(self.pdf_document)
-            self.pdf_view.setPageMode(QPdfView.PageMode.MultiPage)
-            self.pdf_view.setZoomMode(QPdfView.ZoomMode.FitToWidth)
+            if self._editable:
+                # Splitter: Thumbnails links, QPdfView rechts
+                from PySide6.QtWidgets import QSplitter, QListWidget, QListWidgetItem
+                splitter = QSplitter(Qt.Orientation.Horizontal)
+                
+                # Thumbnail-Liste
+                self._thumbnail_list = QListWidget()
+                from PySide6.QtCore import QSize
+                self._thumbnail_list.setIconSize(QSize(120, 160))
+                self._thumbnail_list.setMinimumWidth(145)
+                self._thumbnail_list.setMaximumWidth(160)
+                self._thumbnail_list.setSpacing(2)
+                self._thumbnail_list.setStyleSheet("""
+                    QListWidget {
+                        background-color: #f1f5f9;
+                        border: none;
+                        border-right: 1px solid #e2e8f0;
+                        font-size: 10px;
+                    }
+                    QListWidget::item {
+                        padding: 3px;
+                        border-radius: 3px;
+                    }
+                    QListWidget::item:selected {
+                        background-color: #dbeafe;
+                        border: 2px solid #3b82f6;
+                    }
+                """)
+                splitter.addWidget(self._thumbnail_list)
+                
+                # QPdfView
+                self.pdf_document = QPdfDocument(self)
+                self.pdf_view = QPdfView(self)
+                self.pdf_view.setDocument(self.pdf_document)
+                self.pdf_view.setPageMode(QPdfView.PageMode.MultiPage)
+                self.pdf_view.setZoomMode(QPdfView.ZoomMode.FitInView)
+                splitter.addWidget(self.pdf_view)
+                
+                splitter.setSizes([150, 950])
+                
+                layout.addWidget(splitter)
+            else:
+                # Read-only: Nur QPdfView (wie bisher)
+                self.pdf_document = QPdfDocument(self)
+                self.pdf_view = QPdfView(self)
+                self.pdf_view.setDocument(self.pdf_document)
+                self.pdf_view.setPageMode(QPdfView.PageMode.MultiPage)
+                self.pdf_view.setZoomMode(QPdfView.ZoomMode.FitInView)
+                layout.addWidget(self.pdf_view)
             
             # PDF laden
             error = self.pdf_document.load(self.pdf_path)
             if error != QPdfDocument.Error.None_:
-                QMessageBox.warning(self, "Fehler", f"PDF konnte nicht geladen werden: {error}")
+                self._status_label.setText(f"PDF konnte nicht geladen werden: {error}")
+                self._status_label.setStyleSheet(
+                    "color: #dc2626; background: #fef2f2; padding: 6px 12px; border-radius: 4px;"
+                )
+                self._status_label.setVisible(True)
             
-            layout.addWidget(self.pdf_view)
             self._zoom_factor = 1.0
         else:
             # Fallback: Hinweis und Button zum externen Öffnen
@@ -327,6 +501,264 @@ class PDFViewerDialog(QDialog):
             
             fallback_layout.addStretch()
             layout.addWidget(fallback_widget)
+    
+    # ========================================
+    # PyMuPDF Integration (Bearbeitungsmodus)
+    # ========================================
+    
+    def _load_fitz_document(self):
+        """Laedt das PDF mit PyMuPDF fuer Bearbeitungsoperationen."""
+        try:
+            import fitz
+            self._fitz_doc = fitz.open(self.pdf_path)
+            self._refresh_thumbnails()
+        except Exception as e:
+            logger.error(f"PyMuPDF konnte PDF nicht laden: {e}")
+            self._status_label.setText(f"PDF-Bearbeitung nicht verfuegbar: {e}")
+            self._status_label.setStyleSheet(
+                "color: #dc2626; background: #fef2f2; padding: 6px 12px; border-radius: 4px;"
+            )
+            self._status_label.setVisible(True)
+    
+    def _refresh_thumbnails(self):
+        """Rendert alle Seiten als Thumbnails in die Sidebar."""
+        if not self._fitz_doc or not hasattr(self, '_thumbnail_list'):
+            return
+        
+        from PySide6.QtGui import QPixmap, QImage, QIcon
+        from PySide6.QtCore import QSize
+        from PySide6.QtWidgets import QListWidgetItem
+        
+        self._thumbnail_list.clear()
+        
+        for i in range(len(self._fitz_doc)):
+            page = self._fitz_doc[i]
+            # Thumbnail rendern (120px Breite)
+            zoom = 120.0 / page.rect.width
+            mat = __import__('fitz').Matrix(zoom, zoom)
+            pix = page.get_pixmap(matrix=mat)
+            
+            # PyMuPDF Pixmap -> QImage -> QPixmap -> QIcon
+            img = QImage(pix.samples, pix.width, pix.height, pix.stride, QImage.Format.Format_RGB888)
+            pixmap = QPixmap.fromImage(img)
+            
+            item = QListWidgetItem()
+            item.setIcon(QIcon(pixmap))
+            item.setText(f"S. {i + 1}")
+            item.setData(Qt.ItemDataRole.UserRole, i)  # Seiten-Index
+            self._thumbnail_list.addItem(item)
+        
+        self._thumbnail_list.setIconSize(QSize(120, 160))
+        
+        # Erste Seite auswaehlen
+        if self._thumbnail_list.count() > 0:
+            self._thumbnail_list.setCurrentRow(0)
+    
+    def _get_selected_page_index(self) -> int:
+        """Gibt den Index der aktuell ausgewaehlten Seite zurueck (-1 wenn keine)."""
+        if not hasattr(self, '_thumbnail_list'):
+            return -1
+        current = self._thumbnail_list.currentItem()
+        if current:
+            return current.data(Qt.ItemDataRole.UserRole)
+        return -1
+    
+    def _rotate_cw(self):
+        """Dreht die ausgewaehlte Seite 90 Grad im Uhrzeigersinn."""
+        self._rotate_page(90)
+    
+    def _rotate_ccw(self):
+        """Dreht die ausgewaehlte Seite 90 Grad gegen den Uhrzeigersinn."""
+        self._rotate_page(-90)
+    
+    def _rotate_page(self, degrees: int):
+        """Dreht die ausgewaehlte Seite um die angegebenen Grad."""
+        if not self._fitz_doc:
+            return
+        
+        page_idx = self._get_selected_page_index()
+        if page_idx < 0:
+            return
+        
+        page = self._fitz_doc[page_idx]
+        page.set_rotation((page.rotation + degrees) % 360)
+        self._change_count += 1
+        self._apply_changes_and_refresh(page_idx)
+    
+    def _delete_page(self):
+        """Loescht die ausgewaehlte Seite nach Bestaetigung."""
+        if not self._fitz_doc:
+            return
+        
+        from i18n.de import PDF_EDIT_DELETE_CONFIRM, PDF_EDIT_LAST_PAGE
+        
+        page_idx = self._get_selected_page_index()
+        if page_idx < 0:
+            return
+        
+        # Letzte Seite kann nicht geloescht werden
+        if len(self._fitz_doc) <= 1:
+            self._status_label.setText(PDF_EDIT_LAST_PAGE)
+            self._status_label.setStyleSheet(
+                "color: #f59e0b; background: #fffbeb; padding: 6px 12px; border-radius: 4px;"
+            )
+            self._status_label.setVisible(True)
+            return
+        
+        # Bestaetigung
+        reply = QMessageBox.question(
+            self, "Seite loeschen",
+            PDF_EDIT_DELETE_CONFIRM.format(page=page_idx + 1),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        
+        self._fitz_doc.delete_page(page_idx)
+        self._change_count += 1
+        
+        # Neue Auswahl bestimmen
+        new_idx = min(page_idx, len(self._fitz_doc) - 1)
+        self._apply_changes_and_refresh(new_idx)
+    
+    def _apply_changes_and_refresh(self, select_page: int = 0):
+        """Speichert das geaenderte PDF temporaer und aktualisiert die Anzeige."""
+        if not self._fitz_doc:
+            return
+        
+        import fitz
+        
+        # Alternierende Temp-Dateien: A und B
+        # PyMuPDF kann nicht an die gleiche Datei speichern, von der es gelesen hat.
+        temp_dir = tempfile.gettempdir()
+        old_path = self._temp_pdf_path
+        
+        # Zwischen A und B wechseln
+        path_a = os.path.join(temp_dir, f'bipro_edit_{os.getpid()}_a.pdf')
+        path_b = os.path.join(temp_dir, f'bipro_edit_{os.getpid()}_b.pdf')
+        
+        if old_path == path_a:
+            new_path = path_b
+        else:
+            new_path = path_a
+        
+        self._fitz_doc.save(new_path)
+        self._temp_pdf_path = new_path
+        
+        # QPdfView neu laden
+        if HAS_PDF_VIEW and self.pdf_document:
+            self.pdf_document.close()
+            self.pdf_document.load(new_path)
+        
+        # fitz-Dokument neu laden
+        self._fitz_doc.close()
+        self._fitz_doc = fitz.open(new_path)
+        
+        # Alte Temp-Datei aufraemen
+        if old_path and old_path != new_path and os.path.exists(old_path):
+            try:
+                os.unlink(old_path)
+            except Exception:
+                pass
+        
+        # Thumbnails aktualisieren
+        self._refresh_thumbnails()
+        
+        # Seite auswaehlen
+        if hasattr(self, '_thumbnail_list') and select_page < self._thumbnail_list.count():
+            self._thumbnail_list.setCurrentRow(select_page)
+        
+        # UI aktualisieren
+        self._update_edit_status()
+        self._status_label.setVisible(False)
+    
+    def _update_edit_status(self):
+        """Aktualisiert die Statusbar mit Aenderungszaehler."""
+        if not hasattr(self, '_edit_status_label'):
+            return
+        
+        from i18n.de import PDF_EDIT_CHANGES, PDF_EDIT_NO_CHANGES, PDF_EDIT_STATUS
+        
+        page_count = len(self._fitz_doc) if self._fitz_doc else 0
+        page_idx = self._get_selected_page_index()
+        
+        parts = []
+        if page_count > 0 and page_idx >= 0:
+            parts.append(PDF_EDIT_STATUS.format(current=page_idx + 1, total=page_count))
+        
+        if self._change_count > 0:
+            parts.append(PDF_EDIT_CHANGES.format(count=self._change_count))
+        else:
+            parts.append(PDF_EDIT_NO_CHANGES)
+        
+        self._edit_status_label.setText("  |  ".join(parts))
+        
+        # Save-Button aktivieren wenn Aenderungen vorhanden
+        if hasattr(self, '_save_btn'):
+            self._save_btn.setEnabled(self._change_count > 0)
+    
+    def _save_pdf(self):
+        """Speichert das bearbeitete PDF auf dem Server."""
+        if not self._fitz_doc or not self._docs_api or self._doc_id is None:
+            return
+        
+        from i18n.de import PDF_EDIT_SAVING
+        
+        # Finales PDF in temp-Datei speichern
+        save_path = os.path.join(tempfile.gettempdir(), f'bipro_save_{self._doc_id}.pdf')
+        self._fitz_doc.save(save_path, garbage=4, deflate=True)
+        
+        # Save-Button deaktivieren waehrend Upload
+        self._save_btn.setEnabled(False)
+        self._save_btn.setText(PDF_EDIT_SAVING)
+        
+        # Worker starten
+        self._save_worker = PDFSaveWorker(self._docs_api, self._doc_id, save_path)
+        self._save_worker.finished.connect(self._on_save_finished)
+        self._save_worker.error.connect(self._on_save_error)
+        self._save_worker.start()
+    
+    def _on_save_finished(self, success: bool):
+        """Callback nach dem Speichern."""
+        from i18n.de import PDF_EDIT_SAVE, PDF_EDIT_SAVE_SUCCESS, PDF_EDIT_SAVE_ERROR
+        
+        self._save_btn.setText(PDF_EDIT_SAVE)
+        
+        if success:
+            self._change_count = 0
+            self._update_edit_status()
+            self._status_label.setText(PDF_EDIT_SAVE_SUCCESS)
+            self._status_label.setStyleSheet(
+                "color: #059669; background: #ecfdf5; padding: 6px 12px; border-radius: 4px;"
+            )
+            self._status_label.setVisible(True)
+            # Signal fuer Cache-Invalidierung
+            self.pdf_saved.emit(self._doc_id)
+        else:
+            self._save_btn.setEnabled(True)
+            self._status_label.setText(PDF_EDIT_SAVE_ERROR.format(error="Server-Fehler"))
+            self._status_label.setStyleSheet(
+                "color: #dc2626; background: #fef2f2; padding: 6px 12px; border-radius: 4px;"
+            )
+            self._status_label.setVisible(True)
+    
+    def _on_save_error(self, error_msg: str):
+        """Callback bei Speicher-Fehler."""
+        from i18n.de import PDF_EDIT_SAVE, PDF_EDIT_SAVE_ERROR
+        
+        self._save_btn.setText(PDF_EDIT_SAVE)
+        self._save_btn.setEnabled(True)
+        self._status_label.setText(PDF_EDIT_SAVE_ERROR.format(error=error_msg))
+        self._status_label.setStyleSheet(
+            "color: #dc2626; background: #fef2f2; padding: 6px 12px; border-radius: 4px;"
+        )
+        self._status_label.setVisible(True)
+    
+    # ========================================
+    # Zoom (QPdfView)
+    # ========================================
     
     def _zoom_in(self):
         if HAS_PDF_VIEW:
@@ -363,7 +795,441 @@ class PDFViewerDialog(QDialog):
             else:
                 subprocess.run(['xdg-open', self.pdf_path])
         except Exception as e:
-            QMessageBox.warning(self, "Fehler", f"Konnte PDF nicht oeffnen:\n{e}")
+            self._status_label.setText(f"Konnte PDF nicht oeffnen: {e}")
+            self._status_label.setStyleSheet(
+                "color: #dc2626; background: #fef2f2; padding: 6px 12px; border-radius: 4px;"
+            )
+            self._status_label.setVisible(True)
+    
+    def showEvent(self, event):
+        """Maximiert den Dialog im Bearbeitungsmodus beim ersten Anzeigen."""
+        super().showEvent(event)
+        if self._editable and not getattr(self, '_was_shown', False):
+            self._was_shown = True
+            self.showMaximized()
+    
+    def closeEvent(self, event):
+        """Warnt bei ungespeicherten Aenderungen."""
+        if self._change_count > 0:
+            from i18n.de import PDF_EDIT_UNSAVED, PDF_EDIT_UNSAVED_CONFIRM
+            reply = QMessageBox.question(
+                self, PDF_EDIT_UNSAVED, PDF_EDIT_UNSAVED_CONFIRM,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                event.ignore()
+                return
+        
+        # Cleanup
+        if self._fitz_doc:
+            try:
+                self._fitz_doc.close()
+            except Exception:
+                pass
+        
+        # Temp-Dateien aufraemen (beide alternierenden + save-Datei)
+        temp_dir = tempfile.gettempdir()
+        for suffix in ['_a.pdf', '_b.pdf']:
+            p = os.path.join(temp_dir, f'bipro_edit_{os.getpid()}{suffix}')
+            if os.path.exists(p):
+                try:
+                    os.unlink(p)
+                except Exception:
+                    pass
+        
+        save_path = os.path.join(temp_dir, f'bipro_save_{self._doc_id}.pdf') if self._doc_id else None
+        if save_path and os.path.exists(save_path):
+            try:
+                os.unlink(save_path)
+            except Exception:
+                pass
+        
+        super().closeEvent(event)
+
+
+# ========================================
+# Excel/CSV-Vorschau
+# ========================================
+
+# openpyxl fuer .xlsx (optional)
+HAS_OPENPYXL = False
+try:
+    import openpyxl
+    HAS_OPENPYXL = True
+except ImportError:
+    pass
+
+
+class SpreadsheetViewerDialog(QDialog):
+    """
+    Dialog zur Vorschau von CSV- und Excel-Dateien.
+    
+    Zeigt tabellarische Daten in einem QTableWidget an.
+    Unterstuetzt:
+    - CSV (.csv) via Python csv-Modul
+    - Excel (.xlsx) via openpyxl
+    - TSV (.tsv) via Python csv-Modul
+    """
+    
+    # Maximale Zeilen fuer die Vorschau (Performance-Schutz)
+    MAX_PREVIEW_ROWS = 5000
+    
+    def __init__(self, file_path: str, title: str = "", parent=None):
+        super().__init__(parent)
+        self.file_path = file_path
+        self._sheets_data: dict = {}  # {sheet_name: (headers, rows)}
+        self._current_sheet: str = ""
+        
+        from i18n.de import SPREADSHEET_PREVIEW_TITLE
+        display_title = title or SPREADSHEET_PREVIEW_TITLE.format(
+            filename=os.path.basename(file_path)
+        )
+        self.setWindowTitle(display_title)
+        self.setMinimumSize(900, 600)
+        self.resize(1100, 750)
+        
+        self._setup_ui()
+        self._load_data()
+    
+    def _setup_ui(self):
+        """Erstellt die UI-Elemente."""
+        from i18n.de import (
+            SPREADSHEET_SHEET_LABEL, SPREADSHEET_EXTERN_OPEN,
+            SPREADSHEET_CLOSE, SPREADSHEET_NO_DATA
+        )
+        
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        
+        # Toolbar
+        toolbar = QToolBar()
+        toolbar.setMovable(False)
+        
+        # Titel
+        title_label = QLabel(f"  {os.path.basename(self.file_path)}")
+        title_label.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
+        toolbar.addWidget(title_label)
+        
+        toolbar.addSeparator()
+        
+        # Sheet-Auswahl (nur fuer Excel mit mehreren Blaettern)
+        self._sheet_label = QLabel(f"  {SPREADSHEET_SHEET_LABEL} ")
+        self._sheet_label.setVisible(False)
+        toolbar.addWidget(self._sheet_label)
+        
+        self._sheet_combo = QComboBox()
+        self._sheet_combo.setMinimumWidth(150)
+        self._sheet_combo.currentTextChanged.connect(self._on_sheet_changed)
+        self._sheet_combo.setVisible(False)
+        toolbar.addWidget(self._sheet_combo)
+        
+        toolbar.addSeparator()
+        
+        # Zeilen-Info
+        self._info_label = QLabel("")
+        self._info_label.setFont(QFont("Segoe UI", 9))
+        toolbar.addWidget(self._info_label)
+        
+        # Spacer
+        spacer = QWidget()
+        from PySide6.QtWidgets import QSizePolicy
+        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        toolbar.addWidget(spacer)
+        
+        # Extern oeffnen
+        open_external_btn = QPushButton(SPREADSHEET_EXTERN_OPEN)
+        open_external_btn.setToolTip("Mit System-Anwendung oeffnen")
+        open_external_btn.clicked.connect(self._open_external)
+        toolbar.addWidget(open_external_btn)
+        
+        toolbar.addSeparator()
+        
+        # Schliessen
+        close_btn = QPushButton(SPREADSHEET_CLOSE)
+        close_btn.clicked.connect(self.close)
+        toolbar.addWidget(close_btn)
+        
+        layout.addWidget(toolbar)
+        
+        # Tabelle
+        self.table = QTableWidget()
+        self.table.setAlternatingRowColors(True)
+        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.verticalHeader().setDefaultSectionSize(24)
+        self.table.setStyleSheet("""
+            QTableWidget {
+                font-family: 'Segoe UI', 'Consolas', monospace;
+                font-size: 12px;
+                gridline-color: #e0e0e0;
+            }
+            QTableWidget::item {
+                padding: 2px 6px;
+            }
+            QHeaderView::section {
+                background-color: #f0f0f0;
+                padding: 4px 6px;
+                border: 1px solid #d0d0d0;
+                font-weight: bold;
+                font-size: 11px;
+            }
+            QTableWidget::item:alternate {
+                background-color: #fafafa;
+            }
+        """)
+        layout.addWidget(self.table)
+        
+        # Hinweis-Label (bei leeren Daten)
+        self._empty_label = QLabel(SPREADSHEET_NO_DATA)
+        self._empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._empty_label.setFont(QFont("Segoe UI", 11))
+        self._empty_label.setVisible(False)
+        layout.addWidget(self._empty_label)
+        
+        # Inline-Status-Label fuer Fehler/Hinweise (statt modaler Dialoge)
+        self._status_label = QLabel("")
+        self._status_label.setVisible(False)
+        self._status_label.setWordWrap(True)
+        layout.addWidget(self._status_label)
+    
+    def _load_data(self):
+        """Laedt die Daten basierend auf Dateiendung."""
+        ext = os.path.splitext(self.file_path)[1].lower()
+        
+        try:
+            if ext == '.csv':
+                self._load_csv()
+            elif ext == '.tsv':
+                self._load_csv(delimiter='\t')
+            elif ext == '.xlsx':
+                self._load_xlsx()
+            elif ext == '.xls':
+                self._show_xls_message()
+                return
+            else:
+                # Versuche als CSV (z.B. fuer .txt mit Tabulator-Trennung)
+                self._load_csv()
+        except Exception as e:
+            from i18n.de import SPREADSHEET_LOAD_ERROR
+            logger.error(f"Fehler beim Laden der Tabelle: {e}")
+            self._status_label.setText(SPREADSHEET_LOAD_ERROR.format(error=str(e)))
+            self._status_label.setStyleSheet(
+                "color: #dc2626; background: #fef2f2; padding: 6px 12px; border-radius: 4px;"
+            )
+            self._status_label.setVisible(True)
+            return
+        
+        # Erstes Sheet anzeigen
+        if self._sheets_data:
+            sheet_names = list(self._sheets_data.keys())
+            
+            # Sheet-Auswahl nur bei mehreren Blaettern anzeigen
+            if len(sheet_names) > 1:
+                self._sheet_label.setVisible(True)
+                self._sheet_combo.setVisible(True)
+                self._sheet_combo.addItems(sheet_names)
+            
+            self._display_sheet(sheet_names[0])
+    
+    def _load_csv(self, delimiter: str = None):
+        """
+        Laedt CSV-Datei mit automatischer Delimiter- und Encoding-Erkennung.
+        
+        Args:
+            delimiter: Optionaler Delimiter. Wenn None, wird automatisch erkannt.
+        """
+        import csv
+        
+        # Encoding-Reihenfolge (wie beim GDV-Parser)
+        encodings = ['utf-8-sig', 'utf-8', 'cp1252', 'latin-1']
+        content = None
+        used_encoding = None
+        
+        for enc in encodings:
+            try:
+                with open(self.file_path, 'r', encoding=enc) as f:
+                    content = f.read()
+                    used_encoding = enc
+                    break
+            except (UnicodeDecodeError, UnicodeError):
+                continue
+        
+        if content is None:
+            from i18n.de import SPREADSHEET_ENCODING_ERROR
+            raise ValueError(SPREADSHEET_ENCODING_ERROR)
+        
+        # Delimiter automatisch erkennen wenn nicht vorgegeben
+        if delimiter is None:
+            sniffer = csv.Sniffer()
+            try:
+                # Erste 8KB fuer Erkennung verwenden
+                sample = content[:8192]
+                dialect = sniffer.sniff(sample, delimiters=',;\t|')
+                delimiter = dialect.delimiter
+            except csv.Error:
+                # Fallback: Semikolon (deutsch) oder Komma
+                delimiter = ';' if ';' in content[:2000] else ','
+        
+        # CSV parsen
+        lines = content.splitlines()
+        reader = csv.reader(lines, delimiter=delimiter)
+        
+        rows = []
+        headers = []
+        
+        for i, row in enumerate(reader):
+            if i == 0:
+                # Erste Zeile als Header verwenden
+                headers = [str(h).strip() for h in row]
+            else:
+                rows.append([str(cell) for cell in row])
+            
+            if i >= self.MAX_PREVIEW_ROWS:
+                break
+        
+        # Falls keine Header erkannt (z.B. nur Daten)
+        if not headers and rows:
+            # Generische Header
+            max_cols = max(len(r) for r in rows) if rows else 0
+            headers = [f"Spalte {i+1}" for i in range(max_cols)]
+        
+        sheet_name = os.path.basename(self.file_path)
+        self._sheets_data[sheet_name] = (headers, rows, len(lines) - 1)
+    
+    def _load_xlsx(self):
+        """Laedt Excel-Datei (.xlsx) via openpyxl."""
+        if not HAS_OPENPYXL:
+            from i18n.de import SPREADSHEET_XLSX_NOT_AVAILABLE
+            self._status_label.setText(SPREADSHEET_XLSX_NOT_AVAILABLE)
+            self._status_label.setStyleSheet(
+                "color: #1e40af; background: #eff6ff; padding: 6px 12px; border-radius: 4px;"
+            )
+            self._status_label.setVisible(True)
+            self._open_external()
+            return
+        
+        wb = openpyxl.load_workbook(self.file_path, read_only=True, data_only=True)
+        
+        for sheet_name in wb.sheetnames:
+            ws = wb[sheet_name]
+            headers = []
+            rows = []
+            total_rows = 0
+            
+            for i, row in enumerate(ws.iter_rows(values_only=True)):
+                if i == 0:
+                    # Erste Zeile als Header
+                    headers = [str(cell) if cell is not None else "" for cell in row]
+                else:
+                    rows.append([
+                        str(cell) if cell is not None else "" for cell in row
+                    ])
+                
+                total_rows = i
+                
+                if i >= self.MAX_PREVIEW_ROWS:
+                    break
+            
+            # Falls Sheet leer ist
+            if not headers and not rows:
+                headers = ["(leer)"]
+            
+            # Falls keine Header erkannt
+            if not headers and rows:
+                max_cols = max(len(r) for r in rows) if rows else 0
+                headers = [f"Spalte {i+1}" for i in range(max_cols)]
+            
+            self._sheets_data[sheet_name] = (headers, rows, total_rows)
+        
+        wb.close()
+    
+    def _show_xls_message(self):
+        """Zeigt Hinweis fuer alte .xls Dateien."""
+        from i18n.de import SPREADSHEET_XLS_NOT_SUPPORTED
+        self._status_label.setText(SPREADSHEET_XLS_NOT_SUPPORTED)
+        self._status_label.setStyleSheet(
+            "color: #1e40af; background: #eff6ff; padding: 6px 12px; border-radius: 4px;"
+        )
+        self._status_label.setVisible(True)
+        self._open_external()
+    
+    def _display_sheet(self, sheet_name: str):
+        """Zeigt die Daten eines Sheets in der Tabelle an."""
+        from i18n.de import (
+            SPREADSHEET_ROWS_INFO, SPREADSHEET_MAX_ROWS_INFO,
+            SPREADSHEET_NO_DATA
+        )
+        
+        if sheet_name not in self._sheets_data:
+            return
+        
+        self._current_sheet = sheet_name
+        headers, rows, total_rows = self._sheets_data[sheet_name]
+        
+        if not headers and not rows:
+            self.table.setVisible(False)
+            self._empty_label.setVisible(True)
+            self._info_label.setText(SPREADSHEET_NO_DATA)
+            return
+        
+        self.table.setVisible(True)
+        self._empty_label.setVisible(False)
+        
+        # Tabelle befuellen
+        self.table.setColumnCount(len(headers))
+        self.table.setHorizontalHeaderLabels(headers)
+        self.table.setRowCount(len(rows))
+        
+        for row_idx, row_data in enumerate(rows):
+            for col_idx, cell_value in enumerate(row_data):
+                if col_idx < len(headers):
+                    item = QTableWidgetItem(cell_value)
+                    self.table.setItem(row_idx, col_idx, item)
+        
+        # Spaltenbreiten anpassen
+        self.table.resizeColumnsToContents()
+        
+        # Maximale Spaltenbreite begrenzen
+        for col in range(self.table.columnCount()):
+            if self.table.columnWidth(col) > 300:
+                self.table.setColumnWidth(col, 300)
+        
+        # Info-Label aktualisieren
+        shown_rows = len(rows)
+        if total_rows > self.MAX_PREVIEW_ROWS:
+            self._info_label.setText(
+                f"  {SPREADSHEET_MAX_ROWS_INFO.format(shown=shown_rows, total=total_rows)}"
+            )
+        else:
+            self._info_label.setText(
+                f"  {SPREADSHEET_ROWS_INFO.format(rows=shown_rows, cols=len(headers))}"
+            )
+    
+    def _on_sheet_changed(self, sheet_name: str):
+        """Handler fuer Sheet-Wechsel."""
+        if sheet_name and sheet_name in self._sheets_data:
+            self._display_sheet(sheet_name)
+    
+    def _open_external(self):
+        """Oeffnet die Datei mit der System-Anwendung."""
+        import subprocess
+        import sys
+        
+        try:
+            if sys.platform == 'win32':
+                os.startfile(self.file_path)
+            elif sys.platform == 'darwin':
+                subprocess.run(['open', self.file_path])
+            else:
+                subprocess.run(['xdg-open', self.file_path])
+        except Exception as e:
+            self._status_label.setText(f"Konnte Datei nicht oeffnen: {e}")
+            self._status_label.setStyleSheet(
+                "color: #dc2626; background: #fef2f2; padding: 6px 12px; border-radius: 4px;"
+            )
+            self._status_label.setVisible(True)
 
 
 class ArchiveView(QWidget):
@@ -448,6 +1314,7 @@ class ArchiveView(QWidget):
         self.source_filter.addItem("BiPRO (automatisch)", "bipro_auto")
         self.source_filter.addItem("Manuell hochgeladen", "manual_upload")
         self.source_filter.addItem("Selbst erstellt", "self_created")
+        self.source_filter.addItem("Scan", "scan")
         self.source_filter.currentIndexChanged.connect(self._apply_filter)
         filter_layout.addWidget(self.source_filter)
         
@@ -533,7 +1400,7 @@ class ArchiveView(QWidget):
         """Callback bei Ladefehler."""
         self.table.setEnabled(True)
         self.status_label.setText(f"Fehler: {error}")
-        QMessageBox.warning(self, "Fehler", f"Dokumente konnten nicht geladen werden:\n{error}")
+        self._toast_manager.show_error(f"Dokumente konnten nicht geladen werden:\n{error}")
     
     def _populate_table(self):
         """Tabelle mit Dokumenten füllen."""
@@ -555,6 +1422,8 @@ class ArchiveView(QWidget):
                 source_item.setForeground(QColor("#2196F3"))
             elif doc.source_type == 'self_created':
                 source_item.setForeground(QColor("#4CAF50"))
+            elif doc.source_type == 'scan':
+                source_item.setForeground(QColor("#9C27B0"))  # Lila fuer Scan
             self.table.setItem(row, 2, source_item)
             
             # GDV
@@ -701,11 +1570,11 @@ class ArchiveView(QWidget):
         selected_docs = self._get_selected_documents()
         
         if not selected_docs:
-            QMessageBox.information(self, "Info", "Bitte ein Dokument auswählen.")
+            self._toast_manager.show_info("Bitte ein Dokument auswählen.")
             return
         
         if len(selected_docs) > 1:
-            QMessageBox.information(self, "Info", "Bitte nur ein Dokument für die Vorschau auswählen.")
+            self._toast_manager.show_info("Bitte nur ein Dokument für die Vorschau auswählen.")
             return
         
         doc = selected_docs[0]
@@ -715,10 +1584,8 @@ class ArchiveView(QWidget):
         elif doc.is_gdv:
             self._open_in_gdv_editor(doc)
         else:
-            QMessageBox.information(
-                self, 
-                "Keine Vorschau", 
-                f"Für '{doc.original_filename}' ist keine Vorschau verfügbar.\n\n"
+            self._toast_manager.show_info(
+                f"Für '{doc.original_filename}' ist keine Vorschau verfügbar. "
                 "Vorschau ist nur für PDF-Dateien und GDV-Dateien möglich."
             )
     
@@ -734,7 +1601,7 @@ class ArchiveView(QWidget):
         progress.show()
         
         try:
-            result = self.docs_api.download(doc.id, temp_dir)
+            result = self.docs_api.download(doc.id, temp_dir, filename_override=doc.original_filename)
             progress.close()
             
             if result and os.path.exists(result):
@@ -742,10 +1609,10 @@ class ArchiveView(QWidget):
                 viewer = PDFViewerDialog(result, f"Vorschau: {doc.original_filename}", self)
                 viewer.exec()
             else:
-                QMessageBox.warning(self, "Fehler", "PDF konnte nicht geladen werden.")
+                self._toast_manager.show_error("PDF konnte nicht geladen werden.")
         except Exception as e:
             progress.close()
-            QMessageBox.warning(self, "Fehler", f"Vorschau fehlgeschlagen:\n{e}")
+            self._toast_manager.show_error(f"Vorschau fehlgeschlagen:\n{e}")
     
     def _upload_document(self):
         """Dokument hochladen."""
@@ -777,19 +1644,15 @@ class ArchiveView(QWidget):
         progress.close()
         
         if doc:
-            QMessageBox.information(
-                self,
-                "Erfolg",
-                f"Dokument '{doc.original_filename}' erfolgreich hochgeladen."
-            )
+            self._toast_manager.show_success(f"Dokument '{doc.original_filename}' erfolgreich hochgeladen.")
             self.refresh_documents()
         else:
-            QMessageBox.warning(self, "Fehler", "Upload fehlgeschlagen.")
+            self._toast_manager.show_error("Upload fehlgeschlagen.")
     
     def _on_upload_error(self, error: str, progress: QProgressDialog):
         """Callback bei Upload-Fehler."""
         progress.close()
-        QMessageBox.critical(self, "Fehler", f"Upload fehlgeschlagen:\n{error}")
+        self._toast_manager.show_error(f"Upload fehlgeschlagen:\n{error}")
     
     def _download_document(self, doc: Document):
         """Dokument herunterladen."""
@@ -802,16 +1665,12 @@ class ArchiveView(QWidget):
         if not target_dir:
             return
         
-        result = self.docs_api.download(doc.id, target_dir)
+        result = self.docs_api.download(doc.id, target_dir, filename_override=doc.original_filename)
         
         if result:
-            QMessageBox.information(
-                self,
-                "Erfolg",
-                f"Dokument gespeichert:\n{result}"
-            )
+            self._toast_manager.show_success(f"Dokument gespeichert:\n{result}")
         else:
-            QMessageBox.warning(self, "Fehler", "Download fehlgeschlagen.")
+            self._toast_manager.show_error("Download fehlgeschlagen.")
     
     def _open_in_gdv_editor(self, doc: Document):
         """GDV-Dokument im Editor öffnen."""
@@ -832,7 +1691,7 @@ class ArchiveView(QWidget):
                 self.refresh_documents()
             else:
                 # Nur bei Fehler eine Meldung anzeigen
-                QMessageBox.warning(self, "Fehler", "Löschen fehlgeschlagen.")
+                self._toast_manager.show_error("Löschen fehlgeschlagen.")
     
     def _delete_selected(self):
         """Mehrere ausgewählte Dokumente löschen."""
@@ -906,10 +1765,8 @@ class ArchiveView(QWidget):
         selected_docs = self._get_selected_documents()
         
         if not selected_docs:
-            QMessageBox.information(
-                self, 
-                "Info", 
-                "Bitte mindestens ein Dokument auswählen.\n\n"
+            self._toast_manager.show_info(
+                "Bitte mindestens ein Dokument auswählen. "
                 "Tipp: Mit Strg+Klick oder Shift+Klick mehrere auswählen."
             )
             return
@@ -944,7 +1801,7 @@ class ArchiveView(QWidget):
             progress.setValue(i)
             progress.setLabelText(f"Lade: {doc.original_filename}")
             
-            result = self.docs_api.download(doc.id, target_dir)
+            result = self.docs_api.download(doc.id, target_dir, filename_override=doc.original_filename)
             if result:
                 success_count += 1
             else:
@@ -954,19 +1811,12 @@ class ArchiveView(QWidget):
         
         # Zusammenfassung
         if failed_count == 0:
-            QMessageBox.information(
-                self,
-                "Download abgeschlossen",
-                f"{success_count} Dokument(e) erfolgreich heruntergeladen.\n\n"
-                f"Speicherort: {target_dir}"
+            self._toast_manager.show_success(
+                f"{success_count} Dokument(e) erfolgreich heruntergeladen. Speicherort: {target_dir}"
             )
         else:
-            QMessageBox.warning(
-                self,
-                "Download mit Fehlern",
-                f"Erfolgreich: {success_count}\n"
-                f"Fehlgeschlagen: {failed_count}\n\n"
-                f"Speicherort: {target_dir}"
+            self._toast_manager.show_warning(
+                f"Download: {success_count} erfolgreich, {failed_count} fehlgeschlagen. Speicherort: {target_dir}"
             )
     
     # ========================================
@@ -985,11 +1835,8 @@ class ArchiveView(QWidget):
             all_unrenamed = [d for d in self._documents if d.is_pdf and not d.ai_renamed]
             
             if not all_unrenamed:
-                QMessageBox.information(
-                    self,
-                    "KI-Benennung",
-                    "Keine PDFs ohne KI-Benennung gefunden.\n\n"
-                    "Alle PDFs wurden bereits verarbeitet."
+                self._toast_manager.show_info(
+                    "Keine PDFs ohne KI-Benennung gefunden. Alle PDFs wurden bereits verarbeitet."
                 )
                 return
             
@@ -1089,19 +1936,12 @@ class ArchiveView(QWidget):
         detail_text = "\n".join(details)
         
         if failed_count == 0:
-            QMessageBox.information(
-                self,
-                "KI-Benennung abgeschlossen",
-                f"Alle {success_count} Dokument(e) erfolgreich umbenannt.\n\n"
-                f"Ergebnisse:\n{detail_text}"
+            self._toast_manager.show_success(
+                f"KI-Benennung: Alle {success_count} Dokument(e) erfolgreich umbenannt."
             )
         else:
-            QMessageBox.warning(
-                self,
-                "KI-Benennung mit Fehlern",
-                f"Erfolgreich: {success_count}\n"
-                f"Fehlgeschlagen: {failed_count}\n\n"
-                f"Ergebnisse:\n{detail_text}"
+            self._toast_manager.show_warning(
+                f"KI-Benennung: {success_count} erfolgreich, {failed_count} fehlgeschlagen."
             )
         
         # Tabelle aktualisieren
@@ -1112,12 +1952,6 @@ class ArchiveView(QWidget):
         if hasattr(self, '_ai_progress') and self._ai_progress:
             self._ai_progress.close()
         
-        QMessageBox.critical(
-            self,
-            "KI-Benennung Fehler",
-            f"Ein Fehler ist aufgetreten:\n\n{error}\n\n"
-            "Moegliche Ursachen:\n"
-            "- Keine Internetverbindung\n"
-            "- OpenRouter API-Key ungueltig\n"
-            "- Server nicht erreichbar"
+        self._toast_manager.show_error(
+            f"KI-Benennung Fehler: {error}"
         )

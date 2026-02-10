@@ -1,5 +1,5 @@
 """
-Konfigurationsmodul fuer BiPRO-GDV Tool.
+Konfigurationsmodul fuer ACENCIA ATLAS.
 """
 
 from .processing_rules import PROCESSING_RULES

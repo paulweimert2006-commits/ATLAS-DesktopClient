@@ -15,7 +15,7 @@ import sys
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel,
     QLineEdit, QComboBox, QScrollArea, QFrame, QGroupBox,
-    QPushButton, QMessageBox, QSizePolicy
+    QPushButton, QSizePolicy
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont
@@ -493,9 +493,22 @@ class UserDetailWidget(QWidget):
         # Signal senden
         self.record_changed.emit(self._current_record)
         
-        QMessageBox.information(
-            self, "Gespeichert",
-            "Die Änderungen wurden übernommen.\n"
-            "Speichern Sie die Datei, um sie dauerhaft zu sichern."
-        )
+        # Erfolg ueber Toast-System anzeigen (ueber Fenster-Hierarchie)
+        main_window = self.window()
+        if hasattr(main_window, '_toast_manager') and main_window._toast_manager:
+            main_window._toast_manager.show_success(
+                "Die Änderungen wurden übernommen.\n"
+                "Speichern Sie die Datei, um sie dauerhaft zu sichern."
+            )
+        else:
+            # Fallback: Ueber parent() chain versuchen
+            parent = self.parent()
+            while parent:
+                if hasattr(parent, '_toast_manager') and parent._toast_manager:
+                    parent._toast_manager.show_success(
+                        "Die Änderungen wurden übernommen.\n"
+                        "Speichern Sie die Datei, um sie dauerhaft zu sichern."
+                    )
+                    break
+                parent = parent.parent()
 

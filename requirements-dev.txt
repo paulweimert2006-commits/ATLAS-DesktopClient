@@ -1,4 +1,4 @@
-# Dev-Dependencies fuer BiPRO-GDV Tool
+# Dev-Dependencies fuer ACENCIA ATLAS
 # Installation: pip install -r requirements-dev.txt
 
 # Testing

@@ -46,6 +46,19 @@ function handleProcessingHistoryRequest(string $action, string $method): void {
                 getRecentErrors($user);
             }
             break;
+        
+        case 'costs':
+            if ($method === 'GET') {
+                getCostHistory($user);
+            }
+            break;
+        
+        case 'cost_stats':
+        case 'cost-stats':
+            if ($method === 'GET') {
+                getCostStats($user);
+            }
+            break;
             
         default:
             // ID als Action interpretieren (GET /processing_history/123)
@@ -351,5 +364,225 @@ function getRecentErrors(array $user): void {
     json_success([
         'errors' => $errors,
         'count' => count($errors)
+    ]);
+}
+
+/**
+ * Liefert die Kosten-Historie (alle batch_cost_update Eintraege)
+ * 
+ * Gibt eine Liste aller Verarbeitungslaeufe mit Kosten-Informationen zurueck.
+ * Nutzt batch_cost_update als primaere Quelle (mit tatsaechlichen Kosten),
+ * faellt auf batch_complete zurueck (fuer aeltere Eintraege mit sofort-berechneten Kosten).
+ */
+function getCostHistory(array $user): void {
+    $limit = isset($_GET['limit']) ? min(intval($_GET['limit']), 500) : 100;
+    $offset = isset($_GET['offset']) ? intval($_GET['offset']) : 0;
+    
+    $where = ["h.action IN ('batch_cost_update', 'batch_complete')"];
+    $params = [];
+    
+    // Zeitraum-Filter
+    if (isset($_GET['from'])) {
+        $where[] = 'h.created_at >= ?';
+        $params[] = $_GET['from'];
+    }
+    if (isset($_GET['to'])) {
+        $where[] = 'h.created_at <= ?';
+        $params[] = $_GET['to'];
+    }
+    
+    $whereClause = implode(' AND ', $where);
+    
+    // Zaehlen
+    $total = Database::queryOne(
+        "SELECT COUNT(*) as count FROM processing_history h WHERE $whereClause",
+        $params
+    )['count'];
+    
+    // Daten abrufen
+    $queryParams = array_merge($params, [$limit, $offset]);
+    
+    $entries = Database::query("
+        SELECT h.*
+        FROM processing_history h
+        WHERE $whereClause
+        ORDER BY h.created_at DESC
+        LIMIT ? OFFSET ?
+    ", $queryParams);
+    
+    // action_details decodieren und in einheitliches Format bringen
+    $costEntries = [];
+    $seenReferences = []; // Tracking welche batch_complete schon durch cost_update abgedeckt sind
+    
+    foreach ($entries as $entry) {
+        $details = !empty($entry['action_details']) 
+            ? json_decode($entry['action_details'], true) 
+            : [];
+        
+        if ($entry['action'] === 'batch_cost_update') {
+            // Primaere Quelle: Verzoegerter Kosten-Check (genauer)
+            $refId = $details['reference_entry_id'] ?? null;
+            if ($refId) {
+                $seenReferences[$refId] = true;
+            }
+            
+            $costEntries[] = [
+                'id' => intval($entry['id']),
+                'date' => $entry['created_at'],
+                'total_cost_usd' => floatval($details['total_cost_usd'] ?? 0),
+                'cost_per_document_usd' => floatval($details['cost_per_document_usd'] ?? 0),
+                'total_documents' => intval($details['total_documents'] ?? 0),
+                'successful_documents' => intval($details['successful_documents'] ?? 0),
+                'failed_documents' => intval($details['failed_documents'] ?? 0),
+                'duration_seconds' => floatval($details['duration_seconds'] ?? 0),
+                'credits_before_usd' => floatval($details['credits_before_usd'] ?? 0),
+                'credits_after_usd' => floatval($details['credits_after_usd'] ?? 0),
+                'user' => $entry['created_by'] ?? 'system',
+                'source' => 'delayed'  // Verzoegerter Check
+            ];
+        }
+    }
+    
+    // Zweitdurchlauf: batch_complete Eintraege die NICHT durch cost_update abgedeckt sind
+    // (aeltere Eintraege mit direkt berechneten Kosten)
+    foreach ($entries as $entry) {
+        if ($entry['action'] !== 'batch_complete') continue;
+        
+        $entryId = intval($entry['id']);
+        if (isset($seenReferences[$entryId])) continue; // Schon durch cost_update abgedeckt
+        
+        $details = !empty($entry['action_details']) 
+            ? json_decode($entry['action_details'], true) 
+            : [];
+        
+        // Nur Eintraege mit tatsaechlichen Kosten-Daten
+        if (isset($details['total_cost_usd']) && !($details['cost_pending'] ?? false)) {
+            $costEntries[] = [
+                'id' => $entryId,
+                'date' => $entry['created_at'],
+                'total_cost_usd' => floatval($details['total_cost_usd'] ?? 0),
+                'cost_per_document_usd' => floatval($details['cost_per_document_usd'] ?? 0),
+                'total_documents' => intval($details['total_documents'] ?? 0),
+                'successful_documents' => intval($details['successful_documents'] ?? 0),
+                'failed_documents' => intval($details['failed_documents'] ?? 0),
+                'duration_seconds' => floatval($details['duration_seconds'] ?? 0),
+                'credits_before_usd' => floatval($details['credits_before_usd'] ?? 0),
+                'credits_after_usd' => floatval($details['credits_after_usd'] ?? 0),
+                'user' => $entry['created_by'] ?? 'system',
+                'source' => 'immediate'  // Sofort-Berechnung (Legacy)
+            ];
+        }
+    }
+    
+    // Nach Datum sortieren (neueste zuerst)
+    usort($costEntries, function($a, $b) {
+        return strcmp($b['date'], $a['date']);
+    });
+    
+    json_success([
+        'entries' => $costEntries,
+        'total' => count($costEntries),
+        'limit' => $limit,
+        'offset' => $offset
+    ]);
+}
+
+/**
+ * Liefert aggregierte Kosten-Statistiken
+ */
+function getCostStats(array $user): void {
+    // Zeitraum-Filter
+    $from = $_GET['from'] ?? null;
+    $to = $_GET['to'] ?? date('Y-m-d H:i:s');
+    
+    $where = ["h.action IN ('batch_cost_update', 'batch_complete')"];
+    $params = [];
+    
+    if ($from) {
+        $where[] = 'h.created_at >= ?';
+        $params[] = $from;
+    }
+    $where[] = 'h.created_at <= ?';
+    $params[] = $to;
+    
+    $whereClause = implode(' AND ', $where);
+    
+    // Alle relevanten Eintraege holen
+    $entries = Database::query("
+        SELECT h.action, h.action_details, h.created_at
+        FROM processing_history h
+        WHERE $whereClause
+        ORDER BY h.created_at DESC
+    ", $params);
+    
+    // Kosten aggregieren (gleiche Logik wie getCostHistory)
+    $totalRuns = 0;
+    $totalDocs = 0;
+    $totalSuccessful = 0;
+    $totalFailed = 0;
+    $totalCostUsd = 0.0;
+    $totalDurationSeconds = 0.0;
+    $seenReferences = [];
+    
+    // Erst batch_cost_update verarbeiten
+    foreach ($entries as $entry) {
+        if ($entry['action'] !== 'batch_cost_update') continue;
+        
+        $details = !empty($entry['action_details']) 
+            ? json_decode($entry['action_details'], true) 
+            : [];
+        
+        $refId = $details['reference_entry_id'] ?? null;
+        if ($refId) {
+            $seenReferences[$refId] = true;
+        }
+        
+        $totalRuns++;
+        $totalDocs += intval($details['total_documents'] ?? 0);
+        $totalSuccessful += intval($details['successful_documents'] ?? 0);
+        $totalFailed += intval($details['failed_documents'] ?? 0);
+        $totalCostUsd += floatval($details['total_cost_usd'] ?? 0);
+        $totalDurationSeconds += floatval($details['duration_seconds'] ?? 0);
+    }
+    
+    // Dann batch_complete ohne zugehoerigen cost_update
+    foreach ($entries as $entry) {
+        if ($entry['action'] !== 'batch_complete') continue;
+        
+        $details = !empty($entry['action_details']) 
+            ? json_decode($entry['action_details'], true) 
+            : [];
+        
+        // Schon abgedeckt oder keine Kosten?
+        if (isset($seenReferences[intval($entry['id'] ?? 0)])) continue;
+        if (!isset($details['total_cost_usd']) || ($details['cost_pending'] ?? false)) continue;
+        
+        $totalRuns++;
+        $totalDocs += intval($details['total_documents'] ?? 0);
+        $totalSuccessful += intval($details['successful_documents'] ?? 0);
+        $totalFailed += intval($details['failed_documents'] ?? 0);
+        $totalCostUsd += floatval($details['total_cost_usd'] ?? 0);
+        $totalDurationSeconds += floatval($details['duration_seconds'] ?? 0);
+    }
+    
+    // Durchschnitte berechnen
+    $avgCostPerDoc = $totalSuccessful > 0 ? $totalCostUsd / $totalSuccessful : 0;
+    $avgCostPerRun = $totalRuns > 0 ? $totalCostUsd / $totalRuns : 0;
+    $successRate = $totalDocs > 0 ? ($totalSuccessful / $totalDocs) * 100 : 0;
+    
+    json_success([
+        'total_runs' => $totalRuns,
+        'total_documents' => $totalDocs,
+        'total_successful' => $totalSuccessful,
+        'total_failed' => $totalFailed,
+        'total_cost_usd' => round($totalCostUsd, 6),
+        'avg_cost_per_document_usd' => round($avgCostPerDoc, 8),
+        'avg_cost_per_run_usd' => round($avgCostPerRun, 6),
+        'total_duration_seconds' => round($totalDurationSeconds, 2),
+        'success_rate_percent' => round($successRate, 1),
+        'period' => [
+            'from' => $from,
+            'to' => $to
+        ]
     ]);
 }

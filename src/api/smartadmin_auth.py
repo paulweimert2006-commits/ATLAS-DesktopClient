@@ -1,5 +1,5 @@
 """
-BiPRO-GDV Tool - SmartAdmin Auth-Flow Handler
+ACENCIA ATLAS - SmartAdmin Auth-Flow Handler
 
 Implementiert die BiPRO-Authentifizierungsflows aus dem SmartAdmin-System.
 Unterstützt 8 verschiedene Auth-Typen:

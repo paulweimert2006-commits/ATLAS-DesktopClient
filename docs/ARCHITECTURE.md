@@ -1,8 +1,46 @@
-# Architektur - BiPRO-GDV Tool v0.9.4
+# Architektur - ACENCIA ATLAS v1.6.0
 
-**Stand:** 06. Februar 2026
+**Stand:** 10. Februar 2026
 
 **Primaere Referenz: `AGENTS.md`** - Dieses Dokument enthaelt ergaenzende Architektur-Details. Fuer den aktuellen Feature-Stand und Debugging-Tipps siehe `AGENTS.md`.
+
+## Neue Features in v1.1.4 (App-Schliess-Schutz)
+
+### Schliess-Schutz bei laufenden Operationen
+- **Blockierende Worker**: `ProcessingWorker` (KI-Verarbeitung), `DelayedCostWorker` (Kosten-Ermittlung), `SmartScanWorker` (E-Mail-Versand)
+- **Mechanismus**: `ArchiveBoxesView.get_blocking_operations()` liefert Liste blockierender Operationen
+- **MainHub**: `closeEvent()` prueft vor allen anderen Checks (GDV-Aenderungen etc.)
+- **UX**: `event.ignore()` + Toast-Warnung (kein modaler Dialog, kein "Trotzdem beenden?")
+- **Sicherheit**: `_is_worker_running()` faengt `RuntimeError` bei geloeschten C++-Objekten ab
+
+## Neue Features in v1.1.3 (PDF-Bearbeitung)
+
+### PDF-Bearbeitung in der Vorschau
+- **Funktionen**: Seiten drehen (CW/CCW, 90 Grad), Seiten loeschen, Speichern auf Server
+- **Architektur**: QPdfView (Darstellung) + PyMuPDF (Manipulation) + Thumbnail-Sidebar
+- **Server**: `POST /documents/{id}/replace` ersetzt Datei, berechnet content_hash/file_size neu
+- **Cache**: Vorschau-Cache + Historie-Cache werden nach Speichern invalidiert
+- **Dateien**: `archive_view.py` (PDFViewerDialog erweitert), `archive_boxes_view.py`, `documents.php`
+
+## Neue Features in v1.1.2 (Dokument-Historie)
+
+### Dokument-Historie als Seitenpanel
+- **Trigger**: Klick auf Dokument in Tabelle (Debounce 300ms)
+- **Panel**: QSplitter rechts, max 400px, scrollbare farbcodierte Eintraege
+- **8 Aktionsfarben**: Blau (Verschieben), Gruen (Download), Grau (Upload), Rot (Loeschen), Orange (Archiv), Lila (Farbe), Indigo (Update), Cyan (KI)
+- **Performance**: Client-Cache (60s TTL), Debounce-Timer, async DocumentHistoryWorker
+- **Berechtigung**: Neue Permission `documents_history`
+- **Datenquelle**: `GET /documents/{id}/history` aus activity_log-Tabelle
+
+## Neue Features in v1.1.1 (Duplikat-Erkennung)
+
+### Duplikat-Erkennung via SHA256-Pruefziffer
+- **Server**: `uploadDocument()` berechnet `content_hash = hash_file('sha256', $path)` beim Upload
+- **Vergleich**: Gegen ALLE Dokumente in der DB (inkl. archivierte), kein `is_archived`-Filter
+- **Verhalten**: Duplikate werden trotzdem hochgeladen, aber als Version > 1 markiert
+- **List-API**: `listDocuments()` liefert jetzt `content_hash`, `version`, `previous_version_id`, `duplicate_of_filename` (via LEFT JOIN)
+- **UI**: Eigene Spalte (Index 0) in der Archiv-Tabelle mit Warn-Icon und Tooltip zum Original
+- **Toast**: Info-Benachrichtigung bei Upload-Erkennung (MultiUploadWorker + DropUploadWorker)
 
 ## Neue Features in v0.9.4 (Stabilitaets-Upgrade + KI-Optimierung)
 
@@ -136,9 +174,9 @@ Ungültige Übergänge werden vom PHP-Backend mit HTTP 400 abgelehnt.
 - **Queue-Monitoring**: `get_ai_queue_depth()` für Überwachung
 - **Retry mit Backoff**: Automatische Wiederholung bei HTTP 429/503
 
-## Übersicht
+## Uebersicht
 
-Das BiPRO-GDV Tool ist eine Desktop-Anwendung mit Server-Backend. Es folgt einer mehrschichtigen Architektur:
+ACENCIA ATLAS ist eine Desktop-Anwendung mit Server-Backend. Es folgt einer mehrschichtigen Architektur:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -146,32 +184,44 @@ Das BiPRO-GDV Tool ist eine Desktop-Anwendung mit Server-Backend. Es folgt einer
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                           UI Layer                                          │
 │  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────────────────┐│
-│  │ main_hub.py │ │bipro_view.py│ │archive_view │ │    main_window.py       ││
-│  │ Navigation  │ │ BiPRO-Abruf │ │ Dok-Archiv  │ │     GDV-Editor          ││
-│  │             │ │ VU-Verwalt. │ │ PDF-Preview │ │    partner_view.py      ││
+│  │ main_hub.py │ │bipro_view.py│ │archive_boxes│ │    admin_view.py        ││
+│  │ Navigation  │ │ BiPRO-Abruf │ │ _view.py    │ │   10 Admin-Panels       ││
+│  │ Drag&Drop   │ │ MailImport  │ │ Smart!Scan  │ │   Sidebar-Navigation    ││
+│  │ toast.py    │ │ VU-Verwalt. │ │ PDF-Preview │ │                         ││
 │  └──────┬──────┘ └──────┬──────┘ └──────┬──────┘ └───────────┬─────────────┘│
-└─────────┼───────────────┼───────────────┼───────────────────┼──────────────┘
-          │               │               │                   │
-          ▼               ▼               ▼                   ▼
+│         │               │               │                     │              │
+│         │    ┌──────────┘               │        ┌────────────┘              │
+│         │    │  ┌───────────────────────┘        │                           │
+│         │    │  │  ┌─────────────────────────────┘                           │
+│         ▼    ▼  ▼  ▼                                                         │
+│  ┌─────────────────────┐ ┌─────────────┐ ┌──────────────────┐               │
+│  │   main_window.py    │ │partner_view │ │  gdv_editor_view │               │
+│  │   GDV-Editor        │ │ .py         │ │  .py             │               │
+│  └──────────┬──────────┘ └──────┬──────┘ └────────┬─────────┘               │
+└─────────────┼───────────────────┼─────────────────┼──────────────────────────┘
+              │                   │                  │
+              ▼                   ▼                  ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                         Service Layer                                       │
-│  ┌─────────────────────┐ ┌─────────────────────┐ ┌────────────────────────┐ │
-│  │   API Client        │ │   BiPRO Client      │ │    Parser Layer        │ │
-│  │   (src/api/)        │ │   (src/bipro/)      │ │    (src/parser/)       │ │
-│  │   - client.py       │ │   - transfer_svc.py │ │    - gdv_parser.py     │ │
-│  │   - documents.py    │ │   - categories.py   │ │                        │ │
-│  │   - vu_connections  │ │                     │ │    (src/layouts/)      │ │
-│  │   - auth.py         │ │                     │ │    - gdv_layouts.py    │ │
-│  └──────────┬──────────┘ └──────────┬──────────┘ └───────────┬────────────┘ │
-└─────────────┼───────────────────────┼───────────────────────┼──────────────┘
-              │                       │                       │
-              ▼                       ▼                       ▼
-┌─────────────────────────┐ ┌─────────────────────┐ ┌─────────────────────────┐
-│   Strato Webspace       │ │   Versicherer       │ │   Lokales Dateisystem   │
-│   PHP REST API          │ │   BiPRO Services    │ │   GDV-Dateien           │
-│   MySQL Datenbank       │ │   (z.B. Degenia)    │ │   *.gdv, *.txt, etc.    │
-│   Dokumente-Storage     │ │                     │ │                         │
-└─────────────────────────┘ └─────────────────────┘ └─────────────────────────┘
+│  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌────────────────────┐  │
+│  │  API Clients │ │ BiPRO Client │ │   Services   │ │   Parser Layer     │  │
+│  │  (src/api/)  │ │ (src/bipro/) │ │              │ │   (src/parser/)    │  │
+│  │  - client.py │ │ - transfer   │ │ - data_cache │ │   - gdv_parser.py  │  │
+│  │  - documents │ │   _service   │ │ - doc_proc.  │ │                    │  │
+│  │  - smartscan │ │ - rate_limit │ │ - pdf_unlock │ │   (src/layouts/)   │  │
+│  │  - admin     │ │ - categories │ │ - zip_handler│ │   - gdv_layouts.py │  │
+│  │  - passwords │ │              │ │ - msg_handler│ │                    │  │
+│  │  - releases  │ │              │ │ - update_svc │ │                    │  │
+│  └──────┬───────┘ └──────┬───────┘ └──────┬───────┘ └────────┬───────────┘  │
+└─────────┼────────────────┼────────────────┼──────────────────┼──────────────┘
+          │                │                │                  │
+          ▼                ▼                ▼                  ▼
+┌──────────────────┐ ┌──────────────────┐ ┌──────────────────┐ ┌──────────────┐
+│  Strato Webspace │ │  Versicherer     │ │  OpenRouter KI   │ │  Lokales FS  │
+│  PHP REST API    │ │  BiPRO Services  │ │  GPT-4o/4o-mini  │ │  GDV-Dateien │
+│  MySQL + Files   │ │  (Degenia, VEMA) │ │  Klassifikation  │ │  Temp-Cache  │
+│  ~20 Endpunkte   │ │                  │ │                  │ │              │
+└──────────────────┘ └──────────────────┘ └──────────────────┘ └──────────────┘
 ```
 
 ---
@@ -180,90 +230,112 @@ Das BiPRO-GDV Tool ist eine Desktop-Anwendung mit Server-Backend. Es folgt einer
 
 ### 1. UI Layer (`src/ui/`)
 
-#### main_hub.py
+#### main_hub.py (~1145 Zeilen)
 Zentrales Navigationselement:
-- Sidebar mit Bereichen (BiPRO, Archiv, GDV-Editor)
+- Sidebar mit Bereichen (BiPRO, Archiv, GDV-Editor, Admin)
 - Benutzeranzeige und Logout
 - Routing zwischen Views
+- **Globales Drag & Drop**: Dateien/Ordner/Outlook-Mails per Drag & Drop hochladen
+- **DropUploadWorker**: QThread fuer nicht-blockierenden Upload
+- **Admin-Modus**: Haupt-Sidebar ausblenden, Admin-Sidebar einblenden
+- **Permission Guards**: Buttons basierend auf Nutzerrechten aktivieren/deaktivieren
+- **Periodischer UpdateCheckWorker** (30 Min Timer)
+- **Schliess-Schutz**: `closeEvent()` prueft auf blockierende Operationen in ArchiveBoxesView vor dem Beenden
 
-#### bipro_view.py (~2466 Zeilen)
+#### bipro_view.py (~4900 Zeilen)
 BiPRO-Datenabruf UI:
 - **VU-Verbindungsliste**: Alle konfigurierten Versicherer (Degenia, VEMA, ...)
-- **Lieferungstabelle**: Verfügbare Lieferungen mit Kategorien
-- **Download-Worker**: Hintergrund-Download (QThread)
+- **Lieferungstabelle**: Verfuegbare Lieferungen mit Kategorien
+- **ParallelDownloadManager**: Parallele Downloads (max. 10 Worker, auto-adjustiert)
+- **MailImportWorker**: IMAP-Poll + Attachment-Pipeline (QThread)
+- **"Mails abholen" Button**: IMAP-Mails abrufen und Anhaenge importieren
+- **"Alle VUs abholen"**: Sequentielle Verarbeitung aller aktiven VU-Verbindungen
 - **Log-Bereich**: Status und Fehler
 - **VU-Dialog**: Verbindung erstellen/bearbeiten mit VU-spezifischen Feldern
+- **Progress-Toast**: Zweiphasiger Fortschritt (IMAP-Poll + Attachment-Import)
 
-**Signalfluss**:
+**Signalfluesse**:
 ```
-VU auswählen → STS-Token holen → listShipments → Tabelle füllen
+VU auswaehlen → STS-Token holen → listShipments → Tabelle fuellen
 Download klicken → getShipment → MTOM parsen → Archiv-Upload
+Mails abholen → IMAP-Poll → Attachments downloaden → Pipeline → Upload
 ```
 
-**VU-spezifisches Verhalten**:
-- Degenia: Standard BiPRO, BestaetigeLieferungen=true
-- VEMA: VEMA-Format, Consumer-ID erforderlich
-
-#### archive_boxes_view.py (~1400 Zeilen) - NEU v0.8.0
+#### archive_boxes_view.py (~5380 Zeilen)
 Dokumentenarchiv mit Box-System:
-- **BoxSidebar**: Navigation mit Live-Zaehlern
-- **7 Boxen**: GDV, Courtage, Sach, Leben, Kranken, Sonstige, Roh
+- **BoxSidebar**: Navigation mit Live-Zaehlern + Kontextmenue (Download, SmartScan)
+- **8 Boxen**: GDV, Courtage, Sach, Leben, Kranken, Sonstige, Roh, Falsch
 - **MultiUploadWorker/MultiDownloadWorker**: Parallele Operationen
-- **CreditsWorker**: OpenRouter-Guthaben im Header
-- **Thread-Cleanup**: closeEvent wartet auf Worker
-- **PDFViewerDialog**: Integrierte PDF-Vorschau (QPdfView)
+- **BoxDownloadWorker**: Ganze Boxen als ZIP oder in Ordner herunterladen
+- **SmartScanWorker**: Dokumente per E-Mail versenden
+- **Smart!Scan-Toolbar-Button**: Gruener Button (sichtbar wenn aktiviert)
+- **CreditsWorker / DelayedCostWorker**: OpenRouter-Guthaben + verzoegerter Kosten-Check
+- **PDFViewerDialog / SpreadsheetViewerDialog**: Vorschau fuer PDFs, CSV, XLSX
+- **Tastenkuerzel**: F2, Entf, Strg+A/D/F/U, Enter, Esc, F5
+- **Farbmarkierung**: 8 Farben persistent ueber alle Operationen
+- **Verarbeitungs-Ausschluss**: Manuell verschobene Dokumente ueberspringen
+- **Dokument-Historie**: Seitenpanel mit farbcodierten Aenderungseintraegen (DocumentHistoryPanel)
+- **Duplikat-Spalte**: Warn-Icon bei erkannten Duplikaten mit Tooltip zum Original
+- **Schliess-Schutz**: `get_blocking_operations()` verhindert App-Schliessung bei laufenden kritischen Workern
 
-**Neue Features v0.8.0**:
-- Parallele Verarbeitung (ThreadPoolExecutor)
-- Robuster Download mit Retry
-- OpenRouter Credits-Anzeige
-- Multi-Upload
+#### admin_view.py (~4000 Zeilen) - Redesign v1.0.9
+Administration mit vertikaler Sidebar:
+- **AdminNavButton**: Custom-Styling, monochrome Icons, orangene Trennlinien
+- **QStackedWidget**: 10 Panels in 3 Sektionen
+  - VERWALTUNG: Nutzerverwaltung, Sessions, Passwoerter (0-2)
+  - MONITORING: Aktivitaetslog, KI-Kosten, Releases (3-5)
+  - E-MAIL: E-Mail-Konten, SmartScan-Settings, SmartScan-Historie, IMAP Inbox (6-9)
+- **"Zurueck zur App" Button**: Verlassen des Admin-Bereichs
 
-#### main_window.py (~914 Zeilen)
+#### toast.py (~558 Zeilen)
+Toast-Benachrichtigungssystem:
+- **ToastWidget**: 4 Typen (success, error, warning, info) mit Auto-Dismiss
+- **ProgressToastWidget**: Fortschritts-Toast mit Titel, Status, QProgressBar
+- **ToastManager**: Globaler Manager oben rechts, Stacking, Hover-Pause
+
+#### main_window.py (~1060 Zeilen)
 GDV-Editor Hauptfenster:
-- **GDVMainWindow**: Menüs, Toolbar, Statusbar
+- **GDVMainWindow**: Menues, Toolbar, Statusbar
 - **RecordTableWidget**: Tabelle aller Records mit Filterung
 - **ExpertDetailWidget**: Alle Felder editierbar
 
-#### partner_view.py (~1165 Zeilen)
-Partner-Übersicht:
+#### partner_view.py (~1138 Zeilen)
+Partner-Uebersicht:
 - **extract_partners_from_file()**: Extrahiert Arbeitgeber/Personen
-- **PartnerView**: Tabs für "Arbeitgeber" und "Personen"
-- **EmployerDetailWidget**: Details mit Verträgen
+- **PartnerView**: Tabs fuer "Arbeitgeber" und "Personen"
+- **EmployerDetailWidget**: Details mit Vertraegen
 - **PersonDetailWidget**: Details mit Arbeitgeber-Zuordnung
 
 ---
 
-### 2. API Client (`src/api/`)
+### 2. API Clients (`src/api/`)
 
-#### client.py
-Base-Client für Server-Kommunikation:
-- JWT-Authentifizierung
-- Auto-Token-Refresh
-- Multipart-Upload für Dateien
+#### client.py (~513 Zeilen)
+Base-Client fuer Server-Kommunikation:
+- JWT-Authentifizierung mit Auto-Token-Refresh
+- `_request_with_retry()`: Zentrale Retry-Logik (exp. Backoff 1s/2s/4s)
+- Deadlock-Schutz: `_try_auth_refresh()` mit non-blocking acquire
+- Multipart-Upload fuer Dateien
 
-```python
-class APIClient:
-    def __init__(self, base_url: str)
-    def login(username, password) -> bool
-    def request(method, endpoint, data) -> Response
-    def upload_file(endpoint, file_path) -> Response
-    def download_file(endpoint, target_path) -> str
-```
+#### documents.py (~864 Zeilen)
+Dokumenten-Operationen mit Box-Support:
+- `list()`, `upload()`, `download()`, `delete()`
+- `move_documents()`: Zwischen Boxen verschieben
+- `archive_documents()` / `unarchive_documents()`: Bulk-Archivierung
+- `set_documents_color()`: Bulk-Farbmarkierung
+- `get_document_history()`: Aenderungshistorie pro Dokument
+- `replace_document_file()`: Datei ersetzen (PDF-Bearbeitung)
 
-#### documents.py
-Dokumenten-Operationen:
-- `list()`: Alle Dokumente abrufen
-- `upload(file_path, source_type)`: Dokument hochladen
-- `download(doc_id, target_dir)`: Dokument herunterladen
-- `delete(doc_id)`: Dokument löschen
-
-#### vu_connections.py
-VU-Verbindungsverwaltung:
-- `list()`: Alle Verbindungen
-- `create(name, vu_id, bipro_type)`: Neue Verbindung
-- `get_credentials(connection_id)`: Zugangsdaten abrufen
-- `delete(connection_id)`: Verbindung löschen
+#### Weitere API-Clients
+| Datei | Zweck | Zeilen |
+|-------|-------|--------|
+| `vu_connections.py` | VU-Verbindungsverwaltung | 426 |
+| `admin.py` | Nutzerverwaltung (Admin) | 241 |
+| `smartscan.py` | SmartScan + EmailAccounts | 501 |
+| `openrouter.py` | KI-Klassifikation | 1760 |
+| `passwords.py` | Passwort-Verwaltung | 152 |
+| `releases.py` | Auto-Update | 156 |
+| `processing_history.py` | Audit-Trail | 370 |
 
 ---
 
@@ -518,28 +590,40 @@ External
 
 ### PHP REST API (`BiPro-Webspace Spiegelung Live/api/`)
 
-| Endpoint | Datei | Beschreibung |
-|----------|-------|--------------|
-| POST /auth/login | auth.php | JWT-Login |
-| POST /auth/logout | auth.php | Logout |
-| GET /documents | documents.php | Liste Dokumente |
-| POST /documents | documents.php | Upload (mit Atomic Write, Deduplizierung) |
-| PUT /documents/{id} | documents.php | Update (inkl. Klassifikations-Audit) |
-| GET /documents/{id}/download | documents.php | Download |
-| DELETE /documents/{id} | documents.php | Löschen |
-| GET /vu-connections | credentials.php | VU-Liste |
-| POST /vu-connections | credentials.php | VU erstellen |
-| GET /vu-connections/{id}/credentials | credentials.php | Credentials |
-| **Neue Endpoints (v0.9.0)** | | |
-| GET /xml_index/list | xml_index.php | XML-Index auflisten |
-| GET /xml_index/{id} | xml_index.php | XML-Index-Eintrag abrufen |
-| POST /xml_index/create | xml_index.php | XML-Index-Eintrag erstellen |
-| DELETE /xml_index/{id} | xml_index.php | XML-Index-Eintrag löschen |
-| GET /processing_history/list | processing_history.php | History auflisten |
-| GET /processing_history/{doc_id} | processing_history.php | Dokument-History abrufen |
-| POST /processing_history/create | processing_history.php | History-Eintrag erstellen |
-| GET /processing_history/stats | processing_history.php | Statistiken |
-| GET /processing_history/errors | processing_history.php | Letzte Fehler |
+| Bereich | Endpoint | Datei | Beschreibung |
+|---------|----------|-------|--------------|
+| **Auth** | POST /auth/login | auth.php | JWT-Login |
+| | POST /auth/logout | auth.php | Logout + Session beenden |
+| | GET /auth/me | auth.php | Aktueller Benutzer + Berechtigungen |
+| **Dokumente** | GET /documents | documents.php | Alle Dokumente (Box-Filter optional) |
+| | POST /documents | documents.php | Upload (Atomic Write, Deduplizierung) |
+| | PUT /documents/{id} | documents.php | Update (Verschieben, Klassifikation) |
+| | POST /documents/archive | documents.php | Bulk-Archivierung |
+| | POST /documents/colors | documents.php | Bulk-Farbmarkierung |
+| | GET /documents/{id}/download | documents.php | Download |
+| | DELETE /documents/{id} | documents.php | Loeschen |
+| | GET /documents/{id}/history | documents.php | Aenderungshistorie |
+| | POST /documents/{id}/replace | documents.php | Datei ersetzen (PDF-Bearbeitung) |
+| **VU** | GET /vu-connections | credentials.php | VU-Liste |
+| | POST /vu-connections | credentials.php | VU erstellen |
+| | GET /vu-connections/{id}/credentials | credentials.php | Credentials (entschluesselt) |
+| **SmartScan** | POST /smartscan/send | smartscan.php | Dokumente per E-Mail senden |
+| | GET /smartscan/settings | smartscan.php | Einstellungen lesen |
+| | PUT /smartscan/settings | smartscan.php | Einstellungen speichern |
+| | GET /smartscan/jobs | smartscan.php | Versandhistorie |
+| **E-Mail** | GET /admin/email-accounts | email_accounts.php | E-Mail-Konten (Admin) |
+| | POST /admin/email-accounts/{id}/poll | email_accounts.php | IMAP-Polling |
+| | GET /email-inbox/attachments | email_accounts.php | Pending Attachments |
+| **Admin** | GET /admin/users | admin.php | Nutzerverwaltung |
+| | GET /admin/sessions | sessions.php | Session-Tracking |
+| | GET /admin/activity | activity.php | Aktivitaetslog |
+| | GET /admin/passwords | passwords.php | Passwort-CRUD |
+| | GET /admin/releases | releases.php | Release-Verwaltung |
+| **System** | GET /updates/check | releases.php | Update-Check (Public) |
+| | POST /incoming-scans | incoming_scans.php | Scan-Upload (API-Key) |
+| | GET /ai/key | ai.php | OpenRouter API-Key |
+| | POST /processing_history/create | processing_history.php | Audit-Trail |
+| | GET /processing_history/costs | processing_history.php | KI-Kosten |
 
 ### Datenbank-Schema
 
@@ -616,13 +700,14 @@ CATEGORY_NAMES["123456789"] = "Neue Kategorie"
 
 ---
 
-## Bekannte Einschränkungen
+## Bekannte Einschraenkungen
 
-- **Single-User**: Keine gleichzeitige Bearbeitung
+- **Multi-User**: Archiv ist fuer Team (2-5 Personen) ausgelegt, kein Echtzeit-Sync
 - **Kein Offline-Mode**: Server-Verbindung erforderlich
-- **Hardcodierte UI-Texte**: Keine i18n-Unterstützung
-- **Speicherverbrauch**: Alle Records/Dokumente im Speicher
+- **UI-Texte**: Groesstenteils in i18n/de.py, einige Hardcoded Strings verbleiben
+- **Speicherverbrauch**: Alle Records/Dokumente im Speicher (kein Lazy Loading)
 - **VU-spezifisch**: BiPRO-Flow variiert je VU (Degenia, VEMA haben eigene Logik)
+- **Grosse Dateien**: bipro_view.py (~4950), archive_boxes_view.py (~5380), admin_view.py (~4000) → Aufteilen geplant
 
 ## Unterstützte VUs
 

@@ -60,6 +60,9 @@ env/
 # Cursor
 .cursor/
 
+# Visual Studio
+.vs/
+
 # =============================================================================
 # OS
 # =============================================================================
@@ -95,13 +98,22 @@ test_logs/
 test_*.py
 !testdata/test_*.py
 
-# BiPRO temporäre Dateien
+# BiPRO temporaere Dateien
 lieferung_*.xml
 bipro_preview_*/
 
 # Logs
 *.log
 logs/
+
+# Temporaerer Vorschau-Cache
+bipro_preview_cache/
+
+# Outlook COM temporaere Dateien
+outlook_temp_*/
+
+# PyInstaller Output
+Output/*.exe
 
 # Sensible Server-Konfiguration (enthaelt DB-Credentials, API-Keys)
 BiPro-Webspace Spiegelung Live/api/config.php

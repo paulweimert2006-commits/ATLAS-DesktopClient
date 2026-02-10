@@ -1,6 +1,23 @@
 # BiPro API - Router .htaccess
 # ================================
 
+# PHP-Limits fuer grosse Uploads (Release-Installer bis 250 MB)
+# Nur wenn PHP als Apache-Modul laeuft (bei CGI/FastCGI: .user.ini verwenden)
+<IfModule mod_php.c>
+    php_value upload_max_filesize 250M
+    php_value post_max_size 260M
+    php_value max_execution_time 600
+    php_value max_input_time 600
+    php_value memory_limit 300M
+</IfModule>
+<IfModule mod_php7.c>
+    php_value upload_max_filesize 250M
+    php_value post_max_size 260M
+    php_value max_execution_time 600
+    php_value max_input_time 600
+    php_value memory_limit 300M
+</IfModule>
+
 # URL Rewriting aktivieren
 RewriteEngine On
 

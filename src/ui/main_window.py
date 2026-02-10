@@ -51,6 +51,7 @@ class ExpertDetailWidget(QWidget):
         super().__init__(parent)
         self._current_record = None
         self._field_editors = {}
+        self._toast_manager = None
         self._setup_ui()
     
     def _setup_ui(self):
@@ -261,9 +262,10 @@ class ExpertDetailWidget(QWidget):
                     parsed_field.value = new_value if new_value else None
         
         self.record_changed.emit(self._current_record)
-        QMessageBox.information(self, "Änderungen übernommen",
-            "Die Änderungen wurden in den Datensatz übernommen.\n"
-            "Speichern Sie die Datei, um die Änderungen dauerhaft zu sichern.")
+        if self._toast_manager:
+            self._toast_manager.show_success(
+                "Änderungen übernommen. Speichern Sie die Datei, um sie dauerhaft zu sichern."
+            )
     
     def _on_reset(self):
         if self._current_record:
@@ -433,12 +435,13 @@ class GDVMainWindow(QMainWindow):
         self._has_unsaved_changes = False
         self._expert_mode = False
         self._partner_view_mode = False
+        self._toast_manager = None
         
         # Fenstertitel mit Benutzername falls eingeloggt
         if auth_api and auth_api.current_user:
-            title = f"BiPRO-GDV Tool v0.4.0 - {auth_api.current_user.username}"
+            title = f"ACENCIA ATLAS - {auth_api.current_user.username}"
         else:
-            title = "BiPRO-GDV Tool v0.4.0"
+            title = "ACENCIA ATLAS"
         self.setWindowTitle(title)
         self.setMinimumSize(1400, 900)
         
@@ -634,7 +637,7 @@ class GDVMainWindow(QMainWindow):
         # Hilfe-Menü
         help_menu = menubar.addMenu("&Hilfe")
         
-        about_action = QAction("Ü&ber BiPRO-GDV Tool", self)
+        about_action = QAction("Ü&ber ACENCIA ATLAS", self)
         about_action.triggered.connect(self._on_about)
         help_menu.addAction(about_action)
     
@@ -772,9 +775,10 @@ class GDVMainWindow(QMainWindow):
             self._current_filepath = filepath
             
             if self._parsed_file.errors:
-                QMessageBox.warning(self, "Warnungen beim Laden",
-                    f"Die Datei wurde geladen, aber es gab Probleme:\n\n" +
-                    "\n".join(self._parsed_file.errors[:5]))
+                if self._toast_manager:
+                    self._toast_manager.show_warning(
+                        "Warnungen beim Laden: " + "; ".join(self._parsed_file.errors[:3])
+                    )
             
             self._gdv_data = map_parsed_file_to_gdv_data(self._parsed_file)
             
@@ -793,8 +797,8 @@ class GDVMainWindow(QMainWindow):
             self._statusbar.showMessage(f"Datei geladen: {len(self._parsed_file.records)} Sätze", 5000)
             
         except Exception as e:
-            QMessageBox.critical(self, "Fehler beim Laden",
-                f"Die Datei konnte nicht geladen werden:\n\n{str(e)}")
+            if self._toast_manager:
+                self._toast_manager.show_error(f"Fehler beim Laden: {str(e)}")
             self._statusbar.showMessage("Fehler beim Laden der Datei")
     
     def _on_new_file(self):
@@ -832,7 +836,8 @@ class GDVMainWindow(QMainWindow):
     
     def _on_save_file_as(self):
         if not self._parsed_file:
-            QMessageBox.warning(self, "Keine Datei", "Keine Datei zum Speichern vorhanden.")
+            if self._toast_manager:
+                self._toast_manager.show_warning("Keine Datei zum Speichern vorhanden.")
             return
         
         filepath, _ = QFileDialog.getSaveFileName(self, "GDV-Datei speichern",
@@ -856,13 +861,13 @@ class GDVMainWindow(QMainWindow):
             else:
                 raise Exception("Speichern fehlgeschlagen")
         except Exception as e:
-            QMessageBox.critical(self, "Fehler beim Speichern",
-                f"Die Datei konnte nicht gespeichert werden:\n\n{str(e)}")
+            if self._toast_manager:
+                self._toast_manager.show_error(f"Fehler beim Speichern: {str(e)}")
     
     def _on_add_record(self):
         if not self._parsed_file:
-            QMessageBox.warning(self, "Keine Datei",
-                "Bitte zuerst eine Datei öffnen oder erstellen.")
+            if self._toast_manager:
+                self._toast_manager.show_warning("Bitte zuerst eine Datei öffnen oder erstellen.")
             return
         
         from PySide6.QtWidgets import QInputDialog
@@ -888,8 +893,8 @@ class GDVMainWindow(QMainWindow):
     def _on_delete_record(self):
         record = self._record_table.get_current_record()
         if not record:
-            QMessageBox.warning(self, "Kein Satz ausgewählt",
-                "Bitte wählen Sie einen Satz zum Löschen aus.")
+            if self._toast_manager:
+                self._toast_manager.show_warning("Bitte wählen Sie einen Satz zum Löschen aus.")
             return
         
         reply = QMessageBox.question(self, "Satz löschen",
@@ -928,24 +933,18 @@ class GDVMainWindow(QMainWindow):
             self._record_table.set_filter(satzart)
     
     def _on_about(self):
-        QMessageBox.about(self, "Über BiPRO-GDV Tool",
-            "<h2>BiPRO-GDV Tool v0.4.0</h2>"
-            "<p>Ein Desktop-Tool für BiPRO-Datenabruf und GDV-Bearbeitung.</p>"
-            "<p><b>Funktionen:</b></p>"
-            "<ul>"
-            "<li>📁 <b>Dokumentenarchiv</b>: Zentrale Dokumentenverwaltung</li>"
-            "<li>👥 <b>Partner-Ansicht</b>: Alle Partner mit Verträgen</li>"
-            "<li>📋 <b>Benutzer-Ansicht</b>: Nur wichtige Felder</li>"
-            "<li>⚙️ <b>Experten-Ansicht</b>: Alle Felder, volle Kontrolle</li>"
-            "</ul>"
-            "<p>© 2025 ACENCIA GmbH</p>")
+        if self._toast_manager:
+            self._toast_manager.show_info(
+                "ACENCIA ATLAS - Der Datenkern. Desktop-App für BiPRO-Datenabruf und GDV-Bearbeitung. © 2025 ACENCIA GmbH"
+            )
     
     # === Server/Archiv-Methoden ===
     
     def _on_open_bipro(self):
         """Öffnet das BiPRO Datenabruf-Fenster."""
         if not self._api_client:
-            QMessageBox.warning(self, "Fehler", "Keine Server-Verbindung.")
+            if self._toast_manager:
+                self._toast_manager.show_warning("Keine Server-Verbindung.")
             return
         
         # BiPRO-Fenster erstellen
@@ -966,7 +965,8 @@ class GDVMainWindow(QMainWindow):
     def _on_open_archive(self):
         """Öffnet das Dokumentenarchiv in einem neuen Fenster."""
         if not self._api_client:
-            QMessageBox.warning(self, "Fehler", "Keine Server-Verbindung.")
+            if self._toast_manager:
+                self._toast_manager.show_warning("Keine Server-Verbindung.")
             return
         
         # Archiv-Fenster erstellen
@@ -1011,27 +1011,24 @@ class GDVMainWindow(QMainWindow):
             # Titel anpassen um zu zeigen dass es vom Server ist
             self._current_filepath = None  # Kein lokaler Pfad
             self._server_doc_id = doc_id  # Server-Dokument-ID merken
-            self.setWindowTitle(f"BiPRO-GDV Tool - {filename} (Server)")
+            self.setWindowTitle(f"ACENCIA ATLAS - {filename} (Server)")
             self._statusbar.showMessage(f"{filename} vom Server geladen", 3000)
         else:
-            QMessageBox.warning(
-                self,
-                "Fehler",
-                f"Datei '{filename}' konnte nicht vom Server geladen werden."
-            )
+            if self._toast_manager:
+                self._toast_manager.show_warning(
+                    f"Datei '{filename}' konnte nicht vom Server geladen werden."
+                )
     
     def _on_upload_to_archive(self):
         """Lädt die aktuelle GDV-Datei ins Archiv hoch."""
         if not self._api_client:
-            QMessageBox.warning(self, "Fehler", "Keine Server-Verbindung.")
+            if self._toast_manager:
+                self._toast_manager.show_warning("Keine Server-Verbindung.")
             return
         
         if not self._current_filepath:
-            QMessageBox.warning(
-                self, 
-                "Keine Datei",
-                "Bitte zuerst eine GDV-Datei öffnen oder speichern."
-            )
+            if self._toast_manager:
+                self._toast_manager.show_warning("Bitte zuerst eine GDV-Datei öffnen oder speichern.")
             return
         
         from api.documents import DocumentsAPI
@@ -1040,13 +1037,13 @@ class GDVMainWindow(QMainWindow):
         doc = docs_api.upload(self._current_filepath, 'manual_upload')
         
         if doc:
-            QMessageBox.information(
-                self,
-                "Erfolg",
-                f"Datei '{doc.original_filename}' erfolgreich ins Archiv hochgeladen."
-            )
+            if self._toast_manager:
+                self._toast_manager.show_success(
+                    f"Datei '{doc.original_filename}' erfolgreich ins Archiv hochgeladen."
+                )
         else:
-            QMessageBox.warning(self, "Fehler", "Upload fehlgeschlagen.")
+            if self._toast_manager:
+                self._toast_manager.show_error("Upload fehlgeschlagen.")
     
     def _on_logout(self):
         """Benutzer abmelden."""

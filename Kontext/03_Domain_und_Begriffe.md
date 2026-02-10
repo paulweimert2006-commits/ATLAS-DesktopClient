@@ -1,24 +1,25 @@
 # 03 - Domain und Begriffe
 
-**Version:** 0.9.3  
-**Analyse-Datum:** 2026-02-05
+**Version:** 1.6.0
+**Analyse-Datum:** 2026-02-10
 
 ---
 
-## Domänen-Überblick
+## Domaenen-Ueberblick
 
-Das Projekt operiert in zwei Domänen:
+Das Projekt operiert in drei Domaenen:
 
-1. **GDV (Gesamtverband der Deutschen Versicherungswirtschaft)** - Branchenstandard für Datenaustausch
-2. **BiPRO (Brancheninstitut für Prozessoptimierung)** - Schnittstellen-Standard für Versicherer
+1. **GDV (Gesamtverband der Deutschen Versicherungswirtschaft)** - Branchenstandard fuer Datenaustausch
+2. **BiPRO (Brancheninstitut fuer Prozessoptimierung)** - Schnittstellen-Standard fuer Versicherer
+3. **Dokumentenmanagement** - KI-gestuetztes Archiv mit E-Mail-Integration
 
 ---
 
-## GDV-Domäne
+## GDV-Domaene
 
 ### GDV-Format
 
-Das GDV-Format ist ein **Fixed-Width-Format** für den Datenaustausch zwischen Versicherungsunternehmen und Vermittlern.
+Das GDV-Format ist ein **Fixed-Width-Format** fuer den Datenaustausch zwischen Versicherungsunternehmen und Vermittlern.
 
 | Merkmal | Wert |
 |---------|------|
@@ -29,212 +30,184 @@ Das GDV-Format ist ein **Fixed-Width-Format** für den Datenaustausch zwischen V
 
 ### Satzarten (Implementiert)
 
-| Satzart | Name | Teildatensätze | Beschreibung |
-|---------|------|----------------|--------------|
+| Satzart | Name | Teildatensaetze | Beschreibung |
+|---------|------|-----------------|--------------|
 | 0001 | Vorsatz | 1 | Datei-Header (VU, Datum, Release) |
 | 0100 | Partnerdaten | 1-5 | Kunden, Adressen, Bankdaten |
 | 0200 | Vertragsteil | 1 | Grunddaten (Laufzeit, Beitrag, Sparte) |
 | 0210 | Spartenspezifisch | 1+ | Wagnisse, Risiken |
 | 0220 | Deckungsteil | 1, 6+ | Versicherte Personen, Leistungen |
 | 0230 | Fondsanlage | 1+ | Fondsdaten (ISIN, Anteile) |
-| 9999 | Nachsatz | 1 | Prüfsummen |
+| 9999 | Nachsatz | 1 | Pruefsummen |
 
 **Quelle:** `src/layouts/gdv_layouts.py`
 
-### Teildatensätze (Wichtig!)
+### Teildatensaetze (Beispiel 0100)
 
-Manche Satzarten haben mehrere Teildatensätze:
-
-| Satzart | TD | Inhalt |
-|---------|-----|--------|
-| 0100 | TD1 | Adressdaten |
-| 0100 | TD2 | Kundennummern, Referenznummern |
-| 0100 | TD3 | Kommunikationsdaten |
-| 0100 | TD4 | Bankverbindung (BIC, IBAN) |
-| 0100 | TD5 | Zusatzdaten |
-| 0220 | TD1 | Versicherte Person |
-| 0220 | TD6 | Bezugsberechtigte Person |
+| TD | Inhalt | Quelle |
+|----|--------|--------|
+| 1 | Adressdaten (Name, Strasse, PLZ, Ort) | `gdv_layouts.py` |
+| 2 | Nummern (Kundennummer, Bankverbindung alt) | `gdv_layouts.py` |
+| 3 | Zusatzinfo | `gdv_layouts.py` |
+| 4 | Bankdaten (IBAN/BIC) | `gdv_layouts.py` |
+| 5 | Erweiterte Daten | `gdv_layouts.py` |
 
 ### Sparten
 
 | Code | Bezeichnung | Kategorie |
 |------|-------------|-----------|
-| 010 | Leben | Leben |
-| 020 | Kranken | Kranken |
-| 030 | Unfall | Sach |
-| 040 | Haftpflicht | Sach |
-| 050 | Kraftfahrt | Sach |
-| 060 | Rechtsschutz | Sach |
-| 070 | Hausrat | Sach |
-| 080 | Wohngebäude | Sach |
-| 090 | Transport/Reise | Sach |
-
-**Quelle:** `docs/DOMAIN.md`
+| 10 | Lebensversicherung | Leben |
+| 20 | Krankenversicherung | Kranken |
+| 30 | Unfallversicherung | Sach |
+| 40 | Haftpflichtversicherung | Sach |
+| 50 | Kraftfahrt | Sach |
+| 70 | Rechtsschutz | Sach |
+| 80 | Feuer/Wohngebaude | Sach |
 
 ---
 
-## Domain-Modell (GDV)
-
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                           GDVData                                    │
-│  (Container für alle geladenen Daten)                               │
-├─────────────────────────────────────────────────────────────────────┤
-│  file_meta: FileMeta         (aus 0001)                             │
-│  customers: List[Customer]   (aus 0100)                             │
-│  contracts: List[Contract]   (aus 0200)                             │
-└───────────────────────────────────────┬─────────────────────────────┘
-                                        │
-                    ┌───────────────────┼───────────────────┐
-                    │                   │                   │
-                    ▼                   ▼                   ▼
-            ┌───────────────┐  ┌───────────────┐  ┌───────────────┐
-            │   Customer    │  │   Contract    │  │   FileMeta    │
-            │   (0100)      │  │   (0200)      │  │   (0001)      │
-            └───────┬───────┘  └───────┬───────┘  └───────────────┘
-                    │                  │
-                    │          ┌───────┴───────┐
-                    │          │               │
-                    │          ▼               ▼
-                    │  ┌───────────────┐ ┌───────────────┐
-                    │  │     Risk      │ │   Coverage    │
-                    │  │    (0210)     │ │    (0220)     │
-                    │  └───────────────┘ └───────────────┘
-                    │
-                    ▼
-            [Verknüpfung via VSNR]
-```
-
-**Quelle:** `src/domain/models.py`
-
----
-
-## BiPRO-Domäne
+## BiPRO-Domaene
 
 ### BiPRO-Normen
 
-| Norm | Name | Beschreibung |
-|------|------|--------------|
-| 410 | STS (Security Token Service) | Authentifizierung, Token-Ausstellung |
-| 420 | TAA (Tarif-Auskunft, Angebot, Antrag) | Nicht aktiv bei Degenia |
-| 430 | Transfer-Service | Datentransfer |
-| 430.1 | Transfer allgemein | Basis-Operationen |
-| 430.2 | Lieferungen | listShipments, getShipment |
-| 430.4 | GDV-Daten | (Laut Degenia unterstützt, keine Daten) |
-| 430.5 | Dokumente | PDFs, Policen |
+| Norm | Beschreibung | Status |
+|------|--------------|--------|
+| 410 | STS (Security Token Service) | Implementiert |
+| 420 | TAA (Angebot/Antrag) | Nicht implementiert |
+| 430.1 | Transfer allgemein | Implementiert |
+| 430.2 | Lieferungen | Implementiert |
+| 430.4 | GDV-Daten | Teilweise |
+| 430.5 | Dokumente | Implementiert |
 
-### BiPRO-Operationen (Implementiert)
+### BiPRO-Operationen
 
 | Operation | Norm | Beschreibung |
 |-----------|------|--------------|
-| `RequestSecurityToken` | 410 | STS-Token holen (UsernameToken → SecurityContextToken) |
-| `listShipments` | 430 | Bereitstehende Lieferungen auflisten |
-| `getShipment` | 430 | Lieferung abrufen (MTOM/XOP) |
-| `acknowledgeShipment` | 430 | Empfang quittieren |
+| RequestSecurityToken | 410 | STS-Token holen |
+| listShipments | 430 | Lieferungen auflisten |
+| getShipment | 430 | Lieferung herunterladen (MTOM/XOP) |
+| acknowledgeShipment | 430 | Empfang quittieren |
 
-**Quelle:** `src/bipro/transfer_service.py`
+### VU-spezifisches Verhalten
 
-### Lieferungs-Kategorien
+| VU | STS-Format | Besonderheiten |
+|----|------------|----------------|
+| **Degenia** | Standard BiPRO | BestaetigeLieferungen=true ERFORDERLICH |
+| **VEMA** | VEMA-spezifisch | Consumer-ID ERFORDERLICH, KEIN BestaetigeLieferungen |
 
-| Code | Bezeichnung |
-|------|-------------|
-| 100002000 | Vertragsänderung |
-| 100007000 | Geschäftsvorfall |
-| 110011000 | Vertragsdokumente |
+### Lieferungs-Kategorien (BiPRO-Codes)
 
-**Quelle:** `src/bipro/categories.py`
+| Code | Bedeutung | Ziel-Box |
+|------|-----------|----------|
+| 100001000 | Antragsversand | KI-Klassifikation |
+| 100002000 | Eingangsbestaetigung | KI-Klassifikation |
+| 100005000 | Nachfrage | KI-Klassifikation |
+| 100007000 | Policierung | KI-Klassifikation |
+| 110011000 | Adressaenderung | KI-Klassifikation |
+| 120010000 | Nachtrag | KI-Klassifikation |
+| 140012000 | Mahnung | KI-Klassifikation |
+| 140013000 | Beitragsrechnung | KI-Klassifikation |
+| 150013000 | Schaden | KI-Klassifikation |
+| 160010000 | Kuendigung | KI-Klassifikation |
+| **300001000** | **Provisionsabrechnung** | **Courtage** |
+| **300002000** | **Courtageabrechnung** | **Courtage** |
+| **300003000** | **Verguetungsuebersicht** | **Courtage** |
+| **999010010** | **GDV Bestandsdaten** | **GDV** |
+
+**Quelle:** `src/config/processing_rules.py`
 
 ---
 
 ## Box-System (Dokumentenarchiv)
 
-### Box-Typen
+### Box-Typen (in Anzeigereihenfolge)
 
-| Box | Farbe | Beschreibung | Klassifikation |
-|-----|-------|--------------|----------------|
-| Eingang | Amber | Neue Dokumente | - |
-| Verarbeitung | Orange | In Verarbeitung | - |
-| GDV | Grün | GDV-Dateien | Dateiendung |
-| Courtage | Indigo | Provisionsabrechnungen | KI |
-| Sach | Blau | Sachversicherungen | KI |
-| Leben | Violett | Lebensversicherungen | KI |
-| Kranken | Cyan | Krankenversicherungen | KI |
-| Sonstige | Grau | Nicht zugeordnet | Fallback |
-| Roh | Steingrau | XML-Rohdateien | Dateiname |
+| Nr. | Box | Farbe | Beschreibung |
+|-----|-----|-------|--------------|
+| 1 | GDV | #4caf50 (Gruen) | GDV-Dateien (.gdv, .txt, keine Endung) |
+| 2 | Courtage | #ff9800 (Orange) | Provisionsabrechnungen (BiPRO-Code oder KI) |
+| 3 | Sach | #2196f3 (Blau) | Sachversicherungs-Dokumente (KI) |
+| 4 | Leben | #9c27b0 (Lila) | Lebensversicherungs-Dokumente (KI) |
+| 5 | Kranken | #e91e63 (Pink) | Krankenversicherungs-Dokumente (KI) |
+| 6 | Sonstige | #607d8b (Grau) | Nicht zugeordnete Dokumente |
+| 7 | Roh Archiv | #795548 (Braun) | XML-Rohdateien, ZIP/MSG-Originale |
+| - | Eingang | (Systembox) | Unverarbeitete Dokumente |
+| - | Verarbeitung | (Systembox) | Gerade in Verarbeitung |
 
-**Quelle:** `src/api/documents.py`
+### Dokumenten-Farbmarkierung
 
-### Klassifikations-Workflow
+8 persistente Farben zur manuellen Organisation (v1.0.3):
 
-1. **Eingang** - Dokument wird hochgeladen (manuell oder BiPRO)
-2. **Verarbeitung** - Automatische Verarbeitung läuft
-3. **Klassifikation:**
-   - XML mit "Roh" im Namen → **Roh Archiv**
-   - `.gdv`, `.txt` ohne Inhalt → **GDV Box**
-   - PDF → **KI-Klassifikation** (OpenRouter)
-4. **Ziel-Box** - Basierend auf KI-Entscheidung
+| Farbe | Hex | Name |
+|-------|-----|------|
+| Gruen | #c8e6c9 | green |
+| Rot | #ffcdd2 | red |
+| Blau | #bbdefb | blue |
+| Orange | #ffe0b2 | orange |
+| Lila | #e1bee7 | purple |
+| Pink | #f8bbd0 | pink |
+| Tuerkis | #b2ebf2 | cyan |
+| Gelb | #fff9c4 | yellow |
 
-**Quelle:** `src/services/document_processor.py`
+Farben bleiben erhalten bei Verschieben, Archivieren, KI-Verarbeitung.
 
 ---
 
 ## KI-Klassifikation
 
-### Klassifikations-Logik
+### Zweistufiges Confidence-Scoring (v0.9.4)
 
-Die KI analysiert den **HAUPTZWECK** des Dokuments:
+| Stufe | Modell | Seiten | Token | Bedingung |
+|-------|--------|--------|-------|-----------|
+| 1 | GPT-4o-mini | 2 | ~200 | Immer |
+| 2 | GPT-4o | 5 | ~400 | Nur bei Stufe-1-Confidence = "low" (~1-5% der Dokumente) |
 
-| Hauptzweck | Ziel-Box |
-|------------|----------|
-| Provisionsabrechnung, Courtage-Abrechnung | **courtage** |
-| Versicherungsschein Haftpflicht, Hausrat, KFZ... | **sach** |
-| Versicherungsschein Leben, Rente, BU... | **leben** |
-| Versicherungsschein PKV, Krankenzusatz... | **kranken** |
-| Unklar | **sonstige** |
+### Keyword-Conflict-Hints (v1.1.0)
 
-**Wichtig:** Keywords in Fußnoten/AGB werden ignoriert. Nur der Hauptinhalt zählt.
+Lokaler Scanner (`_build_keyword_hints()`) erkennt widerspruechliche Keywords:
 
-### Erweiterte Keywords (v0.9.3)
+| Konflikt | Hint |
+|----------|------|
+| Courtage + Leben/Sach/Kranken | Courtage-Keyword hat Vorrang |
+| Kontoauszug + Provision | Spezialfall -> Courtage |
+| Sach-Keyword allein | Sicherheits-Hint (bekannte KI-Schwaeche) |
 
-| Kategorie | Neue Keywords |
-|-----------|---------------|
-| **Sach** | Privathaftpflicht, PHV, Tierhalterhaftpflicht, Hundehaftpflicht, Bauherrenhaftpflicht, Jagdhaftpflicht, Gewaesserschadenhaftpflicht |
-| **Leben** | Pensionskasse, Rentenanstalt |
+95% der Dokumente: 0 extra Tokens, ~5% mit Konflikt: +30 Tokens.
 
 ### Benennungs-Schema
 
-| Box | Schema | Beispiel |
-|-----|--------|----------|
-| Courtage | `VU_Name_Datum.pdf` (v0.9.3) | `Degenia_2025-01-15.pdf` |
-| Sach | `Sach.pdf` (Token-Optimierung) | `Sach.pdf` |
-| Andere | `Versicherer_Dokumenttyp_Datum.pdf` | `Allianz_Privathaftpflicht_2025-01-15.pdf` |
+| Box | Muster | Beispiel |
+|-----|--------|---------|
+| Courtage | `VU_Courtage_Datum.pdf` | `Allianz_Courtage_2026-02-04.pdf` |
+| Sach/Leben/Kranken | `VU_Sparte.pdf` | `Degenia_Sach.pdf` |
+| Sonstige | `VU_Dokumentname.pdf` | `VEMA_Schriftwechsel.pdf` |
 
-**Quelle:** `src/api/openrouter.py`
+---
 
-### Kosten-Tracking (v0.9.3)
+## Duplikat-Erkennung (v1.1.1)
 
-| Metrik | Beschreibung |
-|--------|--------------|
-| `credits_before` | OpenRouter-Guthaben vor Verarbeitung |
-| `credits_after` | OpenRouter-Guthaben nach Verarbeitung |
-| `total_cost_usd` | Gesamtkosten in USD |
-| `cost_per_document_usd` | Durchschnittskosten pro Dokument |
-
-**Quelle:** `src/services/document_processor.py` (BatchProcessingResult)
+- Server berechnet SHA256-Hash beim Upload
+- Vergleich gegen ALLE Dokumente (inkl. archivierte)
+- Duplikate werden hochgeladen, aber als Dopplung markiert (`version > 1`)
+- UI: Warn-Icon + Tooltip mit Original-Dokumentname
 
 ---
 
 ## Glossar
 
-| Begriff | Erklärung | Kontext |
-|---------|-----------|---------|
-| **VU** | Versicherungsunternehmen | Versicherer wie Allianz, Degenia |
-| **VSNR** | Versicherungsscheinnummer | Eindeutige Vertragsnummer |
-| **Sparte** | Versicherungszweig | Leben, Kranken, Sach |
-| **Satzart** | Datensatztyp im GDV-Format | 0001, 0100, 0200, etc. |
-| **TD** | Teildatensatz | Unterstruktur einer Satzart |
-| **STS** | Security Token Service | BiPRO-Authentifizierung |
-| **MTOM** | Message Transmission Optimization | Binärdaten in SOAP |
-| **XOP** | XML-binary Optimized Packaging | Referenz auf Binärteil |
-| **Courtage** | Provision/Vergütung | Vermittlergebühr |
-| **Box** | Kategorie im Dokumentenarchiv | Container für Dokumente |
+| Begriff | Beschreibung | Quelle |
+|---------|--------------|--------|
+| VU | Versicherungsunternehmen | Branchenstandard |
+| VSNR | Versicherungsschein-Nummer | GDV-Datenmodell |
+| Sparte | Versicherungssparte (Leben, Sach, Kranken) | GDV, BiPRO |
+| Satzart | 4-stelliger Identifier (0001-9999) | GDV-Format |
+| TD | Teildatensatz (1-9 pro Satzart) | GDV-Format |
+| STS | Security Token Service | BiPRO 410 |
+| MTOM | Message Transmission Optimization Mechanism | BiPRO 430 |
+| XOP | XML-binary Optimized Packaging | BiPRO 430 |
+| Courtage | Makler-Provision vom Versicherer | Versicherungsbranche |
+| Box | Logische Ablage im Dokumentenarchiv | Projekteigen |
+| Smart!Scan | SCS Smart!Scan Dokumenten-Digitalisierung | SCS GmbH |
+| IMAP | Internet Message Access Protocol | E-Mail-Standard |
+| JWT | JSON Web Token | Auth-Standard |
+| PHPMailer | PHP-Bibliothek fuer SMTP-Versand | Open Source |

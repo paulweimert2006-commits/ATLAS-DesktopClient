@@ -1,5 +1,5 @@
 """
-BiPRO-GDV Tool - Zertifikat-Manager
+ACENCIA ATLAS - Zertifikat-Manager
 
 Verwaltet X.509-Zertifikate lokal für BiPRO-Authentifizierung.
 Zertifikate werden im lokalen Datenverzeichnis gespeichert.
@@ -25,7 +25,7 @@ def get_certificates_dir() -> Path:
     else:
         base = Path.home() / '.local' / 'share'
     
-    cert_dir = base / 'BiPRO-GDV-Tool' / 'certificates'
+    cert_dir = base / 'ACENCIA-ATLAS' / 'certificates'
     cert_dir.mkdir(parents=True, exist_ok=True)
     return cert_dir
 

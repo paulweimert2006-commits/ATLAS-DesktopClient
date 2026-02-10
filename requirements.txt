@@ -1,4 +1,4 @@
-# BiPRO-GDV Tool - Abhaengigkeiten
+# ACENCIA ATLAS - Abhaengigkeiten
 # Python 3.10+ erforderlich
 
 # GUI Framework
@@ -19,8 +19,17 @@ pyjks>=20.0.0
 # SOAP Client fuer BiPRO (optional, nicht mehr aktiv genutzt)
 # zeep>=4.2.0
 
-# Fuer spaeteren Export/Import (optional)
-# openpyxl>=3.1.0  # Excel-Export
+# Excel-Dateien lesen (Vorschau im Archiv)
+openpyxl>=3.1.0
+
+# Outlook .msg E-Mails parsen (Anhaenge extrahieren)
+extract-msg>=0.50.0
+
+# Windows COM-Automation (Outlook Drag & Drop)
+pywin32>=306; sys_platform == "win32"
+
+# ZIP mit AES-256 Verschluesselung entpacken
+pyzipper>=0.3.6
 
 # Fuer Packaging
 pyinstaller>=6.0.0

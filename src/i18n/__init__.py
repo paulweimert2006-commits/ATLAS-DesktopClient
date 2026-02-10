@@ -1,5 +1,5 @@
 """
-BiPRO-GDV Tool - Internationalisierung
+ACENCIA ATLAS - Internationalisierung
 
 Aktuell nur Deutsch.
 """

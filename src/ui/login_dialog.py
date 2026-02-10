@@ -1,16 +1,18 @@
 """
-BiPRO-GDV Tool - Login Dialog
+ACENCIA ATLAS - Login Dialog
 
 Dialog für Benutzer-Anmeldung.
 """
 
+import os
+
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
     QLineEdit, QPushButton, QLabel, QCheckBox,
-    QMessageBox, QProgressBar
+    QProgressBar
 )
 from PySide6.QtCore import Qt, QThread, Signal
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QPixmap
 
 from api.client import APIClient, APIError
 from api.auth import AuthAPI, AuthState
@@ -53,7 +55,7 @@ class ConnectionCheckWorker(QThread):
 
 class LoginDialog(QDialog):
     """
-    Login-Dialog für BiPRO-GDV Tool.
+    Login-Dialog für ACENCIA ATLAS.
     
     Verwendung:
         dialog = LoginDialog()
@@ -70,8 +72,8 @@ class LoginDialog(QDialog):
         self._login_worker = None
         self._check_worker = None
         
-        self.setWindowTitle("BiPRO-GDV Tool - Anmeldung")
-        self.setFixedSize(400, 300)
+        self.setWindowTitle("ACENCIA ATLAS - Anmeldung")
+        self.setFixedSize(400, 420)
         self.setModal(True)
         
         self._setup_ui()
@@ -83,14 +85,30 @@ class LoginDialog(QDialog):
         layout.setSpacing(15)
         layout.setContentsMargins(30, 30, 30, 30)
         
+        # App-Logo
+        logo_label = QLabel()
+        logo_label.setAlignment(Qt.AlignCenter)
+        logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "logo.png")
+        if os.path.exists(logo_path):
+            pixmap = QPixmap(logo_path)
+            scaled = pixmap.scaled(100, 100, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            logo_label.setPixmap(scaled)
+        layout.addWidget(logo_label)
+        
         # Titel
-        title = QLabel("BiPRO-GDV Tool")
+        title = QLabel("ACENCIA ATLAS")
         title_font = QFont()
-        title_font.setPointSize(16)
+        title_font.setPointSize(14)
         title_font.setBold(True)
         title.setFont(title_font)
         title.setAlignment(Qt.AlignCenter)
         layout.addWidget(title)
+        
+        # Tagline
+        tagline = QLabel("Der Datenkern.")
+        tagline.setAlignment(Qt.AlignCenter)
+        tagline.setStyleSheet("color: #6B7280; font-size: 11px;")
+        layout.addWidget(tagline)
         
         # Status-Label
         self.status_label = QLabel("Verbindung wird geprüft...")
@@ -182,12 +200,14 @@ class LoginDialog(QDialog):
         password = self.password_input.text()
         
         if not username:
-            QMessageBox.warning(self, "Fehler", "Bitte Benutzername eingeben.")
+            self.status_label.setText("Bitte Benutzername eingeben.")
+            self.status_label.setStyleSheet("color: #dc2626;")
             self.username_input.setFocus()
             return
         
         if not password:
-            QMessageBox.warning(self, "Fehler", "Bitte Passwort eingeben.")
+            self.status_label.setText("Bitte Passwort eingeben.")
+            self.status_label.setStyleSheet("color: #dc2626;")
             self.password_input.setFocus()
             return
         
@@ -224,12 +244,6 @@ class LoginDialog(QDialog):
             self.password_input.clear()
             self.password_input.setFocus()
             self._enable_inputs()
-            
-            QMessageBox.warning(
-                self,
-                "Anmeldung fehlgeschlagen",
-                "Benutzername oder Passwort falsch."
-            )
     
     def _on_login_error(self, error_msg: str):
         """Callback bei Login-Fehler."""
@@ -238,11 +252,7 @@ class LoginDialog(QDialog):
         self.status_label.setStyleSheet("color: red;")
         self._enable_inputs()
         
-        QMessageBox.critical(
-            self,
-            "Fehler",
-            f"Anmeldung fehlgeschlagen:\n{error_msg}"
-        )
+        # Fehler wird ueber status_label angezeigt (inline, nicht modal)
     
     def _enable_inputs(self):
         """Eingabefelder wieder aktivieren."""

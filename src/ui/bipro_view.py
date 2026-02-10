@@ -1,5 +1,5 @@
 """
-BiPRO-GDV Tool - BiPRO Datenabruf View
+ACENCIA ATLAS - BiPRO Datenabruf View
 
 Ansicht für BiPRO-Verbindungen und Lieferungsabruf.
 
@@ -388,6 +388,312 @@ class AcknowledgeShipmentWorker(QThread):
         except Exception as e:
             self.progress.emit(f"FEHLER: {e}")
             self.finished.emit([], self.shipment_ids)
+
+
+# =============================================================================
+# MAIL IMPORT WORKER - IMAP-Mails abrufen und Anhaenge importieren
+# =============================================================================
+
+class MailImportWorker(QThread):
+    """Worker zum Abrufen von IMAP-Mails und Import der Anhaenge in die Eingangsbox.
+    
+    Ablauf:
+      1. IMAP-Poll (Server-seitig: neue Mails abrufen, Anhaenge in Staging speichern)
+      2. Pending Attachments vom Server holen
+      3. Jeden Anhang herunterladen und durch Pipeline verarbeiten (PDF/ZIP/MSG)
+      4. Verarbeitete Dateien parallel in die Eingangsbox hochladen
+      5. Anhaenge als importiert markieren
+    
+    Verwendet ThreadPoolExecutor fuer parallele Downloads und Uploads (max 4 Worker).
+    """
+    progress = Signal(str)              # Status-Text fuer Log
+    progress_count = Signal(int, int)   # (current, total) fuer Fortschrittsbalken
+    phase_changed = Signal(str, int)    # (phase_title, total_items) - neuer Progress-Toast
+    completed = Signal(dict)            # Ergebnis-Statistiken
+    error = Signal(str)                 # Fehlermeldung
+    
+    MAX_WORKERS = 4
+
+    def __init__(self, api_client, account_id: int):
+        super().__init__()
+        self._api_client = api_client
+        self._account_id = account_id
+
+    def _expand_attachment(self, file_path: str, temp_base: str):
+        """Verarbeitet einen heruntergeladenen Anhang durch die Pipeline.
+        
+        Returns:
+            Liste von (path, box_type) Tupeln. box_type=None -> Eingangsbox, 'roh' -> Roh-Archiv.
+        """
+        from services.msg_handler import is_msg_file, extract_msg_attachments
+        from services.zip_handler import is_zip_file, extract_zip_contents
+        from services.pdf_unlock import unlock_pdf_if_needed
+
+        jobs = []
+        errors = []
+
+        if is_zip_file(file_path):
+            td = tempfile.mkdtemp(prefix="atlas_mail_zip_", dir=temp_base)
+            zr = extract_zip_contents(file_path, td, api_client=self._api_client)
+            if zr.error:
+                errors.append(zr.error)
+                jobs.append((file_path, 'roh'))
+            else:
+                for ext in zr.extracted_paths:
+                    if is_msg_file(ext):
+                        md = tempfile.mkdtemp(prefix="atlas_mail_msg_", dir=td)
+                        mr = extract_msg_attachments(ext, md)
+                        if mr.error:
+                            errors.append(mr.error)
+                        else:
+                            for att in mr.attachment_paths:
+                                try:
+                                    unlock_pdf_if_needed(att)
+                                except Exception:
+                                    pass
+                                jobs.append((att, None))
+                        jobs.append((ext, 'roh'))
+                    else:
+                        try:
+                            unlock_pdf_if_needed(ext)
+                        except Exception:
+                            pass
+                        jobs.append((ext, None))
+                jobs.append((file_path, 'roh'))
+
+        elif is_msg_file(file_path):
+            td = tempfile.mkdtemp(prefix="atlas_mail_msg_", dir=temp_base)
+            mr = extract_msg_attachments(file_path, td)
+            if mr.error:
+                errors.append(mr.error)
+            else:
+                for att in mr.attachment_paths:
+                    if is_zip_file(att):
+                        zd = tempfile.mkdtemp(prefix="atlas_mail_zip_", dir=td)
+                        zr = extract_zip_contents(att, zd, api_client=self._api_client)
+                        if zr.error:
+                            errors.append(zr.error)
+                        else:
+                            for ext in zr.extracted_paths:
+                                try:
+                                    unlock_pdf_if_needed(ext)
+                                except Exception:
+                                    pass
+                                jobs.append((ext, None))
+                        jobs.append((att, 'roh'))
+                    else:
+                        try:
+                            unlock_pdf_if_needed(att)
+                        except Exception:
+                            pass
+                        jobs.append((att, None))
+            jobs.append((file_path, 'roh'))
+
+        else:
+            try:
+                unlock_pdf_if_needed(file_path)
+            except Exception:
+                pass
+            jobs.append((file_path, None))
+
+        return jobs, errors
+
+    def _upload_single(self, file_path: str, box_type: str = None):
+        """Thread-safe Upload einer einzelnen Datei mit per-Thread API-Client.
+        
+        Returns:
+            (filename, success, doc_or_error_str)
+        """
+        from pathlib import Path
+        name = Path(file_path).name
+        try:
+            tid = threading.get_ident()
+            if tid not in self._thread_apis:
+                from api.client import APIClient
+                from api.documents import DocumentsAPI
+                client = APIClient(self._api_client.config)
+                client.set_token(self._api_client._token)
+                self._thread_apis[tid] = DocumentsAPI(client)
+            docs_api = self._thread_apis[tid]
+
+            if box_type:
+                doc = docs_api.upload(file_path, 'imap_import', box_type=box_type)
+            else:
+                doc = docs_api.upload(file_path, 'imap_import')
+            if doc:
+                return (name, True, doc)
+            else:
+                return (name, False, "Upload fehlgeschlagen")
+        except Exception as e:
+            return (name, False, str(e))
+
+    def _process_attachment(self, att: dict, temp_base: str, email_api):
+        """Verarbeitet einen einzelnen Anhang: Download -> Pipeline -> Upload -> Markieren.
+        
+        Returns:
+            (success: bool, errors: list)
+        """
+        from pathlib import Path
+
+        att_id = att.get('id')
+        att_filename = att.get('original_filename', att.get('filename', f'attachment_{att_id}'))
+        errors = []
+
+        try:
+            # Download in Temp-Verzeichnis
+            safe_name = att_filename.replace('/', '_').replace('\\', '_')
+            local_path = os.path.join(temp_base, f"{att_id}_{safe_name}")
+            email_api.download_attachment(att_id, local_path)
+
+            # Pipeline: ZIP/MSG/PDF Verarbeitung
+            upload_jobs, expand_errors = self._expand_attachment(local_path, temp_base)
+            if expand_errors:
+                errors.extend(expand_errors)
+
+            # Parallele Uploads via ThreadPoolExecutor
+            first_doc_id = None
+            upload_success = False
+            
+            num_workers = min(self.MAX_WORKERS, max(1, len(upload_jobs)))
+            with ThreadPoolExecutor(max_workers=num_workers) as executor:
+                futures = {
+                    executor.submit(self._upload_single, fp, bt): (fp, bt)
+                    for fp, bt in upload_jobs
+                }
+                for future in as_completed(futures):
+                    fp, bt = futures[future]
+                    try:
+                        name, success, result = future.result()
+                        if success and first_doc_id is None and bt != 'roh':
+                            first_doc_id = result.id if hasattr(result, 'id') else None
+                            upload_success = True
+                    except Exception as upload_err:
+                        errors.append(f"Upload {Path(fp).name}: {upload_err}")
+
+            # Anhang als importiert/fehlgeschlagen markieren
+            if upload_success and first_doc_id:
+                try:
+                    email_api.mark_attachment_imported(att_id, first_doc_id)
+                except Exception:
+                    pass
+                return (True, errors)
+            elif upload_jobs:
+                try:
+                    email_api.mark_attachment_imported(att_id, 0)
+                except Exception:
+                    pass
+                return (True, errors)
+            else:
+                try:
+                    email_api.mark_attachment_failed(
+                        att_id, "Keine Dateien zum Upload nach Verarbeitung"
+                    )
+                except Exception:
+                    pass
+                return (False, errors)
+
+        except Exception as e:
+            logger.error(f"Fehler bei Anhang {att_filename}: {e}")
+            errors.append(f"{att_filename}: {e}")
+            try:
+                email_api.mark_attachment_failed(att_id, str(e))
+            except Exception:
+                pass
+            return (False, errors)
+
+    def run(self):
+        import shutil
+        from api.smartscan import EmailAccountsAPI
+
+        email_api = EmailAccountsAPI(self._api_client)
+        self._thread_apis = {}  # thread_id -> DocumentsAPI
+
+        stats = {
+            'new_mails': 0,
+            'new_attachments': 0,
+            'total_pending': 0,
+            'imported': 0,
+            'failed': 0,
+            'errors': []
+        }
+        temp_base = tempfile.mkdtemp(prefix="atlas_mail_import_")
+
+        try:
+            # ==============================================
+            # PHASE 1: IMAP-Poll (Server-seitig)
+            # ==============================================
+            from i18n.de import BIPRO_MAIL_FETCH_PHASE_POLL, BIPRO_MAIL_FETCH_PHASE_IMPORT
+            self.phase_changed.emit(BIPRO_MAIL_FETCH_PHASE_POLL, 0)
+            self.progress.emit("Rufe E-Mail-Postfach ab...")
+            try:
+                poll_result = email_api.poll_inbox(self._account_id)
+                stats['new_mails'] = poll_result.get('new_mails', 0)
+                stats['new_attachments'] = poll_result.get('new_attachments', 0)
+                poll_errors = poll_result.get('errors', [])
+                if poll_errors:
+                    stats['errors'].extend(poll_errors)
+
+                if stats['new_mails'] > 0:
+                    self.progress.emit(
+                        f"{stats['new_mails']} neue Mail(s) mit "
+                        f"{stats['new_attachments']} Anhang/Anhaenge gefunden"
+                    )
+                else:
+                    self.progress.emit("Keine neuen Mails im Postfach")
+            except Exception as e:
+                self.progress.emit(f"IMAP-Poll Fehler: {e}")
+                stats['errors'].append(str(e))
+
+            # ==============================================
+            # PHASE 2: Anhaenge herunterladen + verarbeiten + hochladen
+            # ==============================================
+            self.progress.emit("Lade unverarbeitete Anhaenge...")
+            try:
+                pending = email_api.get_pending_attachments()
+            except Exception as e:
+                self.error.emit(f"Fehler beim Laden der Anhaenge: {e}")
+                return
+
+            stats['total_pending'] = len(pending)
+            if not pending:
+                self.progress.emit("Keine unverarbeiteten Anhaenge vorhanden")
+                self.completed.emit(stats)
+                return
+
+            total = len(pending)
+            # Phase 2 Toast starten
+            self.phase_changed.emit(BIPRO_MAIL_FETCH_PHASE_IMPORT, total)
+            self.progress.emit(f"{total} Anhang/Anhaenge werden verarbeitet...")
+            self.progress_count.emit(0, total)
+
+            # --- Download, Pipeline, Upload, Markieren ---
+            for idx, att in enumerate(pending, 1):
+                att_filename = att.get('original_filename', att.get('filename', f'attachment_{att.get("id")}'))
+                self.progress.emit(f"Verarbeite {idx}/{total}: {att_filename}")
+                self.progress_count.emit(idx, total)
+
+                success, att_errors = self._process_attachment(att, temp_base, email_api)
+                if att_errors:
+                    stats['errors'].extend(att_errors)
+                if success:
+                    stats['imported'] += 1
+                else:
+                    stats['failed'] += 1
+
+            self.progress.emit("Mail-Import abgeschlossen")
+            self.progress_count.emit(total, total)
+            self.completed.emit(stats)
+
+        except Exception as e:
+            logger.error(f"MailImportWorker Fehler: {e}")
+            self.error.emit(str(e))
+        finally:
+            # Temp-Verzeichnis aufraeumen
+            try:
+                shutil.rmtree(temp_base, ignore_errors=True)
+            except Exception:
+                pass
+            self._thread_apis = {}
 
 
 # =============================================================================
@@ -851,6 +1157,17 @@ class ParallelDownloadManager(QThread):
                             f"Status: {validation_status.value if validation_status else 'UNKNOWN'}"
                         )
                 
+                # Cross-Check: BiPRO-Code 999xxx (GDV) aber Datei hat .pdf Endung
+                # GDV-Dateien sind Fixed-Width-Text, keine PDFs
+                category_str = str(category) if category else ''
+                if category_str.startswith('999') and ext.lower() == '.pdf':
+                    if not content_bytes[:4].startswith(b'%PDF'):
+                        logger.warning(
+                            f"BiPRO-Code {category_str} (GDV) aber Inhalt ist kein PDF "
+                            f"(Magic-Bytes: {content_bytes[:8]!r}). "
+                            f"Datei '{new_filename}' ist wahrscheinlich eine GDV-Textdatei."
+                        )
+                
                 saved_docs.append({
                     'filename': new_filename,
                     'original_filename': original_filename,
@@ -914,11 +1231,26 @@ class ParallelDownloadManager(QThread):
             ct_match = re.search(r'Content-Type:\s*([^\r\n]+)', header, re.IGNORECASE)
             mime_type = ct_match.group(1).strip() if ct_match else 'application/octet-stream'
             
+            # Trailing CRLF/LF konsistent strippen (Boundary-Artefakte)
+            if body.endswith(b'\r\n'):
+                body = body[:-2]
+            elif body.endswith(b'\n'):
+                body = body[:-1]
+            
             # Nur binäre Inhalte (keine XML-Teile)
             # Prüfe Magic Bytes statt strip() zu verwenden
             is_xml = body[:5] == b'<?xml' or body[:100].lstrip()[:5] == b'<?xml'
             
             if body and len(body) > 100 and not is_xml:
+                # Magic-Byte-Validierung: Content-Type vs. tatsaechlicher Inhalt
+                if 'pdf' in mime_type.lower() and not body[:4].startswith(b'%PDF'):
+                    actual_magic = body[:8] if len(body) >= 8 else body
+                    logger.warning(
+                        f"MTOM: Content-Type ist {mime_type} aber Magic-Bytes "
+                        f"sind {actual_magic!r} (kein %PDF). "
+                        f"Filename={filename}, Size={len(body)} Bytes"
+                    )
+                
                 documents.append({
                     'filename': filename,
                     'content_bytes': body,
@@ -1849,6 +2181,13 @@ class AddConnectionDialog(QDialog):
         
         layout.addWidget(known_group)
         
+        # Inline-Status-Label fuer Validierungsfehler (statt modaler Dialoge)
+        self._status_label = QLabel("")
+        self._status_label.setStyleSheet("color: #dc2626; font-size: 12px; padding: 4px 8px;")
+        self._status_label.setWordWrap(True)
+        self._status_label.setVisible(False)
+        layout.addWidget(self._status_label)
+        
         # Buttons
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
@@ -1857,8 +2196,26 @@ class AddConnectionDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
     
+    def _show_validation_error(self, message: str):
+        """Zeigt eine Validierungsfehlermeldung inline an."""
+        self._status_label.setText(message)
+        self._status_label.setStyleSheet("color: #dc2626; font-size: 12px; padding: 4px 8px;")
+        self._status_label.setVisible(True)
+    
+    def _show_validation_info(self, message: str):
+        """Zeigt einen Validierungshinweis inline an."""
+        self._status_label.setText(message)
+        self._status_label.setStyleSheet("color: #1e40af; font-size: 12px; padding: 4px 8px;")
+        self._status_label.setVisible(True)
+    
+    def _clear_status(self):
+        """Loescht die Status-Anzeige."""
+        self._status_label.setText("")
+        self._status_label.setVisible(False)
+    
     def _on_auth_type_changed(self, index):
         """Zeigt/versteckt Felder je nach Auth-Typ."""
+        self._clear_status()
         auth_type = self.auth_type_combo.currentData()
         is_certificate = (auth_type == "certificate")
         
@@ -2096,7 +2453,7 @@ class AddConnectionDialog(QDialog):
             self._on_known_endpoint_changed(self.known_endpoints_combo.currentIndex())
                 
         except Exception as e:
-            QMessageBox.warning(self, "Fehler", f"SmartAdmin-Endpunkt konnte nicht geladen werden: {e}")
+            self._show_validation_error(f"SmartAdmin-Endpunkt konnte nicht geladen werden: {e}")
     
     def _derive_urls(self):
         """Leitet die fehlende URL aus der vorhandenen ab."""
@@ -2121,8 +2478,7 @@ class AddConnectionDialog(QDialog):
         
         # Beide leer - nichts tun
         elif not sts_url and not transfer_url:
-            QMessageBox.information(
-                self, "Hinweis", 
+            self._show_validation_info(
                 "Bitte mindestens eine URL (STS oder Transfer) eingeben."
             )
     
@@ -2139,10 +2495,11 @@ class AddConnectionDialog(QDialog):
     
     def _validate_and_accept(self):
         """Validiert die Eingaben vor dem Akzeptieren."""
+        self._clear_status()
         auth_type = self.auth_type_combo.currentData()
         
         if not self.vu_name_input.text().strip():
-            QMessageBox.warning(self, "Fehler", "Bitte VU-Name eingeben.")
+            self._show_validation_error("Bitte VU-Name eingeben.")
             return
         
         # Mindestens eine URL muss vorhanden sein
@@ -2150,7 +2507,7 @@ class AddConnectionDialog(QDialog):
         transfer_url = self.transfer_url_input.text().strip()
         
         if not sts_url and not transfer_url:
-            QMessageBox.warning(self, "Fehler", "Bitte mindestens eine URL (STS oder Transfer) eingeben.")
+            self._show_validation_error("Bitte mindestens eine URL (STS oder Transfer) eingeben.")
             return
         
         if auth_type == "certificate":
@@ -2161,32 +2518,32 @@ class AddConnectionDialog(QDialog):
                 if cert_source == "settings":
                     # Zertifikat aus Einstellungen
                     if not self._selected_cert_id:
-                        QMessageBox.warning(self, "Fehler", "Bitte Zertifikat aus Einstellungen auswählen.")
+                        self._show_validation_error("Bitte Zertifikat aus Einstellungen auswählen.")
                         return
                     if not self.cert_settings_password.text():
-                        QMessageBox.warning(self, "Fehler", "Bitte Passwort für das Zertifikat eingeben.")
+                        self._show_validation_error("Bitte Passwort für das Zertifikat eingeben.")
                         return
                 else:
                     # Datei manuell auswählen
                     if not self._pfx_path:
-                        QMessageBox.warning(self, "Fehler", "Bitte PFX-Zertifikat auswaehlen.")
+                        self._show_validation_error("Bitte PFX-Zertifikat auswaehlen.")
                         return
                     if not os.path.exists(self._pfx_path):
-                        QMessageBox.warning(self, "Fehler", "PFX-Datei nicht gefunden.")
+                        self._show_validation_error("PFX-Datei nicht gefunden.")
                         return
             else:  # jks
                 if not self._jks_path:
-                    QMessageBox.warning(self, "Fehler", "Bitte JKS-Zertifikat auswaehlen.")
+                    self._show_validation_error("Bitte JKS-Zertifikat auswaehlen.")
                     return
                 if not os.path.exists(self._jks_path):
-                    QMessageBox.warning(self, "Fehler", "JKS-Datei nicht gefunden.")
+                    self._show_validation_error("JKS-Datei nicht gefunden.")
                     return
         else:
             if not self.username_input.text():
-                QMessageBox.warning(self, "Fehler", "Bitte Benutzername eingeben.")
+                self._show_validation_error("Bitte Benutzername eingeben.")
                 return
             if not self.password_input.text():
-                QMessageBox.warning(self, "Fehler", "Bitte Passwort eingeben.")
+                self._show_validation_error("Bitte Passwort eingeben.")
                 return
         
         self.accept()
@@ -2472,6 +2829,13 @@ class EditConnectionDialog(QDialog):
         # Initial: Richtige Gruppe anzeigen
         self._on_auth_type_changed(0)
         
+        # Inline-Status-Label fuer Validierungsfehler (statt modaler Dialoge)
+        self._status_label = QLabel("")
+        self._status_label.setStyleSheet("color: #dc2626; font-size: 12px; padding: 4px 8px;")
+        self._status_label.setWordWrap(True)
+        self._status_label.setVisible(False)
+        layout.addWidget(self._status_label)
+        
         # Buttons
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
@@ -2480,8 +2844,20 @@ class EditConnectionDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
     
+    def _show_validation_error(self, message: str):
+        """Zeigt eine Validierungsfehlermeldung inline an."""
+        self._status_label.setText(message)
+        self._status_label.setStyleSheet("color: #dc2626; font-size: 12px; padding: 4px 8px;")
+        self._status_label.setVisible(True)
+    
+    def _clear_status(self):
+        """Loescht die Status-Anzeige."""
+        self._status_label.setText("")
+        self._status_label.setVisible(False)
+    
     def _on_auth_type_changed(self, index):
         """Zeigt/versteckt Felder je nach Auth-Typ."""
+        self._clear_status()
         auth_type = self.auth_type_combo.currentData()
         is_certificate = (auth_type == "certificate")
         
@@ -2544,36 +2920,37 @@ class EditConnectionDialog(QDialog):
     
     def _validate_and_accept(self):
         """Validiert die Eingaben vor dem Akzeptieren."""
+        self._clear_status()
         auth_type = self.auth_type_combo.currentData()
         
         if not self.vu_name_input.text().strip():
-            QMessageBox.warning(self, "Fehler", "Bitte VU-Name eingeben.")
+            self._show_validation_error("Bitte VU-Name eingeben.")
             return
         
         if not self.endpoint_input.text().strip():
-            QMessageBox.warning(self, "Fehler", "Bitte Endpoint-URL eingeben.")
+            self._show_validation_error("Bitte Endpoint-URL eingeben.")
             return
         
         if auth_type == "certificate":
             cert_format = self.cert_format_combo.currentData()
             if cert_format == "pfx":
                 if not self._pfx_path:
-                    QMessageBox.warning(self, "Fehler", "Bitte PFX-Zertifikat auswaehlen.")
+                    self._show_validation_error("Bitte PFX-Zertifikat auswaehlen.")
                     return
                 if not os.path.exists(self._pfx_path):
-                    QMessageBox.warning(self, "Fehler", "PFX-Datei nicht gefunden.")
+                    self._show_validation_error("PFX-Datei nicht gefunden.")
                     return
             else:  # jks
                 if not self._jks_path:
-                    QMessageBox.warning(self, "Fehler", "Bitte JKS-Zertifikat auswaehlen.")
+                    self._show_validation_error("Bitte JKS-Zertifikat auswaehlen.")
                     return
                 if not os.path.exists(self._jks_path):
-                    QMessageBox.warning(self, "Fehler", "JKS-Datei nicht gefunden.")
+                    self._show_validation_error("JKS-Datei nicht gefunden.")
                     return
         else:
             # Username/Password Auth
             if not self.username_input.text().strip():
-                QMessageBox.warning(self, "Fehler", "Bitte Benutzername eingeben.")
+                self._show_validation_error("Bitte Benutzername eingeben.")
                 return
         
         self.accept()
@@ -2664,8 +3041,19 @@ class BiPROView(QWidget):
         self._download_worker = None
         self._parallel_manager = None  # ParallelDownloadManager für parallele Downloads
         self._acknowledge_worker = None
+        self._mail_import_worker = None  # MailImportWorker fuer IMAP-Import
+        self._mail_progress_toast = None  # Progress-Toast fuer Mail-Import
         self._download_queue = []
         self._download_stats = {}
+        
+        # "Alle VUs abholen" State Machine
+        self._all_vus_mode = False
+        self._vu_queue: list = []  # Queue von VUConnections
+        self._all_vus_current_index = 0
+        self._all_vus_total = 0
+        self._all_vus_stats = {
+            'vus_processed': 0, 'total_shipments': 0, 'total_docs': 0, 'vus_skipped': 0
+        }
         
         # Liste aller aktiven Worker fuer sauberes Cleanup
         self._active_workers: list = []
@@ -2807,11 +3195,34 @@ class BiPROView(QWidget):
         # Toolbar
         toolbar = QHBoxLayout()
         
-        self.fetch_btn = QPushButton("Lieferungen abrufen")
-        self.fetch_btn.setStyleSheet(get_button_secondary_style())
-        self.fetch_btn.setEnabled(False)
-        self.fetch_btn.clicked.connect(self._fetch_shipments)
-        toolbar.addWidget(self.fetch_btn)
+        # "Mails abholen" Button (IMAP-Import, braucht keine VU-Auswahl)
+        from i18n.de import BIPRO_MAIL_FETCH, BIPRO_MAIL_FETCH_TOOLTIP
+        self.mail_fetch_btn = QPushButton(f"  {BIPRO_MAIL_FETCH}")
+        self.mail_fetch_btn.setFixedHeight(30)
+        self.mail_fetch_btn.setToolTip(BIPRO_MAIL_FETCH_TOOLTIP)
+        self.mail_fetch_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #4CAF50;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 4px 14px;
+                font-size: 13px;
+                font-weight: 600;
+            }
+            QPushButton:hover {
+                background-color: #43A047;
+            }
+            QPushButton:pressed {
+                background-color: #388E3C;
+            }
+            QPushButton:disabled {
+                background-color: #A5D6A7;
+                color: #E8F5E9;
+            }
+        """)
+        self.mail_fetch_btn.clicked.connect(self._fetch_mails)
+        toolbar.addWidget(self.mail_fetch_btn)
         
         self.download_btn = QPushButton("📥 Ausgewählte herunterladen")
         self.download_btn.setEnabled(False)
@@ -2822,6 +3233,20 @@ class BiPROView(QWidget):
         self.download_all_btn.setEnabled(False)
         self.download_all_btn.clicked.connect(self._download_all)
         toolbar.addWidget(self.download_all_btn)
+        
+        # Separator
+        separator_line = QFrame()
+        separator_line.setFrameShape(QFrame.Shape.VLine)
+        separator_line.setStyleSheet(f"color: {BORDER_DEFAULT};")
+        toolbar.addWidget(separator_line)
+        
+        # "Alle VUs abholen" Button (braucht keine VU-Auswahl)
+        from i18n.de import BIPRO_FETCH_ALL, BIPRO_FETCH_ALL_TOOLTIP
+        self.fetch_all_vus_btn = QPushButton(BIPRO_FETCH_ALL)
+        self.fetch_all_vus_btn.setStyleSheet(get_button_primary_style())
+        self.fetch_all_vus_btn.setToolTip(BIPRO_FETCH_ALL_TOOLTIP)
+        self.fetch_all_vus_btn.clicked.connect(self._fetch_all_vus)
+        toolbar.addWidget(self.fetch_all_vus_btn)
         
         # Quittieren-Button (manuell, nicht automatisch)
         self.acknowledge_btn = QPushButton("Ausgewaehlte quittieren")
@@ -2916,7 +3341,7 @@ class BiPROView(QWidget):
                 data = dialog.get_data()
                 
                 if not data.get('vu_name') or not data.get('endpoint_url'):
-                    QMessageBox.warning(self, "Fehler", "Bitte alle Pflichtfelder ausfuellen.")
+                    self._toast_manager.show_warning("Bitte alle Pflichtfelder ausfuellen.")
                     return
                 
                 # Bei Zertifikats-Auth: Dummy-Credentials verwenden
@@ -2955,28 +3380,20 @@ class BiPROView(QWidget):
                         self._log(f"Verbindung '{data['vu_name']}' erstellt (Auth: {data.get('auth_type', 'sts')})")
                         self._load_connections()
                     else:
-                        QMessageBox.warning(self, "Fehler", "Verbindung konnte nicht erstellt werden.")
+                        self._toast_manager.show_error("Verbindung konnte nicht erstellt werden.")
                         
                 except Exception as e:
-                    QMessageBox.critical(
-                        self, 
-                        "Fehler", 
-                        f"Fehler beim Erstellen der Verbindung:\n\n{str(e)}"
-                    )
+                    self._toast_manager.show_error(f"Fehler beim Erstellen der Verbindung:\n\n{str(e)}")
                     self._log(f"Fehler beim Erstellen: {e}")
                     
         except Exception as e:
-            QMessageBox.critical(
-                self, 
-                "Fehler", 
-                f"Unerwarteter Fehler:\n\n{str(e)}"
-            )
+            self._toast_manager.show_error(f"Unerwarteter Fehler:\n\n{str(e)}")
             self._log(f"Fehler bei _add_connection: {e}")
     
     def _get_certificate_config_path(self) -> str:
         """Gibt den Pfad zur lokalen Zertifikats-Konfiguration zurueck."""
         import pathlib
-        config_dir = pathlib.Path.home() / '.bipro-gdv-tool'
+        config_dir = pathlib.Path.home() / '.acencia-atlas'
         config_dir.mkdir(exist_ok=True)
         return str(config_dir / 'certificates.json')
     
@@ -3035,14 +3452,14 @@ class BiPROView(QWidget):
         Diese Methode zentralisiert die Credential-Logik fuer alle Download-Operationen.
         
         Args:
-            show_errors: Wenn True, werden Fehler als QMessageBox angezeigt
+            show_errors: Wenn True, werden Fehler als Toast angezeigt
             
         Returns:
             VUCredentials oder None bei Fehler
         """
         if not self._current_connection:
             if show_errors:
-                QMessageBox.warning(self, "Fehler", "Keine VU-Verbindung ausgewaehlt.")
+                self._toast_manager.show_warning("Keine VU-Verbindung ausgewaehlt.")
             return None
         
         if self._current_connection.auth_type == 'certificate':
@@ -3052,12 +3469,9 @@ class BiPROView(QWidget):
             
             if not cert_config:
                 if show_errors:
-                    QMessageBox.warning(
-                        self, 
-                        "Fehler", 
-                        "Zertifikat-Konfiguration nicht gefunden.\n\n"
-                        "Bitte VU-Verbindung loeschen und neu anlegen\n"
-                        "mit einem gueltigen Zertifikat."
+                    self._toast_manager.show_error(
+                        "Zertifikat-Konfiguration nicht gefunden.\n"
+                        "Bitte VU-Verbindung loeschen und neu anlegen."
                     )
                 return None
             
@@ -3068,11 +3482,8 @@ class BiPROView(QWidget):
                 jks_path = cert_config.get('jks_path', '')
                 if not jks_path or not os.path.exists(jks_path):
                     if show_errors:
-                        QMessageBox.warning(
-                            self, 
-                            "Fehler", 
-                            f"JKS-Datei nicht gefunden:\n{jks_path}\n\n"
-                            "Bitte VU-Verbindung aktualisieren."
+                        self._toast_manager.show_error(
+                            f"JKS-Datei nicht gefunden:\n{jks_path}\nBitte VU-Verbindung aktualisieren."
                         )
                     return None
                 
@@ -3090,11 +3501,8 @@ class BiPROView(QWidget):
                 pfx_path = cert_config.get('pfx_path', '')
                 if not pfx_path or not os.path.exists(pfx_path):
                     if show_errors:
-                        QMessageBox.warning(
-                            self, 
-                            "Fehler", 
-                            f"PFX-Datei nicht gefunden:\n{pfx_path}\n\n"
-                            "Bitte VU-Verbindung aktualisieren."
+                        self._toast_manager.show_error(
+                            f"PFX-Datei nicht gefunden:\n{pfx_path}\nBitte VU-Verbindung aktualisieren."
                         )
                     return None
                 
@@ -3113,13 +3521,8 @@ class BiPROView(QWidget):
                 credentials = self.vu_api.get_credentials(self._current_connection.id)
                 if not credentials:
                     if show_errors:
-                        QMessageBox.warning(
-                            self, 
-                            "Fehler", 
-                            "Zugangsdaten konnten nicht abgerufen werden.\n\n"
-                            "Moegliche Ursachen:\n"
-                            "- VU-Verbindung hat keine Credentials hinterlegt\n"
-                            "- Credentials wurden nicht korrekt gespeichert\n\n"
+                        self._toast_manager.show_error(
+                            "Zugangsdaten konnten nicht abgerufen werden.\n"
                             "Bitte VU-Verbindung loeschen und neu anlegen."
                         )
                     return None
@@ -3127,7 +3530,7 @@ class BiPROView(QWidget):
             except Exception as e:
                 self._log(f"FEHLER: {e}")
                 if show_errors:
-                    QMessageBox.warning(self, "Fehler", f"Fehler beim Abrufen der Zugangsdaten:\n{e}")
+                    self._toast_manager.show_error(f"Fehler beim Abrufen der Zugangsdaten:\n{e}")
                 return None
     
     def _on_connection_selected(self, item: QListWidgetItem):
@@ -3138,7 +3541,6 @@ class BiPROView(QWidget):
         self._shipments = []
         self.shipments_table.setRowCount(0)
         
-        self.fetch_btn.setEnabled(conn.is_active)
         self.download_btn.setEnabled(False)
         self.download_all_btn.setEnabled(False)
         self.acknowledge_btn.setEnabled(False)
@@ -3189,28 +3591,27 @@ class BiPROView(QWidget):
         """Zeigt das Passwort der ausgewählten Verbindung."""
         conn = self._get_selected_connection()
         if not conn:
-            QMessageBox.information(self, "Info", "Bitte eine Verbindung auswählen.")
+            self._toast_manager.show_info("Bitte eine Verbindung auswählen.")
             return
         
         # Credentials vom Server holen
         creds = self.vu_api.get_credentials(conn.id)
         
         if creds:
-            QMessageBox.information(
-                self,
-                f"Zugangsdaten - {conn.vu_name}",
+            self._toast_manager.show_info(
+                f"Zugangsdaten - {conn.vu_name}\n"
                 f"Benutzername: {creds.username}\n"
-                f"Passwort: {creds.password}\n\n"
+                f"Passwort: {creds.password}\n"
                 f"Endpoint: {conn.endpoint_url}"
             )
         else:
-            QMessageBox.warning(self, "Fehler", "Zugangsdaten konnten nicht abgerufen werden.")
+            self._toast_manager.show_error("Zugangsdaten konnten nicht abgerufen werden.")
     
     def _edit_connection(self):
         """Bearbeitet die ausgewaehlte Verbindung."""
         conn = self._get_selected_connection()
         if not conn:
-            QMessageBox.information(self, "Info", "Bitte eine Verbindung auswaehlen.")
+            self._toast_manager.show_info("Bitte eine Verbindung auswaehlen.")
             return
         
         try:
@@ -3266,33 +3667,23 @@ class BiPROView(QWidget):
                         self._log(f"Verbindung '{data['vu_name']}' aktualisiert")
                         self._load_connections()
                     else:
-                        QMessageBox.warning(
-                            self, 
-                            "Fehler", 
-                            "Verbindung konnte nicht aktualisiert werden.\n\n"
+                        self._toast_manager.show_error(
+                            "Verbindung konnte nicht aktualisiert werden.\n"
                             "Moeglicherweise ist die Server-Verbindung unterbrochen."
                         )
                 except Exception as e:
-                    QMessageBox.critical(
-                        self, 
-                        "Fehler", 
-                        f"Fehler beim Speichern der Verbindung:\n\n{str(e)}"
-                    )
+                    self._toast_manager.show_error(f"Fehler beim Speichern der Verbindung:\n\n{str(e)}")
                     self._log(f"Fehler beim Update: {e}")
                     
         except Exception as e:
-            QMessageBox.critical(
-                self, 
-                "Fehler", 
-                f"Unerwarteter Fehler:\n\n{str(e)}"
-            )
+            self._toast_manager.show_error(f"Unerwarteter Fehler:\n\n{str(e)}")
             self._log(f"Fehler bei _edit_connection: {e}")
     
     def _delete_connection(self):
         """Löscht die ausgewählte Verbindung."""
         conn = self._get_selected_connection()
         if not conn:
-            QMessageBox.information(self, "Info", "Bitte eine Verbindung auswählen.")
+            self._toast_manager.show_info("Bitte eine Verbindung auswählen.")
             return
         
         reply = QMessageBox.question(
@@ -3309,7 +3700,486 @@ class BiPROView(QWidget):
                 self._current_connection = None
                 self._load_connections()
             else:
-                QMessageBox.warning(self, "Fehler", "Verbindung konnte nicht gelöscht werden.")
+                self._toast_manager.show_error("Verbindung konnte nicht gelöscht werden.")
+    
+    # ========================================
+    # Alle VUs abholen (Orchestrierung)
+    # ========================================
+    
+    def _fetch_all_vus(self):
+        """
+        Startet den Abruf fuer alle aktiven VU-Verbindungen nacheinander.
+        
+        Flow: VU1 (fetch → download) → VU2 (fetch → download) → ... → Zusammenfassung
+        """
+        from i18n.de import (
+            BIPRO_FETCH_ALL_NO_ACTIVE, BIPRO_FETCH_ALL_START
+        )
+        
+        # Pruefen ob bereits ein Abruf laeuft
+        if self._all_vus_mode:
+            return
+        
+        # Alle aktiven Verbindungen sammeln
+        active_connections = [c for c in self._connections if c.is_active]
+        
+        if not active_connections:
+            self._toast_manager.show_info(BIPRO_FETCH_ALL_NO_ACTIVE)
+            return
+        
+        # State Machine initialisieren
+        self._all_vus_mode = True
+        self._vu_queue = list(active_connections)
+        self._all_vus_current_index = 0
+        self._all_vus_total = len(active_connections)
+        self._all_vus_stats = {
+            'vus_processed': 0, 'total_shipments': 0, 
+            'total_docs': 0, 'vus_skipped': 0
+        }
+        
+        # UI sperren
+        self.fetch_all_vus_btn.setEnabled(False)
+        self.download_btn.setEnabled(False)
+        self.download_all_btn.setEnabled(False)
+        
+        self._log(BIPRO_FETCH_ALL_START.format(count=self._all_vus_total))
+        
+        # Auto-Refresh pausieren (einmalig fuer gesamten Durchlauf)
+        try:
+            from services.data_cache import DataCacheService
+            cache = DataCacheService()
+            cache.pause_auto_refresh()
+        except Exception:
+            pass
+        
+        # Erste VU starten
+        self._process_next_vu()
+    
+    def _process_next_vu(self):
+        """Verarbeitet die naechste VU in der Queue."""
+        from i18n.de import (
+            BIPRO_FETCH_ALL_VU_START, BIPRO_FETCH_ALL_VU_CREDENTIALS_ERROR,
+            BIPRO_FETCH_ALL_DONE, BIPRO_FETCH_ALL_IN_PROGRESS
+        )
+        
+        # Queue leer? -> Fertig
+        if not self._vu_queue:
+            self._on_all_vus_finished()
+            return
+        
+        # Naechste VU aus Queue nehmen
+        conn = self._vu_queue.pop(0)
+        self._all_vus_current_index += 1
+        
+        self._log(BIPRO_FETCH_ALL_VU_START.format(
+            current=self._all_vus_current_index,
+            total=self._all_vus_total,
+            vu_name=conn.vu_name
+        ))
+        
+        # Status-Update in Toolbar
+        self.fetch_all_vus_btn.setText(
+            BIPRO_FETCH_ALL_IN_PROGRESS.format(
+                current=self._all_vus_current_index,
+                total=self._all_vus_total,
+                vu_name=conn.vu_name
+            )
+        )
+        
+        # Aktuelle Verbindung setzen (wie bei manueller Auswahl)
+        self._current_connection = conn
+        self._current_credentials = None
+        self._shipments = []
+        self.shipments_table.setRowCount(0)
+        
+        # VU in der Liste visuell auswaehlen
+        for i in range(self.connections_list.count()):
+            item = self.connections_list.item(i)
+            if item and item.data(Qt.ItemDataRole.UserRole) and \
+               item.data(Qt.ItemDataRole.UserRole).id == conn.id:
+                self.connections_list.setCurrentItem(item)
+                break
+        
+        # Credentials holen (ohne Fehlerdialog - wir ueberspringen bei Problemen)
+        self._current_credentials = self._get_current_credentials(show_errors=False)
+        if not self._current_credentials:
+            self._log(BIPRO_FETCH_ALL_VU_CREDENTIALS_ERROR.format(vu_name=conn.vu_name))
+            self._all_vus_stats['vus_skipped'] += 1
+            # Naechste VU sofort versuchen
+            QTimer.singleShot(100, self._process_next_vu)
+            return
+        
+        # Lieferungen abrufen (FetchShipmentsWorker)
+        consumer_id = conn.consumer_id or ""
+        self._log(f"STS-URL: {conn.get_effective_sts_url()}")
+        self._log(f"Transfer-URL: {conn.get_effective_transfer_url()}")
+        
+        from ui.bipro_view import FetchShipmentsWorker
+        self._fetch_worker = FetchShipmentsWorker(
+            self._current_credentials,
+            conn.vu_name,
+            sts_url=conn.get_effective_sts_url(),
+            transfer_url=conn.get_effective_transfer_url(),
+            consumer_id=consumer_id
+        )
+        self._fetch_worker.finished.connect(self._on_all_vus_shipments_loaded)
+        self._fetch_worker.error.connect(self._on_all_vus_fetch_error)
+        self._fetch_worker.progress.connect(self._log)
+        self._register_worker(self._fetch_worker)
+        self._fetch_worker.start()
+    
+    def _on_all_vus_shipments_loaded(self, shipments):
+        """Callback wenn Lieferungen fuer eine VU im 'Alle VUs' Modus geladen wurden."""
+        from i18n.de import BIPRO_FETCH_ALL_VU_NO_SHIPMENTS
+        
+        vu_name = self._current_connection.vu_name if self._current_connection else "?"
+        self._shipments = shipments
+        
+        # Tabelle aktualisieren (damit User den Fortschritt sieht)
+        self._update_shipments_table(shipments)
+        
+        if not shipments:
+            self._log(BIPRO_FETCH_ALL_VU_NO_SHIPMENTS.format(vu_name=vu_name))
+            self._all_vus_stats['vus_skipped'] += 1
+            # Naechste VU
+            QTimer.singleShot(100, self._process_next_vu)
+            return
+        
+        self._log(f"[{vu_name}] {len(shipments)} Lieferung(en) gefunden - starte Download...")
+        
+        # Download starten (nutzt die bestehende _download_all Logik)
+        # Aber: Credentials sind schon gesetzt, also direkt den Download-Teil ausfuehren
+        self._start_download_for_current_vu()
+    
+    def _on_all_vus_fetch_error(self, error: str):
+        """Callback bei Fetch-Fehler im 'Alle VUs' Modus."""
+        vu_name = self._current_connection.vu_name if self._current_connection else "?"
+        self._log(f"[{vu_name}] FEHLER beim Abrufen: {error}")
+        self._all_vus_stats['vus_skipped'] += 1
+        # Weiter mit naechster VU
+        QTimer.singleShot(100, self._process_next_vu)
+    
+    def _start_download_for_current_vu(self):
+        """Startet den Download fuer die aktuelle VU im 'Alle VUs' Modus."""
+        if not self._shipments or not self._current_connection:
+            QTimer.singleShot(100, self._process_next_vu)
+            return
+        
+        # Konfiguration laden (VU-spezifische Worker-Anzahl)
+        from config.processing_rules import get_bipro_download_config
+        vu_name = self._current_connection.vu_name
+        parallel_enabled = get_bipro_download_config('parallel_enabled', True)
+        max_workers = get_bipro_download_config('max_parallel_workers', 5, vu_name=vu_name)
+        
+        # Shipment-Infos vorbereiten
+        shipment_infos = [
+            {
+                'id': s.shipment_id,
+                'category': str(s.category) if s.category else '',
+                'created_at': str(s.created_at) if s.created_at else ''
+            }
+            for s in self._shipments
+        ]
+        
+        self._download_total = len(shipment_infos)
+        self._download_stats = {'success': 0, 'failed': 0, 'docs': 0, 'retries': 0}
+        
+        if parallel_enabled and len(shipment_infos) > 1:
+            # Paralleler Download
+            self._log(f"Starte parallelen Download von {self._download_total} Lieferung(en)...")
+            
+            self._progress_overlay.start_download_phase(
+                self._download_total,
+                max_workers=max_workers,
+                parallel=True
+            )
+            
+            self._parallel_manager = ParallelDownloadManager(
+                credentials=self._current_credentials,
+                vu_name=vu_name,
+                shipments=shipment_infos,
+                sts_url=self._current_connection.get_effective_sts_url(),
+                transfer_url=self._current_connection.get_effective_transfer_url(),
+                consumer_id=self._current_connection.consumer_id or "",
+                max_workers=max_workers,
+                parent=self
+            )
+            
+            self._parallel_manager.progress_updated.connect(self._on_parallel_progress)
+            self._parallel_manager.download_finished.connect(self._on_parallel_download_finished)
+            self._parallel_manager.log_message.connect(self._log)
+            self._parallel_manager.all_finished.connect(self._on_all_vus_vu_download_complete)
+            self._parallel_manager.error.connect(self._on_all_vus_download_error)
+            
+            self._register_worker(self._parallel_manager)
+            self._parallel_manager.start()
+        else:
+            # Sequentieller Download
+            self._log(f"Starte sequentiellen Download von {self._download_total} Lieferung(en)...")
+            
+            self._download_queue = shipment_infos.copy()
+            
+            self._progress_overlay.start_download_phase(self._download_total)
+            self._process_download_queue()
+    
+    def _on_all_vus_vu_download_complete(self, stats: dict):
+        """Callback wenn alle Downloads einer VU im 'Alle VUs' Modus fertig sind."""
+        from i18n.de import BIPRO_FETCH_ALL_VU_DONE
+        
+        vu_name = self._current_connection.vu_name if self._current_connection else "?"
+        
+        success = stats.get('success', 0)
+        docs = stats.get('docs', 0)
+        
+        self._all_vus_stats['vus_processed'] += 1
+        self._all_vus_stats['total_shipments'] += success
+        self._all_vus_stats['total_docs'] += docs
+        
+        self._log(BIPRO_FETCH_ALL_VU_DONE.format(
+            vu_name=vu_name, success=success, docs=docs
+        ))
+        
+        # Statistiken ans Overlay uebergeben
+        self._progress_overlay._stats['download_success'] = stats.get('success', 0)
+        self._progress_overlay._stats['download_failed'] = stats.get('failed', 0)
+        self._progress_overlay._stats['download_docs'] = stats.get('docs', 0)
+        
+        # Aufräumen
+        self._parallel_manager = None
+        self._current_credentials = None
+        
+        # Naechste VU (kurze Pause fuer UI-Updates)
+        QTimer.singleShot(200, self._process_next_vu)
+    
+    def _on_all_vus_download_error(self, error: str):
+        """Callback bei Download-Fehler im 'Alle VUs' Modus."""
+        vu_name = self._current_connection.vu_name if self._current_connection else "?"
+        self._log(f"[{vu_name}] Download-Fehler: {error}")
+        self._all_vus_stats['vus_processed'] += 1
+        self._parallel_manager = None
+        self._current_credentials = None
+        # Weiter mit naechster VU
+        QTimer.singleShot(200, self._process_next_vu)
+    
+    def _on_all_vus_finished(self):
+        """Wird aufgerufen wenn alle VUs abgearbeitet sind."""
+        from i18n.de import BIPRO_FETCH_ALL, BIPRO_FETCH_ALL_DONE
+        
+        # Auto-Refresh wieder aktivieren
+        try:
+            from services.data_cache import DataCacheService
+            cache = DataCacheService()
+            cache.resume_auto_refresh()
+        except Exception:
+            pass
+        
+        stats = self._all_vus_stats
+        self._log(BIPRO_FETCH_ALL_DONE.format(
+            total_vus=stats['vus_processed'],
+            total_shipments=stats['total_shipments'],
+            total_docs=stats['total_docs']
+        ))
+        
+        if stats['vus_skipped'] > 0:
+            self._log(f"  Uebersprungen: {stats['vus_skipped']} VU(s)")
+        
+        # UI entsperren
+        self._all_vus_mode = False
+        self.fetch_all_vus_btn.setEnabled(True)
+        self.fetch_all_vus_btn.setText(BIPRO_FETCH_ALL)
+        
+        # Fazit im Overlay anzeigen
+        self._progress_overlay._stats['download_success'] = stats['total_shipments']
+        self._progress_overlay._stats['download_docs'] = stats['total_docs']
+        self._progress_overlay.show_completion(auto_close_seconds=10)
+        
+        # Signal fuer Archiv-Refresh
+        self.documents_uploaded.emit()
+    
+    def _update_shipments_table(self, shipments):
+        """Aktualisiert die Lieferungstabelle (fuer Alle-VUs-Modus wiederverwendbar)."""
+        self.shipments_table.setRowCount(len(shipments))
+        
+        for row, ship in enumerate(shipments):
+            self.shipments_table.setItem(row, 0, QTableWidgetItem(ship.shipment_id))
+            
+            # Datum
+            created = str(ship.created_at) if ship.created_at else ""
+            if created:
+                try:
+                    dt = datetime.fromisoformat(created.replace('Z', '+00:00'))
+                    created = dt.strftime('%d.%m.%Y %H:%M')
+                except (ValueError, AttributeError):
+                    pass
+            self.shipments_table.setItem(row, 1, QTableWidgetItem(created))
+            
+            # Kategorie
+            cat_code = str(ship.category) if ship.category else ""
+            cat_name = get_category_name(cat_code) if cat_code else ""
+            cat_icon = get_category_icon(cat_code) if cat_code else ""
+            self.shipments_table.setItem(row, 2, QTableWidgetItem(f"{cat_icon} {cat_name}"))
+            
+            # Verfuegbar bis
+            valid_until = str(ship.valid_until) if hasattr(ship, 'valid_until') and ship.valid_until else ""
+            if valid_until:
+                try:
+                    dt = datetime.fromisoformat(valid_until.replace('Z', '+00:00'))
+                    valid_until = dt.strftime('%d.%m.%Y %H:%M')
+                except (ValueError, AttributeError):
+                    pass
+            self.shipments_table.setItem(row, 3, QTableWidgetItem(valid_until))
+            
+            # Transfers
+            transfers = str(ship.transfer_count) if hasattr(ship, 'transfer_count') and ship.transfer_count else ""
+            self.shipments_table.setItem(row, 4, QTableWidgetItem(transfers))
+    
+    # ========================================
+    # Mail-Import (IMAP -> Eingangsbox)
+    # ========================================
+    
+    def _fetch_mails(self):
+        """Mails vom IMAP-Postfach abholen und Anhaenge importieren."""
+        from i18n import de as texts
+        from api.smartscan import SmartScanAPI, EmailAccountsAPI
+        
+        if self._mail_import_worker is not None:
+            self._toast_manager.show_info(texts.BIPRO_MAIL_FETCH_RUNNING)
+            return
+        
+        # IMAP-Konto ermitteln (aus SmartScan-Settings oder erstes aktives IMAP-Konto)
+        account_id = None
+        try:
+            smartscan_api = SmartScanAPI(self.api_client)
+            settings = smartscan_api.get_settings()
+            if settings:
+                poll_id = settings.get('imap_poll_account_id')
+                if poll_id:
+                    account_id = int(poll_id)
+        except Exception as e:
+            logger.warning(f"SmartScan-Settings konnten nicht geladen werden: {e}")
+        
+        # Fallback: Erstes aktives IMAP-Konto suchen
+        if not account_id:
+            try:
+                email_api = EmailAccountsAPI(self.api_client)
+                accounts = email_api.get_accounts()
+                for acc in accounts:
+                    imap_host = acc.get('imap_host', '')
+                    is_active = bool(int(acc.get('is_active', 0) or 0))
+                    if imap_host and is_active:
+                        account_id = int(acc['id'])
+                        break
+            except Exception as e:
+                logger.warning(f"E-Mail-Konten konnten nicht geladen werden: {e}")
+        
+        if not account_id:
+            self._toast_manager.show_error(texts.BIPRO_MAIL_FETCH_NO_ACCOUNT)
+            return
+        
+        # Button deaktivieren (Toast wird via phase_changed erstellt)
+        self.mail_fetch_btn.setEnabled(False)
+        self._log(texts.BIPRO_MAIL_FETCH_RUNNING)
+        self._mail_progress_toast = None
+        
+        # Worker starten
+        self._mail_import_worker = MailImportWorker(self.api_client, account_id)
+        self._mail_import_worker.progress.connect(self._on_mail_import_progress)
+        self._mail_import_worker.progress_count.connect(self._on_mail_import_progress_count)
+        self._mail_import_worker.phase_changed.connect(self._on_mail_phase_changed)
+        self._mail_import_worker.completed.connect(self._on_mail_import_completed)
+        self._mail_import_worker.error.connect(self._on_mail_import_error)
+        # Cleanup nach Thread-Ende
+        self._mail_import_worker.finished.connect(self._cleanup_mail_import_worker)
+        self._active_workers.append(self._mail_import_worker)
+        self._mail_import_worker.start()
+    
+    def _on_mail_phase_changed(self, title: str, total: int):
+        """Neue Phase im Mail-Import - alten Toast schliessen, neuen oeffnen."""
+        # Alten Toast schliessen falls vorhanden
+        old_toast = getattr(self, '_mail_progress_toast', None)
+        if old_toast:
+            old_toast.dismiss()
+        
+        # Neuen Progress-Toast erstellen
+        self._mail_progress_toast = self._toast_manager.show_progress(title)
+        if total > 0:
+            self._mail_progress_toast.set_progress(0, total)
+    
+    def _on_mail_import_progress(self, message: str):
+        """Fortschritt des Mail-Imports loggen + Toast aktualisieren."""
+        self._log(message)
+        toast = getattr(self, '_mail_progress_toast', None)
+        if toast:
+            toast.set_status(message)
+    
+    def _on_mail_import_progress_count(self, current: int, total: int):
+        """Fortschrittsbalken im Toast aktualisieren."""
+        toast = getattr(self, '_mail_progress_toast', None)
+        if toast:
+            toast.set_progress(current, total)
+    
+    def _on_mail_import_completed(self, stats: dict):
+        """Mail-Import abgeschlossen."""
+        from i18n import de as texts
+        
+        self.mail_fetch_btn.setEnabled(True)
+        
+        # Progress-Toast schliessen
+        toast = getattr(self, '_mail_progress_toast', None)
+        if toast:
+            toast.dismiss()
+            self._mail_progress_toast = None
+        
+        new_mails = stats.get('new_mails', 0)
+        imported = stats.get('imported', 0)
+        failed = stats.get('failed', 0)
+        
+        if imported > 0 or new_mails > 0:
+            msg = texts.BIPRO_MAIL_FETCH_SUCCESS.format(
+                new_mails=new_mails, imported=imported
+            )
+            if failed > 0:
+                msg += f" ({failed} fehlgeschlagen)"
+            self._toast_manager.show_success(msg)
+            self._log(msg)
+            # Archiv-Refresh ausloesen
+            self.documents_uploaded.emit()
+        else:
+            self._toast_manager.show_info(texts.BIPRO_MAIL_FETCH_NO_NEW)
+            self._log(texts.BIPRO_MAIL_FETCH_NO_NEW)
+        
+        # Fehler loggen
+        for err in stats.get('errors', []):
+            self._log(f"  Fehler: {err}")
+    
+    def _on_mail_import_error(self, error: str):
+        """Fehler beim Mail-Import."""
+        from i18n import de as texts
+        
+        self.mail_fetch_btn.setEnabled(True)
+        
+        # Progress-Toast schliessen
+        toast = getattr(self, '_mail_progress_toast', None)
+        if toast:
+            toast.dismiss()
+            self._mail_progress_toast = None
+        
+        msg = texts.BIPRO_MAIL_FETCH_ERROR.format(error=error)
+        self._toast_manager.show_error(msg)
+        self._log(msg)
+    
+    def _cleanup_mail_import_worker(self):
+        """Raeume den MailImportWorker auf nach Thread-Ende."""
+        worker = self._mail_import_worker
+        self._mail_import_worker = None
+        if worker:
+            if worker in self._active_workers:
+                self._active_workers.remove(worker)
+            worker.deleteLater()
+    
+    # ========================================
+    # Einzelne VU - Lieferungen abrufen
+    # ========================================
     
     def _fetch_shipments(self):
         """Lieferungen abrufen."""
@@ -3328,7 +4198,6 @@ class BiPROView(QWidget):
             self._fetch_worker.wait(500)  # Kurz warten
         
         # Worker starten
-        self.fetch_btn.setEnabled(False)
         
         # Debug: Consumer-ID loggen
         consumer_id = self._current_connection.consumer_id or ""
@@ -3353,7 +4222,6 @@ class BiPROView(QWidget):
     
     def _on_shipments_loaded(self, shipments):
         """Callback wenn Lieferungen geladen."""
-        self.fetch_btn.setEnabled(True)
         self._shipments = shipments
         
         self.shipments_table.setRowCount(len(shipments))
@@ -3391,16 +4259,15 @@ class BiPROView(QWidget):
     
     def _on_fetch_error(self, error: str):
         """Callback bei Fehler."""
-        self.fetch_btn.setEnabled(True)
         self._current_credentials = None
         self._log(f"FEHLER: {error}")
-        QMessageBox.critical(self, "Fehler", f"Abruf fehlgeschlagen:\n{error}")
+        self._toast_manager.show_error(f"Abruf fehlgeschlagen:\n{error}")
     
     def _download_selected(self):
         """Ausgewählte Lieferung herunterladen."""
         selected = self.shipments_table.selectedItems()
         if not selected:
-            QMessageBox.information(self, "Info", "Bitte eine Lieferung auswählen.")
+            self._toast_manager.show_info("Bitte eine Lieferung auswählen.")
             return
         
         row = selected[0].row()
@@ -3445,11 +4312,11 @@ class BiPROView(QWidget):
     def _download_all(self):
         """Alle Lieferungen herunterladen (parallel oder sequentiell)."""
         if not self._shipments:
-            QMessageBox.information(self, "Info", "Keine Lieferungen vorhanden.")
+            self._toast_manager.show_info("Keine Lieferungen vorhanden.")
             return
         
         if not self._current_connection:
-            QMessageBox.warning(self, "Fehler", "Keine VU-Verbindung ausgewählt.")
+            self._toast_manager.show_warning("Keine VU-Verbindung ausgewählt.")
             return
         
         # Credentials holen (unterstuetzt Username/Password UND Zertifikats-Auth)
@@ -3457,10 +4324,11 @@ class BiPROView(QWidget):
         if not self._current_credentials:
             return  # Fehlermeldung wird von _get_current_credentials() angezeigt
         
-        # Konfiguration laden
+        # Konfiguration laden (VU-spezifische Worker-Anzahl)
         from config.processing_rules import get_bipro_download_config
+        vu_name = self._current_connection.vu_name
         parallel_enabled = get_bipro_download_config('parallel_enabled', True)
-        max_workers = get_bipro_download_config('max_parallel_workers', 5)
+        max_workers = get_bipro_download_config('max_parallel_workers', 5, vu_name=vu_name)
         
         # Shipment-Infos für Download vorbereiten
         shipment_infos = [
@@ -3486,7 +4354,6 @@ class BiPROView(QWidget):
         
         self.download_btn.setEnabled(False)
         self.download_all_btn.setEnabled(False)
-        self.fetch_btn.setEnabled(False)
         
         if parallel_enabled and len(shipment_infos) > 1:
             # ===== PARALLELER DOWNLOAD =====
@@ -3602,6 +4469,12 @@ class BiPROView(QWidget):
     
     def _on_parallel_all_finished(self, stats: dict):
         """Callback wenn alle parallelen Downloads fertig sind."""
+        
+        # Im "Alle VUs" Modus: An die VU-spezifische Callback weiterleiten
+        if self._all_vus_mode:
+            self._on_all_vus_vu_download_complete(stats)
+            return
+        
         # Auto-Refresh wieder aktivieren
         try:
             from services.data_cache import DataCacheService
@@ -3614,7 +4487,6 @@ class BiPROView(QWidget):
         self.download_btn.setEnabled(True)
         self.download_all_btn.setEnabled(True)
         self.acknowledge_btn.setEnabled(True)
-        self.fetch_btn.setEnabled(True)
         self._current_credentials = None
         
         # Statistiken loggen
@@ -3646,6 +4518,12 @@ class BiPROView(QWidget):
     
     def _on_parallel_error(self, error: str):
         """Callback bei Fehler im parallelen Download."""
+        
+        # Im "Alle VUs" Modus: Fehler loggen und weiter
+        if self._all_vus_mode:
+            self._on_all_vus_download_error(error)
+            return
+        
         # Auto-Refresh wieder aktivieren
         try:
             from services.data_cache import DataCacheService
@@ -3658,14 +4536,13 @@ class BiPROView(QWidget):
         self._log(f"FEHLER: {error}")
         self.download_btn.setEnabled(True)
         self.download_all_btn.setEnabled(True)
-        self.fetch_btn.setEnabled(True)
         self._current_credentials = None
         self._parallel_manager = None
         
         # Overlay schließen
         self._progress_overlay.setVisible(False)
         
-        QMessageBox.critical(self, "Fehler", f"Paralleler Download fehlgeschlagen:\n{error}")
+        self._toast_manager.show_error(f"Paralleler Download fehlgeschlagen:\n{error}")
     
     # =========================================================================
     # SEQUENTIELLER DOWNLOAD (Legacy)
@@ -3794,6 +4671,13 @@ class BiPROView(QWidget):
     
     def _on_all_downloads_finished(self):
         """Callback wenn alle Downloads fertig."""
+        
+        # Im "Alle VUs" Modus: An die VU-spezifische Callback weiterleiten
+        if self._all_vus_mode:
+            stats = self._download_stats
+            self._on_all_vus_vu_download_complete(stats)
+            return
+        
         # Auto-Refresh wieder aktivieren
         try:
             from services.data_cache import DataCacheService
@@ -3806,7 +4690,6 @@ class BiPROView(QWidget):
         self.download_btn.setEnabled(True)
         self.download_all_btn.setEnabled(True)
         self.acknowledge_btn.setEnabled(True)
-        self.fetch_btn.setEnabled(True)
         self._current_credentials = None
         
         stats = self._download_stats
@@ -3911,23 +4794,13 @@ class BiPROView(QWidget):
         
         # Status-Meldung
         if failed > 0:
-            QMessageBox.warning(
-                self,
-                "Download mit Fehlern",
-                f"Lieferung {shipment_id}:\n\n"
-                f"Dokumente:\n{doc_list}\n\n"
-                f"Archiv-Upload:\n"
-                f"  {uploaded} erfolgreich\n"
-                f"  {failed} fehlgeschlagen\n\n"
+            self._toast_manager.show_warning(
+                f"Lieferung {shipment_id}: {uploaded} erfolgreich, {failed} fehlgeschlagen.\n"
                 f"Bitte Protokoll prüfen!"
             )
         else:
-            QMessageBox.information(
-                self,
-                "Download erfolgreich",
-                f"Lieferung {shipment_id}:\n\n"
-                f"Dokumente:\n{doc_list}\n\n"
-                f"Alle {uploaded} Datei(en) ins Dokumentenarchiv übertragen."
+            self._toast_manager.show_success(
+                f"Lieferung {shipment_id}: Alle {uploaded} Datei(en) ins Dokumentenarchiv übertragen."
             )
     
     def _on_download_error(self, error: str):
@@ -3937,7 +4810,7 @@ class BiPROView(QWidget):
         self.acknowledge_btn.setEnabled(True)
         self._current_credentials = None
         self._log(f"DOWNLOAD-FEHLER: {error}")
-        QMessageBox.critical(self, "Fehler", f"Download fehlgeschlagen:\n{error}")
+        self._toast_manager.show_error(f"Download fehlgeschlagen:\n{error}")
     
     # =========================================================================
     # QUITTIERUNG
@@ -3948,7 +4821,7 @@ class BiPROView(QWidget):
         selected_rows = self.shipments_table.selectionModel().selectedRows()
         
         if not selected_rows:
-            QMessageBox.information(self, "Info", "Bitte waehlen Sie Lieferungen zum Quittieren aus.")
+            self._toast_manager.show_info("Bitte waehlen Sie Lieferungen zum Quittieren aus.")
             return
         
         # IDs sammeln
@@ -3988,7 +4861,7 @@ class BiPROView(QWidget):
         if self._current_connection.auth_type == 'certificate':
             cert_config = self._load_certificate_config(self._current_connection.id)
             if not cert_config:
-                QMessageBox.warning(self, "Fehler", "Zertifikat-Konfiguration nicht gefunden.")
+                self._toast_manager.show_error("Zertifikat-Konfiguration nicht gefunden.")
                 return
             
             cert_format = cert_config.get('cert_format', 'pfx')
@@ -4013,18 +4886,17 @@ class BiPROView(QWidget):
                 self._current_credentials = self.vu_api.get_credentials(self._current_connection.id)
             except Exception as e:
                 self._log(f"FEHLER: {e}")
-                QMessageBox.warning(self, "Fehler", f"Zugangsdaten nicht verfuegbar:\n{e}")
+                self._toast_manager.show_error(f"Zugangsdaten nicht verfuegbar:\n{e}")
                 return
             
             if not self._current_credentials:
-                QMessageBox.warning(self, "Fehler", "Keine Zugangsdaten verfuegbar.")
+                self._toast_manager.show_error("Keine Zugangsdaten verfuegbar.")
                 return
         
         # Buttons deaktivieren
         self.acknowledge_btn.setEnabled(False)
         self.download_btn.setEnabled(False)
         self.download_all_btn.setEnabled(False)
-        self.fetch_btn.setEnabled(False)
         
         # Worker starten
         self._acknowledge_worker = AcknowledgeShipmentWorker(
@@ -4044,7 +4916,6 @@ class BiPROView(QWidget):
         self.acknowledge_btn.setEnabled(True)
         self.download_btn.setEnabled(True)
         self.download_all_btn.setEnabled(True)
-        self.fetch_btn.setEnabled(True)
         self._current_credentials = None
         
         self._log(f"=== Quittierung abgeschlossen ===")
@@ -4063,22 +4934,16 @@ class BiPROView(QWidget):
                         break
             
             if failed:
-                QMessageBox.warning(
-                    self,
-                    "Teilweise erfolgreich",
+                self._toast_manager.show_warning(
                     f"{len(successful)} Lieferung(en) quittiert.\n"
                     f"{len(failed)} Lieferung(en) fehlgeschlagen."
                 )
             else:
-                QMessageBox.information(
-                    self,
-                    "Erfolgreich",
-                    f"{len(successful)} Lieferung(en) erfolgreich quittiert.\n\n"
+                self._toast_manager.show_success(
+                    f"{len(successful)} Lieferung(en) erfolgreich quittiert.\n"
                     "Die Lieferungen wurden vom Server entfernt."
                 )
         elif failed:
-            QMessageBox.critical(
-                self,
-                "Fehler",
+            self._toast_manager.show_error(
                 f"Alle {len(failed)} Quittierungen fehlgeschlagen."
             )

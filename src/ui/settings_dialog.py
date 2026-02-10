@@ -1,5 +1,5 @@
 """
-BiPRO-GDV Tool - Einstellungen Dialog
+ACENCIA ATLAS - Einstellungen Dialog
 
 Minimaler Dialog für:
 - Zertifikat-Verwaltung (Import, Liste, Löschen)
@@ -383,25 +383,20 @@ class SettingsDialog(QDialog):
             
             try:
                 self.cert_manager.import_certificate(file_path, password, name)
-                QMessageBox.information(
-                    self,
-                    texts.SUCCESS,
-                    texts.CERT_IMPORT_SUCCESS
-                )
+                # Toast ueber das MainHub-Fenster
+                main_window = self.window()
+                if hasattr(main_window, '_toast_manager') and main_window._toast_manager:
+                    main_window._toast_manager.show_success(texts.CERT_IMPORT_SUCCESS)
                 self._refresh_certificates()
                 self.certificates_changed.emit()
             except ValueError as e:
-                QMessageBox.warning(
-                    self,
-                    texts.ERROR,
-                    str(e)
-                )
+                main_window = self.window()
+                if hasattr(main_window, '_toast_manager') and main_window._toast_manager:
+                    main_window._toast_manager.show_warning(str(e))
             except Exception as e:
-                QMessageBox.critical(
-                    self,
-                    texts.ERROR,
-                    f"{texts.CERT_IMPORT_ERROR}\n\n{e}"
-                )
+                main_window = self.window()
+                if hasattr(main_window, '_toast_manager') and main_window._toast_manager:
+                    main_window._toast_manager.show_error(f"{texts.CERT_IMPORT_ERROR}: {e}")
     
     def _delete_certificate(self, cert_id: str):
         """Löscht ein Zertifikat nach Bestätigung."""

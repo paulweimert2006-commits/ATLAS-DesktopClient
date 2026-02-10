@@ -2,7 +2,7 @@
 """
 ACENCIA Design System - Styles Package
 
-Zentrale Design-Tokens und Stylesheet-Generierung für das BiPRO-GDV Tool.
+Zentrale Design-Tokens und Stylesheet-Generierung für ACENCIA ATLAS.
 Basierend auf dem offiziellen ACENCIA Corporate Design.
 
 Verwendung:

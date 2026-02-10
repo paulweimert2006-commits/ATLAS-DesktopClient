@@ -15,9 +15,12 @@
 require_once __DIR__ . '/lib/jwt.php';
 require_once __DIR__ . '/lib/crypto.php';
 require_once __DIR__ . '/lib/response.php';
+require_once __DIR__ . '/lib/permissions.php';
+require_once __DIR__ . '/lib/activity_logger.php';
 
 function handleVuConnectionsRequest(string $idOrAction, string $method): void {
-    $payload = JWT::requireAuth();
+    // Alle VU-Verbindungs-Operationen erfordern vu_connections_manage
+    $payload = requirePermission('vu_connections_manage');
     
     // Spezialfall: ID/credentials
     $parts = explode('/', $idOrAction);
@@ -167,11 +170,14 @@ function createVuConnection(array $user): void {
         $data['consumer_id'] ?? null
     ]);
     
-    // Audit-Log
-    Database::insert(
-        'INSERT INTO audit_log (user_id, action, entity_type, entity_id, details, ip_address) VALUES (?, ?, ?, ?, ?, ?)',
-        [$user['user_id'], 'vu_connection_create', 'vu_connection', $id, json_encode(['vu_name' => $data['vu_name']]), $_SERVER['REMOTE_ADDR'] ?? '']
-    );
+    // Activity-Log
+    ActivityLogger::log([
+        'user_id' => $user['user_id'], 'username' => $user['username'] ?? '',
+        'action_category' => 'vu_connection', 'action' => 'create',
+        'entity_type' => 'vu_connection', 'entity_id' => $id,
+        'description' => "VU-Verbindung erstellt: {$data['vu_name']}",
+        'details' => ['vu_name' => $data['vu_name']]
+    ]);
     
     json_success(['id' => $id], 'VU-Verbindung erstellt');
 }
@@ -221,11 +227,14 @@ function updateVuConnection(string $id, array $user): void {
     $sql = "UPDATE vu_connections SET " . implode(', ', $updates) . " WHERE id = ?";
     Database::execute($sql, $params);
     
-    // Audit-Log
-    Database::insert(
-        'INSERT INTO audit_log (user_id, action, entity_type, entity_id, ip_address) VALUES (?, ?, ?, ?, ?)',
-        [$user['user_id'], 'vu_connection_update', 'vu_connection', $id, $_SERVER['REMOTE_ADDR'] ?? '']
-    );
+    // Activity-Log
+    ActivityLogger::log([
+        'user_id' => $user['user_id'], 'username' => $user['username'] ?? '',
+        'action_category' => 'vu_connection', 'action' => 'update',
+        'entity_type' => 'vu_connection', 'entity_id' => (int)$id,
+        'description' => "VU-Verbindung aktualisiert (ID: {$id})",
+        'details' => ['updated_fields' => array_keys($data)]
+    ]);
     
     json_success([], 'VU-Verbindung aktualisiert');
 }
@@ -241,11 +250,14 @@ function deleteVuConnection(string $id, array $user): void {
     
     Database::execute('DELETE FROM vu_connections WHERE id = ?', [$id]);
     
-    // Audit-Log
-    Database::insert(
-        'INSERT INTO audit_log (user_id, action, entity_type, entity_id, details, ip_address) VALUES (?, ?, ?, ?, ?, ?)',
-        [$user['user_id'], 'vu_connection_delete', 'vu_connection', $id, json_encode(['vu_name' => $connection['vu_name']]), $_SERVER['REMOTE_ADDR'] ?? '']
-    );
+    // Activity-Log
+    ActivityLogger::log([
+        'user_id' => $user['user_id'], 'username' => $user['username'] ?? '',
+        'action_category' => 'vu_connection', 'action' => 'delete',
+        'entity_type' => 'vu_connection', 'entity_id' => (int)$id,
+        'description' => "VU-Verbindung geloescht: {$connection['vu_name']}",
+        'details' => ['vu_name' => $connection['vu_name']]
+    ]);
     
     json_success([], 'VU-Verbindung gelöscht');
 }
@@ -278,11 +290,14 @@ function getCredentials(string $id, array $user): void {
         json_error('Credentials konnten nicht entschlüsselt werden: ' . $e->getMessage(), 500);
     }
     
-    // Audit-Log (Sensible Operation!)
-    Database::insert(
-        'INSERT INTO audit_log (user_id, action, entity_type, entity_id, details, ip_address) VALUES (?, ?, ?, ?, ?, ?)',
-        [$user['user_id'], 'credentials_access', 'vu_connection', $id, json_encode(['vu_name' => $connection['vu_name']]), $_SERVER['REMOTE_ADDR'] ?? '']
-    );
+    // Activity-Log (Sensible Operation!)
+    ActivityLogger::log([
+        'user_id' => $user['user_id'], 'username' => $user['username'] ?? '',
+        'action_category' => 'vu_connection', 'action' => 'credentials_access',
+        'entity_type' => 'vu_connection', 'entity_id' => (int)$id,
+        'description' => "Credentials abgerufen: {$connection['vu_name']}",
+        'details' => ['vu_name' => $connection['vu_name']]
+    ]);
     
     json_success([
         'credentials' => $credentials

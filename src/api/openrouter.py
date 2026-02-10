@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 # KI-Pipeline Backpressure-Kontrolle
 # Begrenzt parallele KI-Aufrufe um Server-Ueberlastung zu vermeiden
-DEFAULT_MAX_CONCURRENT_AI_CALLS = 3
+DEFAULT_MAX_CONCURRENT_AI_CALLS = 5
 _ai_semaphore: Optional[threading.Semaphore] = None
 _ai_semaphore_lock = threading.Lock()
 _ai_queue_depth = 0  # Monitoring: Anzahl wartender Aufrufe
@@ -206,6 +206,104 @@ def slug_de(s: str, max_len: int = 40) -> str:
         s = s[:max_len].rstrip("_")
     
     return s if s else "Unbekannt"
+
+
+# ============================================================================
+# KEYWORD-CONFLICT-HINTS (lokal, 0 Tokens, ~0.1ms CPU)
+# Generiert Hints NUR bei widerspruechlichen Keywords im PDF-Text.
+# Die KI entscheidet weiterhin selbst -- Hints sind reine Zusatz-Information.
+# ============================================================================
+
+_COURTAGE_KEYWORDS = [
+    'vergütungsdatenblatt', 'verguetungsdatenblatt',
+    'vergütungsabrechnung', 'verguetungsabrechnung',
+    'provisionsabrechnung', 'courtageabrechnung',
+    'courtagenote', 'provisionsnote',
+    'vermittlerabrechnung', 'inkassoprovision',
+]
+_SACH_KEYWORDS = [
+    'unfallversicherung', 'haftpflichtversicherung',
+    'hausratversicherung', 'wohngebäudeversicherung',
+    'rechtsschutzversicherung', 'kfz-versicherung',
+    'sachversicherung',
+]
+_LEBEN_KEYWORDS = [
+    'lebensversicherung', 'rentenversicherung',
+    'berufsunfähigkeit', 'altersvorsorge', 'altersversorgung',
+    'pensionskasse', 'risikoleben', 'sterbegeld',
+]
+_KRANKEN_KEYWORDS = [
+    'krankenversicherung', 'krankenzusatz',
+    'zahnzusatz', 'krankentagegeld',
+]
+
+
+def _build_keyword_hints(text: str) -> str:
+    """Generiert Hint-String NUR bei Keyword-Konflikten oder bekannten Problemmustern.
+    
+    Bei eindeutigen oder keinen Keywords: leerer String (0 extra Tokens).
+    Laeuft lokal auf bereits extrahiertem Text (~0.1ms reine CPU-Arbeit).
+    
+    Konflikt-Faelle:
+    - Courtage-Keyword + Leben/Sach/Kranken-Keyword gleichzeitig
+    - "Kontoauszug" + "Provision"/"Courtage" (ohne sonstigen Courtage-Keyword)
+    - Sach-Keyword allein (KI hat hier nachweislich versagt -> Sicherheits-Hint)
+    
+    Args:
+        text: Bereits extrahierter PDF-Text (aus _extract_relevant_text)
+        
+    Returns:
+        Hint-String (z.B. '[KEYWORD-ANALYSE: ...]\\n\\n') oder leerer String
+    """
+    if not text:
+        return ''
+    
+    text_lower = text.lower()
+
+    found_courtage = [kw for kw in _COURTAGE_KEYWORDS if kw in text_lower]
+    found_sach = [kw for kw in _SACH_KEYWORDS if kw in text_lower]
+    found_leben = [kw for kw in _LEBEN_KEYWORDS if kw in text_lower]
+    found_kranken = [kw for kw in _KRANKEN_KEYWORDS if kw in text_lower]
+    has_kontoauszug_provision = (
+        'kontoauszug' in text_lower
+        and ('provision' in text_lower or 'courtage' in text_lower)
+    )
+
+    hints = []
+
+    # KONFLIKT 1: Courtage-Keyword + andere Sparte gleichzeitig
+    if found_courtage and (found_leben or found_sach or found_kranken):
+        hints.append(f'Courtage-Keyword "{found_courtage[0]}" gefunden.')
+        if found_leben:
+            hints.append(
+                f'"{found_leben[0]}" ist wahrscheinlich VU-Name, '
+                f'NICHT Sparten-Indikator!'
+            )
+        hints.append('Courtage-Keywords haben Vorrang -> wahrscheinlich courtage.')
+
+    # KONFLIKT 2: Kontoauszug + Provision (ohne sonstigen Courtage-Keyword)
+    elif has_kontoauszug_provision and not found_courtage:
+        hints.append(
+            '"Kontoauszug" + "Provision/Courtage" gefunden '
+            '-> wahrscheinlich courtage (VU-Provisionskonto, nicht Bankauszug).'
+        )
+
+    # PROBLEMFALL 3: Sach-Keyword allein (KI hat hier nachweislich versagt)
+    elif found_sach and not found_courtage:
+        hints.append(
+            f'"{found_sach[0]}" gefunden '
+            f'-> sach ({found_sach[0]} gehoert immer zur Sachversicherung).'
+        )
+
+    # Alle anderen Faelle: KEIN Hint (0 extra Tokens)
+    # - Nur Courtage-Keywords -> KI schafft das korrekt
+    # - Nur Leben-Keywords -> KI schafft das korrekt
+    # - Nur Kranken-Keywords -> KI schafft das korrekt
+    # - Keine Keywords -> KI wie gehabt
+    if not hints:
+        return ''
+
+    return '[KEYWORD-ANALYSE: ' + ' '.join(hints) + ']\n\n'
 
 
 @dataclass
@@ -593,7 +691,7 @@ Eingabetext:
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
             "HTTP-Referer": "https://acencia.info",
-            "X-Title": "BiPRO-GDV Tool"
+            "X-Title": "ACENCIA ATLAS"
         }
         
         payload = {
@@ -641,7 +739,11 @@ Eingabetext:
                     
                     # Nicht-retryable Fehler
                     if response.status_code != 200:
-                        error_data = response.json() if response.text else {}
+                        # BUG-0010 Fix: Non-JSON-Fehlerantworten sauber abfangen
+                        try:
+                            error_data = response.json() if response.text else {}
+                        except (ValueError, Exception):
+                            error_data = {}
                         error_msg = error_data.get('error', {}).get('message', f"HTTP {response.status_code}")
                         logger.error(f"OpenRouter Fehler: {error_msg}")
                         raise APIError(f"OpenRouter Fehler: {error_msg}", status_code=response.status_code)
@@ -1506,11 +1608,24 @@ Antwort NUR als JSON:
             return {"sparte": "sonstige", "confidence": "low", "document_date_iso": None, 
                     "vu_name": None, "document_name": None}
         
+        # Keyword-Conflict-Check auf bereits extrahiertem Text (~0.1ms, 0 Tokens)
+        # Generiert Hint NUR bei widerspruechlichen Keywords, sonst leerer String
+        keyword_hint = _build_keyword_hints(text)
+        if keyword_hint:
+            logger.info(f"Keyword-Konflikt erkannt: {keyword_hint.strip()}")
+        
         # =====================================================
         # STUFE 1: GPT-4o-mini (schnell, guenstig)
         # =====================================================
+        # Bei Konflikt: Hint vor Text stellen (Text kuerzen um Gesamtlaenge zu halten)
+        if keyword_hint:
+            text_limit = max(2000, 2500 - len(keyword_hint))
+            input_text_s1 = keyword_hint + text[:text_limit]
+        else:
+            input_text_s1 = text[:2500]
+        
         result = self._classify_sparte_request(
-            text[:2500], 
+            input_text_s1, 
             model=DEFAULT_TRIAGE_MODEL
         )
         
@@ -1537,8 +1652,15 @@ Antwort NUR als JSON:
             if not full_text.strip():
                 full_text = text  # Fallback auf vorherigen Text
             
+            # Gleicher Hint auch fuer Stufe 2 (falls Konflikt erkannt)
+            if keyword_hint:
+                text_limit_s2 = max(4000, 5000 - len(keyword_hint))
+                input_text_s2 = keyword_hint + full_text[:text_limit_s2]
+            else:
+                input_text_s2 = full_text[:5000]
+            
             result_stage2 = self._classify_sparte_detail(
-                full_text[:5000],
+                input_text_s2,
                 model=DEFAULT_EXTRACT_MODEL
             )
             
@@ -1575,8 +1697,9 @@ SPARTEN:
   sie von einer Versicherung kommen! Courtage = PROVISION FUER DEN MAKLER.
 
 - sach: KFZ, Haftpflicht, Privathaftpflicht, PHV, Tierhalterhaftpflicht, Hundehaftpflicht,
-  Hausrat, Wohngebaeude, Unfall, Rechtsschutz, Gewerbe, Betriebshaftpflicht, Glas, Reise,
-  Gebaeudeversicherung, Inhaltsversicherung, Bauherrenhaftpflicht, Elektronik
+  Hausrat, Wohngebaeude, Unfall, Unfallversicherung, Rechtsschutz, Gewerbe,
+  Betriebshaftpflicht, Glas, Reise, Gebaeudeversicherung, Inhaltsversicherung,
+  Bauherrenhaftpflicht, Elektronik, PrivatSchutzversicherung, Kombi-Schutz, Buendelversicherung
 
 - leben: Lebensversicherung, Rente, Rentenversicherung, BU, Berufsunfaehigkeit, Riester,
   Ruerup, Pensionskasse, Pensionsfonds, Altersvorsorge, bAV, betriebliche Altersversorgung,
@@ -1586,14 +1709,21 @@ SPARTEN:
 
 - sonstige: Nur wenn KEINE der obigen Sparten passt
 
+WICHTIG - HAEUFIGE VERWECHSLUNGEN:
+- Unfallversicherung = IMMER sach! Auch wenn Todesfallsumme, Invaliditaet oder
+  Progressionsstaffel erwaehnt wird - das sind Unfallleistungen, NICHT Lebensversicherung!
+- PrivatSchutzversicherung, Kombi-Schutz, Buendelpolice = sach (Haftpflicht+Unfall+Hausrat)
+- NICHT leben: Todesfallsumme/Invaliditaet bei Unfallversicherung
+
 REGELN:
 1. Courtage NUR wenn Hauptzweck = Provisionsabrechnung fuer Makler mit Provisionsliste
 2. Kuendigung/Mahnung/Zahlungserinnerung/Lastschriftproblem/Adressaenderung/Nachtrag/Beitragsrechnung
    -> IMMER nach SPARTE des zugrundeliegenden Versicherungsvertrags zuordnen!
    Beispiel: Kuendigung einer Wohngebaeudeversicherung = "sach", nicht "sonstige"
-   Beispiel: Lastschrift-Rueckgabe bei KFZ-Versicherung = "sach", nicht "sonstige"
+   Beispiel: Kuendigung einer Unfallversicherung = "sach", nicht "leben"!
 3. Bei Zweifel zwischen Sach und Sonstige -> IMMER Sach
-4. "sonstige" nur wenn wirklich KEINE Sparte erkennbar ist
+4. Bei Zweifel zwischen Sach und Leben -> Sach bevorzugen (ausser eindeutig Lebensversicherung/Rente/BU)
+5. "sonstige" nur wenn wirklich KEINE Sparte erkennbar ist
 
 CONFIDENCE:
 - "high": Sparte ist eindeutig erkennbar (z.B. "Wohngebaeudeversicherung", "Provisionsabrechnung")
@@ -1676,17 +1806,21 @@ JSON: {{"sparte": "...", "confidence": "high"|"medium"|"low", "document_date_iso
 
 SPARTEN:
 - courtage: NUR Provisionsabrechnungen/Courtageabrechnungen fuer Makler
-- sach: KFZ, Haftpflicht, PHV, Tierhalterhaftpflicht, Hausrat, Wohngebaeude, Unfall, 
-  Rechtsschutz, Gewerbe, Betriebshaftpflicht, Glas, Reise, Gebaeudeversicherung
+- sach: KFZ, Haftpflicht, PHV, Tierhalterhaftpflicht, Hausrat, Wohngebaeude, Unfall,
+  Unfallversicherung, Rechtsschutz, Gewerbe, Betriebshaftpflicht, Glas, Reise,
+  Gebaeudeversicherung, PrivatSchutzversicherung, Kombi-Schutz, Buendelversicherung
 - leben: Lebensversicherung, Rente, BU, Riester, Ruerup, Pensionskasse, bAV, Sterbegeld
 - kranken: PKV, Krankenzusatz, Zahnzusatz, Pflege, Krankentagegeld
 - sonstige: Wenn KEINE Sparte passt (z.B. allgemeiner Schriftwechsel, Maklervertrag)
+
+WICHTIG: Unfallversicherung = IMMER sach (auch bei Todesfallsumme/Invaliditaet)!
 
 REGELN:
 1. Courtage NUR bei Provisionsabrechnungen mit Provisionsliste
 2. Kuendigung/Mahnung/Beitragsrechnung -> nach Sparte des Vertrags zuordnen
 3. Bei Zweifel zwischen Sach und Sonstige -> Sach bevorzugen
-4. Bei "sonstige": Gib einen kurzen Dokumentnamen als document_name zurueck!
+4. Bei Zweifel zwischen Sach und Leben -> Sach bevorzugen (ausser eindeutig Lebensversicherung/Rente/BU)
+5. Bei "sonstige": Gib einen kurzen Dokumentnamen als document_name zurueck!
    Beispiele: "Schriftwechsel", "Maklervertrag", "Vollmacht", "Begleitschreiben", 
    "Vermittlerinfo", "Allgemeine_Information"
 
