@@ -1422,6 +1422,25 @@ class DocumentMoveWorker(QThread):
             self.error.emit(str(e))
 
 
+class DocumentColorWorker(QThread):
+    """Worker zum Setzen/Entfernen von Farbmarkierungen im Hintergrund."""
+    finished = Signal(int, object)  # count, color (str or None)
+    error = Signal(str)
+
+    def __init__(self, docs_api: DocumentsAPI, doc_ids: List[int], color: Optional[str]):
+        super().__init__()
+        self.docs_api = docs_api
+        self.doc_ids = doc_ids
+        self.color = color
+
+    def run(self):
+        try:
+            count = self.docs_api.set_documents_color(self.doc_ids, self.color)
+            self.finished.emit(count, self.color)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
 class ProcessingWorker(QThread):
     """Worker fuer automatische Dokumentenverarbeitung."""
     finished = Signal(object)  # BatchProcessingResult
@@ -2272,6 +2291,10 @@ class ArchiveBoxesView(QWidget):
         self._history_debounce_timer = None
         self._pending_history_doc_id = None
         
+        # Aufgeschobene Dokumente (wenn View nicht sichtbar bei Callback)
+        self._pending_documents = None
+        self._pending_force_rebuild = False
+        
         # Persistenter Vorschau-Cache (Dateien werden nur 1x heruntergeladen)
         self._preview_cache_dir = os.path.join(tempfile.gettempdir(), 'bipro_preview_cache')
         os.makedirs(self._preview_cache_dir, exist_ok=True)
@@ -2330,8 +2353,11 @@ class ArchiveBoxesView(QWidget):
         if hasattr(self, '_history_toggle_btn'):
             self._history_toggle_btn.setVisible(self._history_enabled)
         
-        # Initiales Laden (aus Cache oder Server)
-        self._refresh_all(force_refresh=False)
+        # Initiales Laden VERZÖGERT - erst nachdem Qt die View gerendert hat.
+        # Verhindert Freeze beim ersten Wechsel ins Archiv, da _populate_table()
+        # mit 500+ Dokumenten synchron laeuft und Qt sonst alle Zeilen in einem
+        # einzigen Layout-/Paint-Zyklus verarbeiten muss bevor die View sichtbar wird.
+        QTimer.singleShot(0, lambda: self._refresh_all(force_refresh=False))
         
         # Durchschnittliche Verarbeitungskosten laden (fuer Kostenvoranschlag)
         self._load_avg_cost_stats()
@@ -2446,6 +2472,19 @@ class ArchiveBoxesView(QWidget):
         """Versteckt das Loading-Overlay."""
         if hasattr(self, '_loading_overlay'):
             self._loading_overlay.setVisible(False)
+    
+    def showEvent(self, event):
+        """Wird aufgerufen wenn der View sichtbar wird (z.B. Rueckkehr aus BiPRO/Admin)."""
+        super().showEvent(event)
+        # Aufgeschobene Dokumente anzeigen (wurden geladen waehrend View unsichtbar war)
+        if self._pending_documents is not None:
+            logger.debug("Archiv sichtbar - fuehre aufgeschobenen Tabellen-Rebuild aus")
+            self._apply_filters_and_display(
+                self._pending_documents,
+                force_rebuild=self._pending_force_rebuild
+            )
+            self._pending_documents = None
+            self._pending_force_rebuild = False
     
     def _setup_ui(self):
         """UI aufbauen."""
@@ -2868,25 +2907,14 @@ class ArchiveBoxesView(QWidget):
         
         Aktualisiert nur Statistiken und die aktuelle Ansicht,
         ohne alle Boxen zu invalidieren.
+        Verwendet async Worker um den Main Thread nicht zu blockieren.
         """
-        # Nur Statistiken vom Server holen
+        # Nur Statistiken vom Server holen (async via BoxStatsWorker)
         self._refresh_stats(force_refresh=True)
         
-        # Archived-Box erkennen (z.B. 'courtage_archived' -> box='courtage', is_archived=True)
-        is_archived_box = self._current_box and self._current_box.endswith("_archived")
-        actual_box = self._current_box.replace("_archived", "") if is_archived_box else self._current_box
-        
-        # Aktuelle Box direkt vom Server laden (Cache fuer diese Box invalidieren)
-        box_type = actual_box if actual_box else None
-        documents = self._cache.get_documents(box_type=box_type, force_refresh=True)
-        
-        # is_archived Filter client-seitig anwenden
-        if is_archived_box:
-            documents = [d for d in documents if d.is_archived]
-        elif actual_box:
-            documents = [d for d in documents if not d.is_archived]
-        
-        self._apply_filters_and_display(documents, force_rebuild=True)
+        # Dokumente async vom Server laden (via CacheDocumentLoadWorker)
+        # _refresh_documents() handhabt is_archived Filter korrekt
+        self._refresh_documents(force_refresh=True)
     
     # =========================================================================
     # CACHE-CALLBACKS (fuer Auto-Refresh)
@@ -2960,6 +2988,12 @@ class ArchiveBoxesView(QWidget):
             documents = [d for d in documents if d.is_archived]
         elif actual_box:
             documents = [d for d in documents if not d.is_archived]
+        
+        # Wenn View nicht sichtbar: Rebuild aufschieben (verhindert UI-Freeze)
+        if not self.isVisible():
+            self._pending_documents = documents
+            self._pending_force_rebuild = False
+            return
         
         # Alle Filter anwenden und anzeigen (Quelle, Typ, KI, Suche)
         self._apply_filters_and_display(documents)
@@ -3107,6 +3141,14 @@ class ArchiveBoxesView(QWidget):
         # Loading-Overlay verstecken
         self._hide_loading()
         
+        # Wenn View nicht sichtbar: Daten zwischenspeichern, Tabelle erst bei
+        # Rueckkehr zum Archiv-View neu aufbauen (verhindert UI-Freeze in anderen Views)
+        if not self.isVisible():
+            self._pending_documents = documents
+            self._pending_force_rebuild = True
+            logger.debug("Archiv nicht sichtbar - Tabellen-Rebuild aufgeschoben")
+            return
+        
         self._apply_filters_and_display(documents, force_rebuild=True)
         
         # Cache wird automatisch durch get_documents() bei Bedarf befuellt
@@ -3182,9 +3224,17 @@ class ArchiveBoxesView(QWidget):
         self._toast_manager.show_error(f"Dokumente konnten nicht geladen werden:\n{error}")
     
     def _populate_table(self):
-        """Fuellt die Tabelle mit Dokumenten."""
+        """Fuellt die Tabelle mit Dokumenten.
+        
+        Performance-Optimierung: Blockiert Signale und UI-Updates waehrend
+        des Befuellens, um Qt Layout/Paint-Zyklen pro setItem() zu vermeiden.
+        """
         from i18n.de import (DUPLICATE_ICON, DUPLICATE_TOOLTIP,
                               DUPLICATE_TOOLTIP_NO_ORIGINAL)
+        
+        # Performance: UI-Updates und Signale blockieren waehrend des Befuellens
+        self.table.setUpdatesEnabled(False)
+        self.table.blockSignals(True)
         
         # Sortierung temporär deaktivieren während des Befüllens
         self.table.setSortingEnabled(False)
@@ -3192,6 +3242,9 @@ class ArchiveBoxesView(QWidget):
         
         # Flags fuer nicht-editierbare Items
         readonly_flags = Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled
+        
+        # Performance: QFont-Objekt einmal erstellen statt N-mal in der Schleife
+        box_font = QFont("Open Sans", 9, QFont.Weight.Medium)
         
         for row, doc in enumerate(self._documents):
             # Spalte 0: Duplikat-Icon
@@ -3224,7 +3277,7 @@ class ArchiveBoxesView(QWidget):
             box_item = QTableWidgetItem(doc.box_type_display)
             box_color = QColor(doc.box_color)
             box_item.setForeground(QBrush(box_color))
-            box_item.setFont(QFont("Open Sans", 9, QFont.Weight.Medium))
+            box_item.setFont(box_font)
             box_item.setFlags(readonly_flags)
             self.table.setItem(row, 2, box_item)
             
@@ -3291,6 +3344,10 @@ class ArchiveBoxesView(QWidget):
         
         # Sortierung wieder aktivieren
         self.table.setSortingEnabled(True)
+        
+        # Performance: UI-Updates und Signale wieder freigeben
+        self.table.blockSignals(False)
+        self.table.setUpdatesEnabled(True)
     
     def _get_file_type(self, doc) -> str:
         """Ermittelt den Dateityp für die Anzeige."""
@@ -3804,11 +3861,12 @@ class ArchiveBoxesView(QWidget):
             try:
                 self._history_worker.finished.disconnect()
                 self._history_worker.error.disconnect()
+                if self._history_worker.isRunning():
+                    self._history_worker.quit()
+                    self._history_worker.wait(2000)  # Max 2 Sekunden warten
             except (RuntimeError, TypeError):
                 pass
-            if self._history_worker.isRunning():
-                self._history_worker.quit()
-                self._history_worker.wait(2000)  # Max 2 Sekunden warten
+            self._history_worker = None
         
         self._history_worker = DocumentHistoryWorker(self.api_client, doc.id)
         self._history_worker.finished.connect(self._on_history_loaded)
@@ -3882,32 +3940,68 @@ class ArchiveBoxesView(QWidget):
         return QIcon(pixmap)
     
     def _set_document_color(self, documents: List[Document], color: Optional[str]):
-        """Setzt oder entfernt die Farbmarkierung fuer Dokumente."""
+        """Setzt oder entfernt die Farbmarkierung fuer Dokumente (async via Worker)."""
         if not documents:
             return
         
         doc_ids = [d.id for d in documents]
         
-        try:
-            count = self.docs_api.set_documents_color(doc_ids, color)
+        # Dokument-Referenzen speichern fuer Callback
+        self._color_change_documents = documents
+        
+        self._color_worker = DocumentColorWorker(self.docs_api, doc_ids, color)
+        self._color_worker.finished.connect(self._on_color_finished)
+        self._color_worker.error.connect(self._on_color_error)
+        self._register_worker(self._color_worker)
+        self._color_worker.start()
+    
+    def _on_color_finished(self, count: int, color: Optional[str]):
+        """Callback nach Farbmarkierung - aktualisiert lokale Daten und Tabelle."""
+        if count > 0:
+            # Lokale Dokumente aktualisieren (ohne Server-Refresh)
+            documents = getattr(self, '_color_change_documents', [])
+            affected_ids = set()
+            for doc in documents:
+                doc.display_color = color
+                affected_ids.add(doc.id)
             
-            if count > 0:
-                # Lokale Dokumente aktualisieren (ohne Server-Refresh)
-                for doc in documents:
-                    doc.display_color = color
-                
-                # Tabelle neu zeichnen
-                self._populate_table()
-                
-                from i18n.de import DOC_COLOR_SET_SUCCESS, DOC_COLOR_REMOVE_SUCCESS
-                if color:
-                    logger.info(DOC_COLOR_SET_SUCCESS.format(count=count))
-                else:
-                    logger.info(DOC_COLOR_REMOVE_SUCCESS.format(count=count))
-        except Exception as e:
-            from i18n.de import DOC_COLOR_ERROR
-            logger.error(DOC_COLOR_ERROR.format(error=str(e)))
-            self._toast_manager.show_error(DOC_COLOR_ERROR.format(error=str(e)))
+            # Nur betroffene Zeilen updaten statt gesamte Tabelle neu aufbauen
+            self._update_row_colors(affected_ids, color)
+            
+            from i18n.de import DOC_COLOR_SET_SUCCESS, DOC_COLOR_REMOVE_SUCCESS
+            if color:
+                logger.info(DOC_COLOR_SET_SUCCESS.format(count=count))
+            else:
+                logger.info(DOC_COLOR_REMOVE_SUCCESS.format(count=count))
+        
+        self._color_change_documents = None
+    
+    def _update_row_colors(self, doc_ids: set, color: Optional[str]):
+        """Aktualisiert nur die Hintergrundfarbe der betroffenen Zeilen (kein Full-Rebuild)."""
+        from ui.styles.tokens import DOCUMENT_DISPLAY_COLORS
+        
+        if color and color in DOCUMENT_DISPLAY_COLORS:
+            bg_brush = QBrush(QColor(DOCUMENT_DISPLAY_COLORS[color]))
+        else:
+            bg_brush = QBrush()  # Transparent / Default
+        
+        for row in range(self.table.rowCount()):
+            name_item = self.table.item(row, 1)
+            if not name_item:
+                continue
+            doc = name_item.data(Qt.ItemDataRole.UserRole)
+            if doc and doc.id in doc_ids:
+                for col in range(self.table.columnCount()):
+                    item = self.table.item(row, col)
+                    if item:
+                        item.setBackground(bg_brush)
+    
+    def _on_color_error(self, error_msg: str):
+        """Callback bei Fehler der Farbmarkierung."""
+        from i18n.de import DOC_COLOR_ERROR
+        logger.error(DOC_COLOR_ERROR.format(error=error_msg))
+        self._toast_manager.show_error(DOC_COLOR_ERROR.format(error=error_msg))
+        self._color_change_documents = None
     
     # ========================================
     # Aktionen
@@ -4153,8 +4247,18 @@ class ArchiveBoxesView(QWidget):
                     docs_api=self.docs_api,
                     editable=True
                 )
+                # PDF-Save-Flag: Refresh erst NACH viewer.exec() ausfuehren
+                # (verhindert Freeze durch Tabellen-Rebuild waehrend modaler Dialog)
+                self._pdf_saved_doc_id = None
                 viewer.pdf_saved.connect(self._on_pdf_saved)
                 viewer.exec()
+                # Nach Dialog-Schliessen: Leichtgewichtigen Refresh ausfuehren
+                # Cache invalidieren und Refresh VERZÖGERT starten (100ms),
+                # damit Qt die UI erst aktualisieren kann (Dialog-Cleanup).
+                if self._pdf_saved_doc_id is not None:
+                    self._cache.invalidate_documents()
+                    self._cache.invalidate_stats()
+                    QTimer.singleShot(100, lambda: self._refresh_documents(force_refresh=True))
             elif getattr(self, '_preview_kind', '') == "spreadsheet":
                 from i18n.de import SPREADSHEET_PREVIEW_TITLE
                 title = SPREADSHEET_PREVIEW_TITLE.format(filename=self._preview_doc.original_filename)
@@ -4175,10 +4279,15 @@ class ArchiveBoxesView(QWidget):
         self._toast_manager.show_error(f"Vorschau fehlgeschlagen:\n{error}")
     
     def _on_pdf_saved(self, doc_id: int):
-        """Callback wenn ein PDF im Editor gespeichert wurde."""
+        """Callback wenn ein PDF im Editor gespeichert wurde.
+        
+        WICHTIG: Wird aufgerufen waehrend der modale PDFViewerDialog noch offen ist.
+        Schwere Operationen (Tabellen-Rebuild, Server-Refresh) werden aufgeschoben
+        bis der Dialog geschlossen ist, um UI-Freeze zu vermeiden.
+        """
         from i18n.de import PDF_EDIT_SAVE_SUCCESS
         
-        # Vorschau-Cache fuer dieses Dokument invalidieren
+        # Vorschau-Cache fuer dieses Dokument invalidieren (leichtgewichtig)
         if self._preview_cache_dir:
             import glob
             cache_pattern = os.path.join(self._preview_cache_dir, f"{doc_id}_*")
@@ -4189,15 +4298,16 @@ class ArchiveBoxesView(QWidget):
                 except Exception:
                     pass
         
-        # Historie-Cache invalidieren
+        # Historie-Cache invalidieren (leichtgewichtig)
         if hasattr(self, '_history_panel'):
             self._history_panel.invalidate_cache(doc_id)
         
         # Toast
         self._toast_manager.show_success(PDF_EDIT_SAVE_SUCCESS)
         
-        # Dokumente-Cache auch refreshen (file_size/content_hash haben sich geaendert)
-        self._refresh_all(force_refresh=True)
+        # Refresh AUFGESCHOBEN: Flag setzen, _refresh_all() laeuft nach viewer.exec()
+        # (verhindert Tabellen-Rebuild + Server-Calls waehrend modaler Dialog offen ist)
+        self._pdf_saved_doc_id = doc_id
     
     def _open_in_gdv_editor(self, doc: Document):
         """Oeffnet GDV-Dokument im Editor."""

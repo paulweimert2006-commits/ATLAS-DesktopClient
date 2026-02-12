@@ -50,6 +50,20 @@ class ReleasesAPI:
             logger.error(f"Update-Check fehlgeschlagen: {e}")
             raise
     
+    def get_public_releases(self) -> List[Dict]:
+        """
+        Oeffentliche Release-Liste (fuer Mitteilungszentrale).
+        Gibt aktive/mandatory Releases zurueck (ohne Admin-Felder).
+        Keine Admin-Rechte erforderlich.
+        """
+        try:
+            response = self.client.get('/releases')
+            if response.get('success'):
+                return response['data'].get('releases', [])
+        except APIError as e:
+            logger.warning(f"Oeffentliche Releases nicht verfuegbar: {e}")
+        return []
+    
     # ================================================================
     # Admin: Release-Verwaltung
     # ================================================================

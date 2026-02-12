@@ -33,6 +33,9 @@ function handleDocumentsRequest(string $idOrAction, string $method, ?string $sub
             } elseif ($sub === 'history' && is_numeric($idOrAction)) {
                 // GET /documents/{id}/history → Dokument-Historie
                 getDocumentHistory($idOrAction, $payload);
+            } elseif ($sub === 'info' && is_numeric($idOrAction)) {
+                // GET /documents/{id}/info → Dokument-Metadaten (BUG-0013 Fix)
+                getDocumentInfo($idOrAction, $payload);
             } else {
                 // Download: Recht erforderlich
                 if (!hasPermission($payload['user_id'], 'documents_download')) {
@@ -234,6 +237,52 @@ function listDocuments(array $user): void {
         'documents' => $documents,
         'count' => count($documents)
     ]);
+}
+
+/**
+ * GET /documents/{id}/info
+ * BUG-0013 Fix: Einzelnes Dokument per ID abrufen (nur Metadaten, kein Download).
+ * Vermeidet O(N) Aufrufe von listDocuments() fuer Einzelabfragen.
+ */
+function getDocumentInfo(string $id, array $user): void {
+    $doc = Database::queryOne("
+        SELECT 
+            d.id,
+            d.filename,
+            d.original_filename,
+            d.mime_type,
+            d.file_size,
+            d.source_type,
+            d.is_gdv,
+            d.created_at,
+            u.username as uploaded_by_name,
+            COALESCE(d.external_shipment_id, s.external_shipment_id) as external_shipment_id,
+            COALESCE(d.vu_name, vc.vu_name) as vu_name,
+            COALESCE(d.ai_renamed, 0) as ai_renamed,
+            d.ai_processing_error,
+            COALESCE(d.box_type, 'sonstige') as box_type,
+            COALESCE(d.processing_status, 'completed') as processing_status,
+            d.document_category,
+            d.bipro_category,
+            COALESCE(d.is_archived, 0) as is_archived,
+            d.display_color,
+            d.content_hash,
+            COALESCE(d.version, 1) as version,
+            d.previous_version_id,
+            COALESCE(orig.original_filename, '') as duplicate_of_filename
+        FROM documents d
+        LEFT JOIN users u ON d.uploaded_by = u.id
+        LEFT JOIN shipments s ON d.shipment_id = s.id
+        LEFT JOIN vu_connections vc ON s.vu_connection_id = vc.id
+        LEFT JOIN documents orig ON d.previous_version_id = orig.id
+        WHERE d.id = ?
+    ", [(int)$id]);
+
+    if (!$doc) {
+        json_error('Dokument nicht gefunden', 404);
+    }
+
+    json_success(['document' => $doc]);
 }
 
 /**

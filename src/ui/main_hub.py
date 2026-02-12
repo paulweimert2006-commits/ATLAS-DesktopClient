@@ -63,6 +63,25 @@ class UpdateCheckWorker(QThread):
             pass  # Periodischer Check darf nie crashen
 
 
+class NotificationPollWorker(QThread):
+    """Pollt Notification-Summary im Hintergrund (nicht-blockierend)."""
+    finished = Signal(dict)
+    
+    def __init__(self, messages_api, last_message_ts: str = None):
+        super().__init__()
+        self._api = messages_api
+        self._last_message_ts = last_message_ts
+    
+    def run(self):
+        try:
+            summary = self._api.get_notifications_summary(
+                last_message_ts=self._last_message_ts
+            )
+            self.finished.emit(summary)
+        except Exception:
+            self.finished.emit({})  # Polling-Fehler stillschweigend ignorieren
+
+
 class NavButton(QPushButton):
     """
     Navigations-Button für die dunkle Sidebar.
@@ -118,6 +137,14 @@ class DropUploadWorker(QThread):
         super().__init__()
         self.api_client = api_client
         self.file_paths = file_paths
+        self._cancelled = False
+        self._executor = None  # BUG-0025: Referenz fuer cancel()
+
+    def cancel(self):
+        """BUG-0025 Fix: Bricht den Upload-Worker ab und stoppt den Executor."""
+        self._cancelled = True
+        if self._executor:
+            self._executor.shutdown(wait=False, cancel_futures=True)
 
     def _expand_all_files(self, file_paths):
         """Phase 1: Entpackt alle ZIPs/MSGs rekursiv und liefert flache Upload-Job-Liste.
@@ -191,6 +218,8 @@ class DropUploadWorker(QThread):
     def _upload_single(self, path: str, source_type: str, box_type: str = None):
         """Thread-safe Upload einer einzelnen Datei mit per-Thread API-Client.
         
+        BUG-0038 Fix: _thread_apis-Zugriff mit Lock geschuetzt.
+        
         Returns:
             (filename, success, doc_or_error_str)
         """
@@ -198,14 +227,16 @@ class DropUploadWorker(QThread):
         name = Path(path).name
         try:
             # Per-Thread API-Client (eigene requests.Session)
+            # BUG-0038 Fix: Zugriff auf _thread_apis mit Lock schuetzen
             tid = threading.get_ident()
-            if tid not in self._thread_apis:
-                from api.client import APIClient
-                from api.documents import DocumentsAPI
-                client = APIClient(self.api_client.config)
-                client.set_token(self.api_client._token)
-                self._thread_apis[tid] = DocumentsAPI(client)
-            docs_api = self._thread_apis[tid]
+            with self._thread_apis_lock:
+                if tid not in self._thread_apis:
+                    from api.client import APIClient
+                    from api.documents import DocumentsAPI
+                    client = APIClient(self.api_client.config)
+                    client.set_token(self.api_client._token)
+                    self._thread_apis[tid] = DocumentsAPI(client)
+                docs_api = self._thread_apis[tid]
 
             if box_type:
                 doc = docs_api.upload(path, source_type, box_type=box_type)
@@ -220,11 +251,13 @@ class DropUploadWorker(QThread):
 
     def run(self):
         import shutil
+        import threading
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
         self._temp_dirs = []
         self._errors = []  # (filename, error) aus Phase 1
         self._thread_apis = {}  # thread_id -> DocumentsAPI
+        self._thread_apis_lock = threading.Lock()  # BUG-0038 Fix: Lock fuer _thread_apis
 
         # Phase 1: Alle Dateien entpacken (sequentiell, lokal)
         jobs = self._expand_all_files(self.file_paths)
@@ -235,19 +268,36 @@ class DropUploadWorker(QThread):
         for name, error in self._errors:
             self.file_error.emit(name, error)
 
+        # BUG-0025: Abbruch-Check nach Phase 1
+        if self._cancelled:
+            self.all_finished.emit(0, len(self._errors))
+            return
+
         # Phase 2: Parallele Uploads
         erfolge = 0
         fehler = len(self._errors)
         uploaded = 0
 
         workers = min(self.MAX_UPLOAD_WORKERS, max(1, total))
-        with ThreadPoolExecutor(max_workers=workers) as executor:
+        # BUG-0025 Fix: Executor-Referenz speichern fuer cancel()
+        self._executor = ThreadPoolExecutor(max_workers=workers)
+        try:
             futures = {
-                executor.submit(self._upload_single, path, 'manual_upload', box_type): path
+                self._executor.submit(self._upload_single, path, 'manual_upload', box_type): path
                 for path, box_type in jobs
             }
             for future in as_completed(futures):
-                name, success, result = future.result()
+                # BUG-0025 Fix: Abbruch-Check in der Upload-Schleife
+                if self._cancelled:
+                    # Verbleibende Futures abbrechen
+                    for f in futures:
+                        f.cancel()
+                    break
+                try:
+                    name, success, result = future.result()
+                except Exception:
+                    # Future wurde abgebrochen oder Executor heruntergefahren
+                    continue
                 uploaded += 1
                 self.progress.emit(uploaded, total, name)
                 if success:
@@ -256,6 +306,9 @@ class DropUploadWorker(QThread):
                 else:
                     fehler += 1
                     self.file_error.emit(name, result)
+        finally:
+            self._executor.shutdown(wait=True)
+            self._executor = None
 
         # Temporaere Verzeichnisse aufraeumen
         for td in self._temp_dirs:
@@ -288,6 +341,8 @@ class MainHub(QMainWindow):
         self._archive_view = None
         self._gdv_view = None
         self._admin_view = None
+        self._message_center_view = None
+        self._chat_view = None
         
         # Fenstertitel
         username = auth_api.current_user.username if auth_api.current_user else "Unbekannt"
@@ -311,15 +366,31 @@ class MainHub(QMainWindow):
         # Globaler Toast-Manager (oben rechts, gestapelt)
         self._toast_manager = ToastManager(self)
         
-        # Standardmäßig BiPRO-Bereich anzeigen
-        self._show_bipro()
-        
         # Periodischer Update-Check (alle 30 Minuten, nur im Release-Modus)
         from main import is_dev_mode
         self._update_timer = QTimer(self)
         if not is_dev_mode():
             self._update_timer.timeout.connect(self._check_for_updates)
             self._update_timer.start(30 * 60 * 1000)  # 30 Minuten
+        
+        # Notification-Poller (dynamisches Intervall je nach aktiver Ansicht)
+        self._POLL_INTERVAL_NORMAL = 30_000   # 30s - Standard (BiPRO, Archiv, GDV, Admin)
+        self._POLL_INTERVAL_CENTER = 10_000   # 10s - Mitteilungszentrale aktiv
+        self._current_poll_interval = self._POLL_INTERVAL_CENTER  # Start = Zentrale
+        
+        self._notification_poller_timer = QTimer(self)
+        self._notification_poller_timer.timeout.connect(self._poll_notifications)
+        self._last_message_ts = None
+        self._prev_unread_chats = 0
+        self._prev_unread_system = 0
+        self._messages_api = None  # Wird nach Login gesetzt
+        self._notification_poll_worker = None  # Worker-Referenz
+        self._notification_poller_timer.start(self._POLL_INTERVAL_CENTER)
+        # Sofort einmal pollen
+        QTimer.singleShot(2000, self._poll_notifications)
+        
+        # Standardmaeßig Mitteilungszentrale anzeigen (nach Poller-Init!)
+        self._show_message_center()
     
     def _setup_ui(self):
         """UI aufbauen mit ACENCIA Corporate Design."""
@@ -359,7 +430,7 @@ class MainHub(QMainWindow):
         logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "logo.png")
         if os.path.exists(logo_path):
             pixmap = QPixmap(logo_path)
-            scaled = pixmap.scaled(72, 72, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            scaled = pixmap.scaled(140, 140, Qt.KeepAspectRatio, Qt.SmoothTransformation)
             logo_image.setPixmap(scaled)
         logo_layout.addWidget(logo_image)
         
@@ -411,6 +482,29 @@ class MainHub(QMainWindow):
         """)
         sidebar_layout.addWidget(nav_label)
         
+        # Mitteilungszentrale Button (mit Badge)
+        self.btn_center = NavButton("🔔", texts.NAV_MESSAGE_CENTER)
+        self.btn_center.clicked.connect(self._show_message_center)
+        sidebar_layout.addWidget(self.btn_center)
+        
+        # Notification Badge (roter Kreis mit Zahl)
+        self._notification_badge = QLabel("", self.btn_center)
+        self._notification_badge.setStyleSheet(f"""
+            QLabel {{
+                background-color: {ACCENT_500};
+                color: white;
+                border-radius: 9px;
+                padding: 1px 5px;
+                font-size: 10px;
+                font-weight: bold;
+                min-width: 18px;
+            }}
+        """)
+        self._notification_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._notification_badge.setFixedHeight(18)
+        self._notification_badge.move(self.btn_center.width() - 36, 6)
+        self._notification_badge.hide()
+        
         # BiPRO Button
         self.btn_bipro = NavButton("🔄", "BiPRO Datenabruf")
         self.btn_bipro.clicked.connect(self._show_bipro)
@@ -428,21 +522,6 @@ class MainHub(QMainWindow):
         
         # Spacer
         sidebar_layout.addStretch()
-        
-        # System Label
-        settings_label = QLabel("SYSTEM")
-        settings_label.setStyleSheet(f"""
-            color: {PRIMARY_500};
-            font-size: {FONT_SIZE_CAPTION};
-            padding: 16px 20px 8px 20px;
-            letter-spacing: 1px;
-        """)
-        sidebar_layout.addWidget(settings_label)
-        
-        # Einstellungen (Zertifikate etc.)
-        self.btn_settings = NavButton("🔧", "Einstellungen")
-        self.btn_settings.clicked.connect(self._show_settings)
-        sidebar_layout.addWidget(self.btn_settings)
         
         # === Admin-Bereich (nur fuer Admins) ===
         self._admin_nav_widgets = []
@@ -499,18 +578,30 @@ class MainHub(QMainWindow):
         main_layout.addWidget(self.content_stack)
         
         # Placeholder-Widgets (werden bei Bedarf ersetzt)
+        # Index 0: Mitteilungszentrale
+        self._placeholder_center = self._create_placeholder(texts.MSG_CENTER_TITLE, texts.MSG_CENTER_LOADING)
+        self.content_stack.addWidget(self._placeholder_center)      # Index 0
+        
+        # Index 1: BiPRO
         self._placeholder_bipro = self._create_placeholder("BiPRO Datenabruf", "Wird geladen...")
+        self.content_stack.addWidget(self._placeholder_bipro)       # Index 1
+        
+        # Index 2: Archiv
         self._placeholder_archive = self._create_placeholder("Dokumentenarchiv", "Wird geladen...")
+        self.content_stack.addWidget(self._placeholder_archive)     # Index 2
+        
+        # Index 3: GDV
         self._placeholder_gdv = self._create_placeholder("GDV Editor", "Wird geladen...")
+        self.content_stack.addWidget(self._placeholder_gdv)         # Index 3
         
-        self.content_stack.addWidget(self._placeholder_bipro)      # Index 0
-        self.content_stack.addWidget(self._placeholder_archive)    # Index 1
-        self.content_stack.addWidget(self._placeholder_gdv)        # Index 2
-        
-        # Admin-Placeholder (nur fuer Admins)
+        # Index 4: Admin (nur fuer Admins)
         if self.btn_admin:
             self._placeholder_admin = self._create_placeholder(texts.NAV_ADMIN_VIEW, texts.LOADING)
-            self.content_stack.addWidget(self._placeholder_admin)   # Index 3
+            self.content_stack.addWidget(self._placeholder_admin)   # Index 4
+        
+        # Index 5: Chat (Vollbild) - Placeholder
+        self._placeholder_chat = self._create_placeholder(texts.CHAT_TITLE, texts.MSG_CENTER_LOADING)
+        self.content_stack.addWidget(self._placeholder_chat)        # Index 5 (oder 4 ohne Admin)
     
     def _create_placeholder(self, title: str, subtitle: str) -> QWidget:
         """Erstellt ein Placeholder-Widget im ACENCIA Design."""
@@ -535,13 +626,50 @@ class MainHub(QMainWindow):
         
         return widget
     
-    def _update_nav_buttons(self, active_btn: NavButton):
+    def _update_nav_buttons(self, active_btn):
         """Aktualisiert die Navigation-Buttons."""
-        all_btns = [self.btn_bipro, self.btn_archive, self.btn_gdv, self.btn_settings]
+        all_btns = [self.btn_center, self.btn_bipro, self.btn_archive, self.btn_gdv]
         if self.btn_admin:
             all_btns.append(self.btn_admin)
         for btn in all_btns:
             btn.setChecked(btn == active_btn)
+    
+    def _show_message_center(self):
+        """Zeigt die Mitteilungszentrale."""
+        self._update_nav_buttons(self.btn_center)
+        
+        if self._message_center_view is None:
+            from ui.message_center_view import MessageCenterView
+            from api.messages import MessagesAPI
+            from api.releases import ReleasesAPI
+            
+            self._messages_api = MessagesAPI(self.api_client)
+            releases_api = ReleasesAPI(self.api_client)
+            
+            self._message_center_view = MessageCenterView(
+                self.api_client, releases_api=releases_api
+            )
+            self._message_center_view._toast_manager = self._toast_manager
+            self._message_center_view.set_messages_api(self._messages_api)
+            self._message_center_view.set_releases_api(releases_api)
+            self._message_center_view.open_chats_requested.connect(self._show_chat)
+            
+            # Placeholder ersetzen
+            self.content_stack.removeWidget(self._placeholder_center)
+            self.content_stack.insertWidget(0, self._message_center_view)
+        
+        # #region agent log
+        import time as _t0; _log_nav_start = _t0.time()
+        # #endregion
+        self._message_center_view.refresh()
+        self.content_stack.setCurrentIndex(0)
+        self._set_polling_interval(self._POLL_INTERVAL_CENTER)
+        # #region agent log
+        _log_nav_dur = (_t0.time() - _log_nav_start) * 1000; import json as _j0; open(r'x:\projekte\5510_GDV Tool V1\.cursor\debug.log','a').write(_j0.dumps({"id":"log_show_center","timestamp":int(_t0.time()*1000),"location":"main_hub.py:_show_message_center","message":"_show_message_center refresh+setIndex","data":{"duration_ms":round(_log_nav_dur,1)},"hypothesisId":"A"})+'\n')
+        # #endregion
+        
+        # Sofort Badge aktualisieren (System-Meldungen wurden gerade gelesen)
+        QTimer.singleShot(1500, self._refresh_badge_after_read)
     
     def _show_bipro(self):
         """Zeigt den BiPRO-Bereich."""
@@ -557,9 +685,10 @@ class MainHub(QMainWindow):
             
             # Placeholder ersetzen
             self.content_stack.removeWidget(self._placeholder_bipro)
-            self.content_stack.insertWidget(0, self._bipro_view)
+            self.content_stack.insertWidget(1, self._bipro_view)
         
-        self.content_stack.setCurrentIndex(0)
+        self.content_stack.setCurrentIndex(1)
+        self._set_polling_interval(self._POLL_INTERVAL_NORMAL)
     
     def _show_archive(self):
         """Zeigt das Dokumentenarchiv mit Box-System."""
@@ -576,9 +705,10 @@ class MainHub(QMainWindow):
             
             # Placeholder ersetzen
             self.content_stack.removeWidget(self._placeholder_archive)
-            self.content_stack.insertWidget(1, self._archive_view)
+            self.content_stack.insertWidget(2, self._archive_view)
         
-        self.content_stack.setCurrentIndex(1)
+        self.content_stack.setCurrentIndex(2)
+        self._set_polling_interval(self._POLL_INTERVAL_NORMAL)
     
     def _show_gdv(self):
         """Zeigt den GDV-Editor."""
@@ -593,9 +723,10 @@ class MainHub(QMainWindow):
             
             # Placeholder ersetzen
             self.content_stack.removeWidget(self._placeholder_gdv)
-            self.content_stack.insertWidget(2, self._gdv_view)
+            self.content_stack.insertWidget(3, self._gdv_view)
         
-        self.content_stack.setCurrentIndex(2)
+        self.content_stack.setCurrentIndex(3)
+        self._set_polling_interval(self._POLL_INTERVAL_NORMAL)
     
     def _show_settings(self):
         """Öffnet den Einstellungen-Dialog."""
@@ -620,11 +751,47 @@ class MainHub(QMainWindow):
             
             # Placeholder ersetzen
             self.content_stack.removeWidget(self._placeholder_admin)
-            self.content_stack.insertWidget(3, self._admin_view)
+            self.content_stack.insertWidget(4, self._admin_view)
         
         # Hauptsidebar ausblenden - Admin hat eigene Sidebar
         self._sidebar.hide()
-        self.content_stack.setCurrentIndex(3)
+        self.content_stack.setCurrentIndex(4)
+        self._set_polling_interval(self._POLL_INTERVAL_NORMAL)
+    
+    def _show_chat(self):
+        """Zeigt die Chat-Vollbild-Ansicht. Sidebar wird versteckt (wie Admin)."""
+        if self._chat_view is None:
+            from ui.chat_view import ChatView
+            from api.chat import ChatAPI
+            
+            chat_api = ChatAPI(self.api_client)
+            self._chat_view = ChatView(chat_api)
+            self._chat_view._toast_manager = self._toast_manager
+            self._chat_view.back_requested.connect(self._leave_chat)
+            
+            # Chat-Index berechnen (nach Admin)
+            chat_idx = 5 if self.btn_admin else 4
+            self.content_stack.removeWidget(self._placeholder_chat)
+            self.content_stack.insertWidget(chat_idx, self._chat_view)
+        
+        self._chat_view.refresh()
+        self._sidebar.hide()
+        chat_idx = 5 if self.btn_admin else 4
+        self.content_stack.setCurrentIndex(chat_idx)
+        # Notification-Poller pausieren - ChatRefreshWorker uebernimmt
+        self._set_polling_interval(0)
+        # Chat-View Auto-Refresh starten (3s Nachrichten-Polling)
+        self._chat_view.start_auto_refresh()
+    
+    def _leave_chat(self):
+        """Verlaesst den Chat und zeigt die Mitteilungszentrale."""
+        # Chat Auto-Refresh stoppen
+        if self._chat_view:
+            self._chat_view.stop_auto_refresh()
+        self._sidebar.show()
+        # Notification-Poller sofort wieder starten + Badge aktualisieren
+        self._poll_notifications()
+        self._show_message_center()
     
     def _leave_admin(self):
         """Verlässt den Admin-Bereich und zeigt die Hauptsidebar wieder an."""
@@ -743,6 +910,126 @@ class MainHub(QMainWindow):
         if reply == QMessageBox.StandardButton.Yes:
             self.auth_api.logout()
             self.close()
+    
+    # ================================================================
+    # Notification Polling (dynamisches Intervall)
+    # ================================================================
+    
+    def _set_polling_interval(self, interval_ms: int):
+        """Setzt das Polling-Intervall dynamisch.
+        
+        Wird bei jedem View-Wechsel aufgerufen:
+        - 30s normal (BiPRO, Archiv, GDV, Admin)
+        - 10s Mitteilungszentrale
+        - 0 (pausiert) Chat-Ansicht (ChatRefreshWorker uebernimmt)
+        """
+        if interval_ms == 0:
+            # Pausieren (z.B. wenn ChatView eigenen Refresh hat)
+            self._notification_poller_timer.stop()
+            self._current_poll_interval = 0
+            return
+        
+        was_stopped = self._current_poll_interval == 0
+        if interval_ms != self._current_poll_interval:
+            self._current_poll_interval = interval_ms
+            self._notification_poller_timer.setInterval(interval_ms)
+            if was_stopped:
+                self._notification_poller_timer.start(interval_ms)
+            # Sofort pollen beim Wechsel auf schnelleres Intervall
+            if interval_ms < self._POLL_INTERVAL_NORMAL:
+                self._poll_notifications()
+    
+    def _poll_notifications(self):
+        """Polling: Startet Worker fuer nicht-blockierenden API-Call."""
+        if not self._messages_api:
+            try:
+                from api.messages import MessagesAPI
+                self._messages_api = MessagesAPI(self.api_client)
+            except Exception:
+                return
+        
+        if not self.api_client.is_authenticated():
+            return
+        
+        # Nicht starten wenn bereits ein Poll laeuft
+        if self._notification_poll_worker and self._notification_poll_worker.isRunning():
+            # #region agent log
+            import time as _t; import json as _j; open(r'x:\projekte\5510_GDV Tool V1\.cursor\debug.log','a').write(_j.dumps({"id":"log_notif_worker_overlap","timestamp":int(_t.time()*1000),"location":"main_hub.py:_poll_notifications","message":"Notification worker overlap SKIPPED","data":{"interval":self._current_poll_interval},"hypothesisId":"E"})+'\n')
+            # #endregion
+            return
+        
+        # #region agent log
+        import time as _t2; import json as _j2; open(r'x:\projekte\5510_GDV Tool V1\.cursor\debug.log','a').write(_j2.dumps({"id":"log_notif_poll_start","timestamp":int(_t2.time()*1000),"location":"main_hub.py:_poll_notifications","message":"Notification poll starting","data":{"interval":self._current_poll_interval},"hypothesisId":"E"})+'\n')
+        # #endregion
+        
+        self._notification_poll_worker = NotificationPollWorker(
+            self._messages_api, self._last_message_ts
+        )
+        self._notification_poll_worker.finished.connect(self._on_notification_poll_finished)
+        self._notification_poll_worker.start()
+    
+    def _on_notification_poll_finished(self, summary: dict):
+        """Callback wenn Notification-Poll abgeschlossen (Main-Thread)."""
+        # #region agent log
+        import time as _tn; import json as _jn; open(r'x:\projekte\5510_GDV Tool V1\.cursor\debug.log','a').write(_jn.dumps({"id":"log_notif_finished","timestamp":int(_tn.time()*1000),"location":"main_hub.py:_on_notification_poll_finished","message":"Poll finished","data":{"has_data":bool(summary),"interval":self._current_poll_interval},"hypothesisId":"E"})+'\n')
+        # #endregion
+        if not summary:
+            return
+        
+        unread_chats = summary.get('unread_chats', 0)
+        unread_system = summary.get('unread_system_messages', 0)
+        
+        # Badge aktualisieren
+        total_unread = unread_chats + unread_system
+        self._update_notification_badge(total_unread)
+        
+        # MessageCenterView aktualisieren
+        if self._message_center_view:
+            self._message_center_view.update_unread_count(unread_chats)
+        
+        # Toast bei neuer Chat-Nachricht
+        latest = summary.get('latest_chat_message')
+        if latest and unread_chats > self._prev_unread_chats:
+            sender = latest.get('sender_name', '')
+            preview = latest.get('preview', '')
+            conv_id = latest.get('conversation_id', 0)
+            
+            # Kein Toast wenn User gerade in demselben Chat ist
+            if not (self._chat_view and self._chat_view._current_conv_id == conv_id
+                    and self._sidebar.isHidden()):
+                self._toast_manager.show_info(
+                    texts.MSG_CENTER_NEW_CHAT_MESSAGE.format(sender=sender),
+                    action_text=texts.MSG_CENTER_OPEN_CHAT,
+                    action_callback=lambda cid=conv_id: self._open_specific_chat(cid)
+                )
+            
+            # Timestamp merken fuer Deduplizierung
+            if latest.get('created_at'):
+                self._last_message_ts = latest['created_at']
+        
+        self._prev_unread_chats = unread_chats
+        self._prev_unread_system = unread_system
+    
+    def _update_notification_badge(self, count: int):
+        """Aktualisiert den Badge auf dem Mitteilungszentrale-Button."""
+        if count > 0:
+            self._notification_badge.setText(str(min(count, 99)))
+            self._notification_badge.show()
+            # Position neu berechnen
+            btn_w = self.btn_center.width()
+            self._notification_badge.move(max(btn_w - 36, 120), 6)
+        else:
+            self._notification_badge.hide()
+    
+    def _refresh_badge_after_read(self):
+        """Badge sofort aktualisieren nachdem Nachrichten gelesen wurden."""
+        self._poll_notifications()
+    
+    def _open_specific_chat(self, conversation_id: int):
+        """Oeffnet einen bestimmten Chat (z.B. von Toast-Klick)."""
+        self._show_chat()
+        if self._chat_view:
+            self._chat_view.open_conversation(conversation_id)
     
     # ================================================================
     # Periodischer Update-Check
@@ -1155,9 +1442,9 @@ class MainHub(QMainWindow):
             self._update_check_worker.quit()
             self._update_check_worker.wait(2000)
         
-        # Drop-Upload-Worker aufraumen
+        # Drop-Upload-Worker aufraumen (BUG-0025 Fix: cancel() statt nur quit())
         if self._drop_upload_worker and self._drop_upload_worker.isRunning():
-            self._drop_upload_worker.quit()
-            self._drop_upload_worker.wait(2000)
+            self._drop_upload_worker.cancel()
+            self._drop_upload_worker.wait(3000)
         
         event.accept()

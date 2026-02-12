@@ -1,10 +1,11 @@
 # ACENCIA ATLAS
 
 **Der Datenkern.** Desktop-App fuer Versicherungsvermittler mit:
+- **Mitteilungszentrale** - System-/Admin-Meldungen, Release-Info, 1:1 Chat mit Lesebestaetigung
 - **BiPRO-Datenabruf** - Automatisierter Abruf von Lieferungen von Versicherern + IMAP Mail-Import
 - **Dokumentenarchiv mit Box-System** - Zentrales Archiv mit KI-Klassifikation und Smart!Scan
 - **GDV-Editor** - Erstellung, Ansicht und Bearbeitung von GDV-Datensaetzen
-- **Administration** - Nutzerverwaltung, E-Mail-Konten, KI-Kosten, Releases
+- **Administration** - Nutzerverwaltung, E-Mail-Konten, KI-Kosten, Releases, Mitteilungen
 
 ![Python 3.10+](https://img.shields.io/badge/Python-3.10+-blue.svg)
 ![PySide6](https://img.shields.io/badge/GUI-PySide6-green.svg)
@@ -15,6 +16,16 @@
 ---
 
 ## Features
+
+### Mitteilungszentrale (NEU v2.0.0)
+- **System- & Admin-Mitteilungen**: Automatische Meldungen (z.B. Scan-Fehler) und Admin-Announcements
+- **Severity-Farben**: Info, Warnung, Fehler, Kritisch mit passenden Farben
+- **Per-User Read-Status**: Badge zeigt ungelesene Mitteilungen
+- **Release-Info**: Aktuelle Version + Release Notes, expandierbar zu allen Releases
+- **1:1 Chat**: Private Nachrichten zwischen Nutzern mit Lesebestaetigung
+- **Notification-Badge**: Roter Kreis im Menue bei ungelesenen Nachrichten
+- **Toast-Benachrichtigung**: Bei neuer Chat-Nachricht "Neue Nachricht von ..."
+- **Vollbild-Chat**: Eigene Ansicht mit Conversation-Liste und Nachrichtenverlauf
 
 ### BiPRO Datenabruf
 - **Automatischer Abruf** von Lieferungen (Dokumente, Vertragsaenderungen)
@@ -66,6 +77,7 @@
 - **Smart!Scan-Einstellungen**: Zieladresse, Templates, Modi, Post-Send-Aktionen
 - **Smart!Scan-Historie**: Revisionssichere Versandhistorie
 - **E-Mail-Posteingang**: IMAP Inbox mit Anhang-Details
+- **Mitteilungen**: System-/Admin-Mitteilungen erstellen und verwalten (NEU v2.0.0)
 
 ---
 
@@ -131,13 +143,21 @@ python run.py
 4. Felder im rechten Panel bearbeiten
 5. **Menue** → **Datei** → **Speichern** (Strg+S)
 
+### Mitteilungszentrale
+
+1. **Navigation** → **Zentrale** (erster Eintrag in der Sidebar)
+2. System- und Admin-Mitteilungen in der grossen Kachel
+3. Aktuelle Version und Release Notes in der kleinen Kachel
+4. **"Chats oeffnen"** fuer private 1:1 Nachrichten (Vollbild-Ansicht)
+
 ### Administration
 
 1. **Navigation** → **Administration** (nur fuer Admins sichtbar)
-2. Vertikale Sidebar links mit 10 Panels in 3 Sektionen
+2. Vertikale Sidebar links mit 11 Panels in 4 Sektionen
 3. **Verwaltung**: Nutzer, Sessions, Passwoerter
 4. **Monitoring**: Aktivitaetslog, KI-Kosten, Releases
 5. **E-Mail**: Konten, SmartScan-Settings, Historie, Posteingang
+6. **Kommunikation**: Mitteilungen erstellen und verwalten (NEU v2.0.0)
 
 ---
 
@@ -146,7 +166,7 @@ python run.py
 ```
 5510_GDV Tool V1/
 ├── run.py                     # Entry Point
-├── VERSION                    # Zentrale Versionsdatei (1.6.0)
+├── VERSION                    # Zentrale Versionsdatei (2.0.0)
 ├── requirements.txt           # Python-Abhaengigkeiten
 ├── requirements-dev.txt       # Dev-Dependencies (pytest, ruff)
 ├── AGENTS.md                  # Agent-Anweisungen (aktuell halten!)
@@ -162,6 +182,8 @@ python run.py
 │   │   ├── documents.py      # Dokumenten-Operationen (Box-Support)
 │   │   ├── vu_connections.py # VU-Verbindungen API
 │   │   ├── admin.py          # Admin API (Nutzerverwaltung)
+│   │   ├── messages.py       # Mitteilungen + Notification-Polling API (NEU v2.0.0)
+│   │   ├── chat.py           # 1:1 Chat API (NEU v2.0.0)
 │   │   ├── smartscan.py      # SmartScan + EmailAccounts API
 │   │   ├── openrouter.py     # KI-Klassifikation (OpenRouter)
 │   │   ├── passwords.py      # Passwort-Verwaltung API
@@ -193,7 +215,7 @@ python run.py
 │   │   └── certificates.py   # Zertifikat-Manager (PFX/P12)
 │   │
 │   ├── i18n/                 # Internationalisierung
-│   │   └── de.py             # Deutsche UI-Texte (~790 Keys)
+│   │   └── de.py             # Deutsche UI-Texte (~980 Keys)
 │   │
 │   ├── layouts/
 │   │   └── gdv_layouts.py    # GDV-Satzart-Definitionen
@@ -202,10 +224,12 @@ python run.py
 │   │   └── gdv_parser.py     # Fixed-Width Parser
 │   │
 │   └── ui/                   # Benutzeroberflaeche
-│       ├── main_hub.py       # Navigation + Drag & Drop
+│       ├── main_hub.py       # Navigation + Drag & Drop + NotificationPoller
+│       ├── message_center_view.py  # Mitteilungszentrale Dashboard (NEU v2.0.0)
+│       ├── chat_view.py      # Vollbild-Chat 1:1 (NEU v2.0.0)
 │       ├── bipro_view.py     # BiPRO Datenabruf + MailImportWorker
 │       ├── archive_boxes_view.py  # Dokumentenarchiv (Box-System)
-│       ├── admin_view.py     # Administration (10 Panels, Sidebar)
+│       ├── admin_view.py     # Administration (11 Panels, Sidebar)
 │       ├── gdv_editor_view.py # GDV-Editor
 │       ├── toast.py          # Toast-Benachrichtigungen + Progress
 │       ├── main_window.py    # GDV Hauptfenster
@@ -215,7 +239,7 @@ python run.py
 │       └── styles/tokens.py  # Design-Tokens (Farben, Fonts)
 │
 ├── BiPro-Webspace Spiegelung Live/  # Server-API (LIVE synchronisiert!)
-│   └── api/                  # PHP REST API (~20 Endpunkte)
+│   └── api/                  # PHP REST API (~23 Endpunkte)
 │       ├── index.php         # Router
 │       ├── lib/              # Shared Libraries (DB, JWT, Permissions)
 │       └── lib/PHPMailer/    # SMTP-Versand
@@ -308,6 +332,16 @@ Proprietär - Nur für internen Gebrauch bei ACENCIA GmbH.
 ---
 
 ## Changelog
+
+### v2.0.0 (11. Februar 2026)
+- **NEU**: Mitteilungszentrale: Dashboard mit System-/Admin-Meldungen, Release-Info, Chat-Button
+- **NEU**: 1:1 Private Chat: Vollbild-View, Lesebestaetigung, Conversation-Liste
+- **NEU**: Notification-Polling: QTimer 30s, Badge + Toast bei neuen Nachrichten
+- **NEU**: Admin-Panel "Mitteilungen" (Panel 10): CRUD fuer System-/Admin-Meldungen
+- **NEU**: 4 neue DB-Tabellen: messages, message_reads, private_conversations, private_messages
+- **NEU**: 3 neue PHP-API-Dateien: messages.php, chat.php, notifications.php
+- **NEU**: 2 neue Python-API-Clients: messages.py, chat.py
+- **NEU**: ~60 neue i18n-Keys (MSG_CENTER_, CHAT_, ADMIN_MSG_)
 
 ### v1.1.4 (10. Februar 2026)
 - **NEU**: App-Schliess-Schutz: Schliessen blockiert bei laufender KI-Verarbeitung, Kosten-Check oder SmartScan-Versand

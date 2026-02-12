@@ -1,8 +1,76 @@
-# Architektur - ACENCIA ATLAS v1.6.0
+# Architektur - ACENCIA ATLAS v2.0.0
 
-**Stand:** 10. Februar 2026
+**Stand:** 11. Februar 2026
 
 **Primaere Referenz: `AGENTS.md`** - Dieses Dokument enthaelt ergaenzende Architektur-Details. Fuer den aktuellen Feature-Stand und Debugging-Tipps siehe `AGENTS.md`.
+
+## Neue Features in v2.0.0 (Mitteilungszentrale)
+
+### Mitteilungszentrale / Communication Hub
+- **Neue Seite**: Erster Eintrag in linker Sidebar (Index 0 im QStackedWidget)
+- **3 Kacheln**: System-/Admin-Mitteilungen (gross), Release-Info (klein), Chats-Button (klein)
+- **System-Mitteilungen**: API-Key-Auth (fuer externe Flows wie Power Automate) ODER JWT-Admin
+- **Per-User Read-Status**: `message_reads`-Tabelle fuer korrekte Badges
+- **Severity-Farben**: info (blau), warning (gelb), error (rot), critical (dunkelrot)
+
+### 1:1 Private Chat
+- **Vollbild-View**: Sidebar wird versteckt (Pattern wie Admin-View)
+- **Conversation-Liste links**: Mit letzter Nachricht + Unread-Badge
+- **Nachrichten rechts**: Message-Bubbles mit Zeitstempel + Lesebestaetigung (Haekchen)
+- **Neuer Chat**: Dialog mit verfuegbaren Nutzern (mit denen noch kein Chat existiert)
+- **Sortierung**: `private_conversations.updated_at` wird serverseitig beim Senden aktualisiert
+
+### Notification-Polling
+- **QTimer im Main-Thread**: Alle 30 Sekunden `GET /notifications/summary`
+- **Lightweight**: Nur 2 COUNT-Queries + optional latest_chat_message
+- **Badge**: Roter Kreis auf "Zentrale"-NavButton mit Summe ungelesener Chats + Meldungen
+- **Toast**: Bei neuer Chat-Nachricht, Klick oeffnet den entsprechenden Chat
+- **Deduplizierung**: `?last_message_ts=X` verhindert wiederholte Toasts
+
+### Admin-Panel "Mitteilungen" (Panel 10)
+- **CRUD**: Neue Mitteilung erstellen (Titel, Beschreibung, Severity), Loeschen
+- **Tabelle**: Alle Mitteilungen mit Zeitstempel, Quelle, Severity
+- **4. Sektion**: "KOMMUNIKATION" in der Admin-Sidebar
+
+### Neue DB-Tabellen (Migration 015)
+| Tabelle | Beschreibung |
+|---------|--------------|
+| `messages` | System- + Admin-Mitteilungen (title, description, severity, source, sender_name) |
+| `message_reads` | Per-User Read-Tracking (PK: message_id + user_id) |
+| `private_conversations` | 1:1 Chat-Konversationen (user1_id < user2_id, UNIQUE) |
+| `private_messages` | Chat-Nachrichten (sender_id, receiver_id, content, read_at) |
+
+### Neue PHP-Endpunkte
+| Endpunkt | Datei | Beschreibung |
+|----------|-------|--------------|
+| GET/POST /messages | messages.php | Mitteilungen CRUD + Bulk-Read |
+| PUT /messages/read | messages.php | Bulk-Read-Markierung |
+| DELETE /messages/{id} | messages.php | Admin-Loeschung |
+| GET/POST /chat/conversations | chat.php | Chat-Liste + Neuen Chat starten |
+| GET/POST /chat/conversations/{id}/messages | chat.php | Nachrichten lesen/senden |
+| PUT /chat/conversations/{id}/read | chat.php | Als gelesen markieren |
+| GET /chat/users | chat.php | Verfuegbare Chat-Partner |
+| GET /notifications/summary | notifications.php | Polling (Unread-Counts + Toast) |
+
+### Neue Python-Dateien
+| Datei | Zeilen | Beschreibung |
+|-------|--------|--------------|
+| `src/ui/message_center_view.py` | ~639 | Dashboard mit 3 Kacheln + LoadMessagesWorker + LoadReleasesWorker |
+| `src/ui/chat_view.py` | ~739 | Vollbild-Chat + LoadConversationsWorker + SendMessageWorker |
+| `src/api/messages.py` | ~143 | MessagesAPI Client (CRUD + Polling) |
+| `src/api/chat.py` | ~153 | ChatAPI Client (Conversations + Messages) |
+
+### QStackedWidget-Indizes (main_hub.py)
+| Index | View | Beschreibung |
+|-------|------|--------------|
+| 0 | Mitteilungszentrale | Dashboard (NEU v2.0.0) |
+| 1 | BiPRO | Datenabruf + Mail-Import |
+| 2 | Archiv | Dokumentenarchiv mit Boxen |
+| 3 | GDV | Editor |
+| 4 | Admin | Vollbild mit eigener Sidebar |
+| 5 | Chat | Vollbild mit eigener Sidebar (NEU v2.0.0) |
+
+---
 
 ## Neue Features in v1.1.4 (App-Schliess-Schutz)
 
@@ -185,10 +253,16 @@ ACENCIA ATLAS ist eine Desktop-Anwendung mit Server-Backend. Es folgt einer mehr
 │                           UI Layer                                          │
 │  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────────────────┐│
 │  │ main_hub.py │ │bipro_view.py│ │archive_boxes│ │    admin_view.py        ││
-│  │ Navigation  │ │ BiPRO-Abruf │ │ _view.py    │ │   10 Admin-Panels       ││
+│  │ Navigation  │ │ BiPRO-Abruf │ │ _view.py    │ │   11 Admin-Panels       ││
 │  │ Drag&Drop   │ │ MailImport  │ │ Smart!Scan  │ │   Sidebar-Navigation    ││
-│  │ toast.py    │ │ VU-Verwalt. │ │ PDF-Preview │ │                         ││
+│  │ NotiPoller  │ │ VU-Verwalt. │ │ PDF-Preview │ │                         ││
+│  │ toast.py    │ │             │ │             │ │                         ││
 │  └──────┬──────┘ └──────┬──────┘ └──────┬──────┘ └───────────┬─────────────┘│
+│  ┌─────────────────┐ ┌─────────────┐                                        │
+│  │message_center   │ │ chat_view   │   NEU v2.0.0                           │
+│  │ _view.py        │ │ .py         │                                        │
+│  │ Dashboard       │ │ 1:1 Chat    │                                        │
+│  └──────┬──────────┘ └──────┬──────┘                                        │
 │         │               │               │                     │              │
 │         │    ┌──────────┘               │        ┌────────────┘              │
 │         │    │  ┌───────────────────────┘        │                           │
@@ -230,17 +304,40 @@ ACENCIA ATLAS ist eine Desktop-Anwendung mit Server-Backend. Es folgt einer mehr
 
 ### 1. UI Layer (`src/ui/`)
 
-#### main_hub.py (~1145 Zeilen)
+#### main_hub.py (~1324 Zeilen)
 Zentrales Navigationselement:
-- Sidebar mit Bereichen (BiPRO, Archiv, GDV-Editor, Admin)
+- Sidebar mit Bereichen (Zentrale, BiPRO, Archiv, GDV-Editor, Admin)
 - Benutzeranzeige und Logout
-- Routing zwischen Views
+- Routing zwischen Views via QStackedWidget (6 Indizes: Zentrale, BiPRO, Archiv, GDV, Admin, Chat)
 - **Globales Drag & Drop**: Dateien/Ordner/Outlook-Mails per Drag & Drop hochladen
 - **DropUploadWorker**: QThread fuer nicht-blockierenden Upload
 - **Admin-Modus**: Haupt-Sidebar ausblenden, Admin-Sidebar einblenden
+- **Chat-Modus**: Haupt-Sidebar ausblenden (wie Admin), `_show_chat()` / `_leave_chat()`
+- **NotificationPoller**: QTimer alle 30s, `GET /notifications/summary`, Badge + Toast (NEU v2.0.0)
+- **Notification-Badge**: Roter Kreis auf "Zentrale"-Button mit Unread-Count
 - **Permission Guards**: Buttons basierend auf Nutzerrechten aktivieren/deaktivieren
 - **Periodischer UpdateCheckWorker** (30 Min Timer)
 - **Schliess-Schutz**: `closeEvent()` prueft auf blockierende Operationen in ArchiveBoxesView vor dem Beenden
+
+#### message_center_view.py (~639 Zeilen) - NEU v2.0.0
+Mitteilungszentrale Dashboard:
+- **3 Kacheln**: System-/Admin-Mitteilungen (gross), Release-Info (klein), Chats-Button (klein)
+- **LoadMessagesWorker**: Laedt Mitteilungen im Hintergrund
+- **LoadReleasesWorker**: Laedt Releases fuer Release-Kachel
+- **Severity-Farben**: info/warning/error/critical mit passenden Hintergrundfarben
+- **Read-Markierung**: Beim Oeffnen werden alle sichtbaren Mitteilungen als gelesen markiert
+- **Signal `open_chat_requested`**: Verbindet "Chats oeffnen" Button mit MainHub
+
+#### chat_view.py (~739 Zeilen) - NEU v2.0.0
+Vollbild-Chat fuer 1:1 Nachrichten:
+- **ConversationItem**: Custom QFrame fuer Chat-Liste (Avatar, Name, letzte Nachricht, Unread-Badge)
+- **MessageBubble**: Custom QFrame fuer Nachrichten (eigene rechts/blau, fremde links/grau, Lesebestaetigung)
+- **LoadConversationsWorker**: Laedt Chat-Liste
+- **LoadChatMessagesWorker**: Laedt Nachrichten eines Chats
+- **SendMessageWorker**: Sendet Nachricht asynchron
+- **LoadUsersWorker**: Laedt verfuegbare Chat-Partner fuer "Neuer Chat"
+- **Auto-Scroll**: Scrollt nach unten bei neuen Nachrichten
+- **Signal `back_requested`**: Verbindet "Zurueck" Button mit MainHub
 
 #### bipro_view.py (~4900 Zeilen)
 BiPRO-Datenabruf UI:
@@ -278,13 +375,14 @@ Dokumentenarchiv mit Box-System:
 - **Duplikat-Spalte**: Warn-Icon bei erkannten Duplikaten mit Tooltip zum Original
 - **Schliess-Schutz**: `get_blocking_operations()` verhindert App-Schliessung bei laufenden kritischen Workern
 
-#### admin_view.py (~4000 Zeilen) - Redesign v1.0.9
+#### admin_view.py (~4292 Zeilen) - Redesign v1.0.9, erweitert v2.0.0
 Administration mit vertikaler Sidebar:
 - **AdminNavButton**: Custom-Styling, monochrome Icons, orangene Trennlinien
-- **QStackedWidget**: 10 Panels in 3 Sektionen
+- **QStackedWidget**: 11 Panels in 4 Sektionen
   - VERWALTUNG: Nutzerverwaltung, Sessions, Passwoerter (0-2)
   - MONITORING: Aktivitaetslog, KI-Kosten, Releases (3-5)
   - E-MAIL: E-Mail-Konten, SmartScan-Settings, SmartScan-Historie, IMAP Inbox (6-9)
+  - KOMMUNIKATION: Mitteilungen (10) **NEU v2.0.0**
 - **"Zurueck zur App" Button**: Verlassen des Admin-Bereichs
 
 #### toast.py (~558 Zeilen)
@@ -332,6 +430,8 @@ Dokumenten-Operationen mit Box-Support:
 | `auth.py` | Login, User-Model mit Permissions | ~150 |
 | `vu_connections.py` | VU-Verbindungsverwaltung | ~350 |
 | `admin.py` | Nutzerverwaltung (Admin) | ~200 |
+| `messages.py` | **Mitteilungen + Notification-Polling (NEU v2.0.0)** | ~143 |
+| `chat.py` | **1:1 Chat-Nachrichten (NEU v2.0.0)** | ~153 |
 | `smartscan.py` | SmartScan + EmailAccounts | ~350 |
 | `openrouter.py` | KI-Klassifikation (zweistufig) | ~900 |
 | `passwords.py` | Passwort-Verwaltung | ~80 |
@@ -573,6 +673,12 @@ def map_parsed_file_to_gdv_data(parsed_file: ParsedFile) -> GDVData:
 
 ```
 UI Layer
+    ├── main_hub.py ──────▶ api/messages.py (NotificationPoller)
+    │               ──────▶ api/chat.py (Chat-Navigation)
+    │
+    ├── message_center_view.py ▶ api/messages.py, api/releases.py
+    ├── chat_view.py ─────▶ api/chat.py
+    │
     ├── bipro_view.py ────▶ api/vu_connections.py
     │                 ────▶ api/documents.py
     │                 ────▶ bipro/transfer_service.py
@@ -589,8 +695,9 @@ Service Layer
     └── parser/*.py ──────▶ Lokales Dateisystem
 
 External
-    ├── Strato Webspace (PHP API, MySQL, Files)
-    ├── BiPRO Services (Degenia: 410 STS, 430 Transfer)
+    ├── Strato Webspace (PHP API, MySQL, Files, ~23 Endpunkte)
+    ├── BiPRO Services (Degenia, VEMA: 410 STS, 430 Transfer)
+    ├── OpenRouter KI (GPT-4o/4o-mini fuer Klassifikation)
     └── Lokale GDV-Dateien
 ```
 
@@ -629,6 +736,16 @@ External
 | | GET /admin/activity | activity.php | Aktivitaetslog |
 | | GET /admin/passwords | passwords.php | Passwort-CRUD |
 | | GET /admin/releases | releases.php | Release-Verwaltung |
+| **Mitteilungen** | GET /messages | messages.php | Alle Mitteilungen (paginiert, Read-Status) |
+| | POST /messages | messages.php | Neue Mitteilung (API-Key oder Admin) |
+| | PUT /messages/read | messages.php | Bulk-Read-Markierung |
+| | DELETE /messages/{id} | messages.php | Admin-Loeschung |
+| **Chat** | GET /chat/conversations | chat.php | Eigene Chats (Unread-Count) |
+| | POST /chat/conversations | chat.php | Neuen 1:1 Chat starten |
+| | GET/POST .../messages | chat.php | Nachrichten lesen/senden |
+| | PUT .../read | chat.php | Als gelesen markieren |
+| | GET /chat/users | chat.php | Verfuegbare Chat-Partner |
+| **Notifications** | GET /notifications/summary | notifications.php | Polling (Unread-Counts + Toast) |
 | **System** | GET /updates/check | releases.php | Update-Check (Public) |
 | | POST /incoming-scans | incoming_scans.php | Scan-Upload (API-Key) |
 | | GET /ai/key | ai.php | OpenRouter API-Key |
@@ -680,6 +797,23 @@ processing_history (
 
 -- Audit-Log
 audit_log (id, user_id, action, entity_type, entity_id, details, created_at)
+
+-- Mitteilungszentrale (v2.0.0)
+messages (
+    id, title, description, severity,          -- info, warning, error, critical
+    source, sender_name, created_at, expires_at
+)
+message_reads (message_id, user_id, read_at)   -- PK: (message_id, user_id)
+
+-- Private Chat (v2.0.0)
+private_conversations (
+    id, user1_id, user2_id,                     -- UNIQUE (user1_id, user2_id), user1 < user2
+    created_at, updated_at                      -- updated_at: serverseitig bei neuer Nachricht
+)
+private_messages (
+    id, conversation_id, sender_id, receiver_id,
+    content, created_at, read_at                -- read_at NULL = ungelesen
+)
 ```
 
 ---
@@ -717,7 +851,7 @@ CATEGORY_NAMES["123456789"] = "Neue Kategorie"
 - **UI-Texte**: Groesstenteils in i18n/de.py, einige Hardcoded Strings verbleiben
 - **Speicherverbrauch**: Alle Records/Dokumente im Speicher (kein Lazy Loading)
 - **VU-spezifisch**: BiPRO-Flow variiert je VU (Degenia, VEMA haben eigene Logik)
-- **Grosse Dateien**: bipro_view.py (~4950), archive_boxes_view.py (~5380), admin_view.py (~4000) → Aufteilen geplant
+- **Grosse Dateien**: bipro_view.py (~4900), archive_boxes_view.py (~5380), admin_view.py (~4290), main_hub.py (~1324) → Aufteilen geplant
 
 ## Unterstützte VUs
 

@@ -53,15 +53,17 @@ Die Datei `BiPro-Webspace Spiegelung Live/api/config.php` enthält:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                         ACENCIA ATLAS v1.6.0                                │
+│                         ACENCIA ATLAS v2.0.0                                │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │  Desktop-App (PySide6/Qt)                         Strato Webspace           │
 │  ├── UI Layer                                     ├── PHP REST API          │
-│  │   ├── main_hub.py (Navigation+DragDrop)        │   ├── auth.php          │
+│  │   ├── main_hub.py (Navigation+DragDrop+Poller) │   ├── auth.php          │
+│  │   ├── message_center_view.py (Mitteilungen) ✅ │   ├── messages.php      │
+│  │   ├── chat_view.py (1:1 Chat Vollbild) ✅     │   ├── chat.php          │
 │  │   ├── bipro_view.py (BiPRO+MailImport) ✅      │   ├── documents.php     │
 │  │   ├── archive_boxes_view.py (Archiv) ✅        │   ├── gdv.php           │
 │  │   ├── gdv_editor_view.py (GDV-Editor)          │   ├── credentials.php   │
-│  │   ├── admin_view.py (Admin, 10 Panels) ✅      │   ├── admin.php         │
+│  │   ├── admin_view.py (Admin, 11 Panels) ✅      │   ├── admin.php         │
 │  │   ├── update_dialog.py (Auto-Update) ✅        │   ├── sessions.php      │
 │  │   ├── toast.py (Toast+ProgressToast)           │   ├── activity.php      │
 │  │   ├── partner_view.py                          │   ├── releases.php      │
@@ -73,7 +75,9 @@ Die Datei `BiPro-Webspace Spiegelung Live/api/config.php` enthält:
 │  │   ├── src/api/client.py                        ├── Dokumente-Storage     │
 │  │   ├── src/api/documents.py                     └── Releases-Storage      │
 │  │   ├── src/api/admin.py (Admin-API)                                       │
-│  │   ├── src/api/releases.py (NEU: Releases-API)                            │
+│  │   ├── src/api/messages.py (Mitteilungen-API) **NEU v2.0.0**             │
+│  │   ├── src/api/chat.py (Chat-API) **NEU v2.0.0**                        │
+│  │   ├── src/api/releases.py (Releases-API)                                │
 │  │   └── src/api/vu_connections.py                                          │
 │  ├── BiPRO SOAP Client ✅ FUNKTIONIERT                                      │
 │  │   ├── src/bipro/transfer_service.py (STS + Transfer + SharedTokenManager)│
@@ -92,6 +96,7 @@ Die Datei `BiPro-Webspace Spiegelung Live/api/config.php` enthält:
 │  1. Desktop ←→ PHP-API ←→ MySQL/Dateien (Archiv, Auth, VU-Verbindungen)     │
 │  2. Desktop → BiPRO SOAP → Versicherer (STS-Token + Transfer-Service)       │
 │  3. BiPRO-Dokumente → Automatisch ins Dokumentenarchiv (via API)            │
+│  4. Desktop ←→ PHP-API (Messages, Chat, Notifications) **NEU v2.0.0**      │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -373,13 +378,16 @@ Die Datei `BiPro-Webspace Spiegelung Live/api/config.php` enthält:
 - **Kontotypen**: Administrator (alle Rechte) und Benutzer (granulare Rechte)
 - **10 Berechtigungen**: vu_connections_manage, bipro_fetch, documents_manage, documents_delete, documents_upload, documents_download, documents_process, documents_history, gdv_edit, smartscan_send
 - **Session-Tracking**: Server-seitige Sessions-Tabelle, Admin kann Sessions einsehen/beenden
+- **Single-Session-Enforcement**: Pro Nutzer nur eine aktive Session erlaubt, bei Neuanmeldung werden alle bestehenden Sessions automatisch beendet
+- **JWT-Gueltigkeit**: 30 Tage (1 Monat), Token + Session laufen nach 30 Tagen ab
 - **Activity-Logging**: Jede API-Aktion wird in activity_log-Tabelle geloggt
 - **Admin-UI (Redesign v1.0.9)**: Vollbild-Ansicht mit vertikaler Sidebar statt horizontaler Tabs
   - Beim Wechsel in Admin verschwindet die Haupt-Sidebar (BiPRO, Archiv, GDV)
-  - Vertikale Navigation links mit 3 Sektionen, getrennt durch orangene Linien:
+  - Vertikale Navigation links mit 4 Sektionen, getrennt durch orangene Linien:
     - **VERWALTUNG**: Nutzerverwaltung, Sessions, Passwoerter (Panels 0-2)
     - **MONITORING**: Aktivitaetslog, KI-Kosten, Releases (Panels 3-5)
     - **E-MAIL**: E-Mail-Konten, SmartScan-Einstellungen, SmartScan-Historie, E-Mail-Posteingang (Panels 6-9)
+    - **KOMMUNIKATION**: Mitteilungen (Panel 10) **NEU v2.0.0**
   - Monochrome `›` Icons in ACENCIA Corporate Design
   - `AdminNavButton` mit Custom-Styling (Primary-900 Hintergrund)
   - "Zurueck zur App" Button oben in der Sidebar
@@ -392,7 +400,7 @@ Die Datei `BiPro-Webspace Spiegelung Live/api/config.php` enthält:
   - `BiPro-Webspace Spiegelung Live/api/activity.php` → Aktivitaetslog (nur Admins)
   - `BiPro-Webspace Spiegelung Live/setup/migration_admin.php` → DB-Migration
   - `src/api/admin.py` → AdminAPI Client
-  - `src/ui/admin_view.py` → Admin-View mit vertikaler Sidebar + QStackedWidget (10 Panels)
+  - `src/ui/admin_view.py` → Admin-View mit vertikaler Sidebar + QStackedWidget (11 Panels)
   - `src/ui/main_hub.py` → `_show_admin()` versteckt Haupt-Sidebar, `_leave_admin()` zeigt sie wieder
   - `src/api/auth.py` → User-Model mit account_type, permissions, has_permission()
   - `src/i18n/de.py` → ~80 Admin-/Permission-Texte
@@ -526,6 +534,8 @@ Die Datei `BiPro-Webspace Spiegelung Live/api/config.php` enthält:
   - Multi-Selection: Farbe fuer mehrere Dokumente gleichzeitig setzen
   - Tabellenzeilen erhalten blasse Hintergrundfarbe
   - "Farbe entfernen" Option wenn Dokument bereits gefaerbt
+  - **Async via DocumentColorWorker** (QThread): Bulk-API-Call blockiert nicht den UI-Thread
+  - **Inkrementeller Tabellen-Refresh**: `_update_row_colors()` aktualisiert nur betroffene Zeilen statt Full-Rebuild
 - **API**:
   - `PUT /documents/{id}` mit `display_color` Feld
   - `POST /documents/colors` fuer Bulk-Farbmarkierung (analog /documents/archive)
@@ -829,6 +839,34 @@ Die Datei `BiPro-Webspace Spiegelung Live/api/config.php` enthält:
   - `src/ui/main_hub.py` → `closeEvent()` erweitert um Blocking-Check
   - `src/i18n/de.py` → CLOSE_BLOCKED_* Keys (4 Stueck)
 
+### 2x. Mitteilungszentrale / Communication Hub ✅ (v2.0.0)
+- **Zweck**: Zentrales Kommunikations- und Informationsportal in der App
+- **Position**: Neue Seite in linker Sidebar VOR BiPRO (Index 0)
+- **3 Bereiche**:
+  1. **System- & Admin-Mitteilungen** (grosse Kachel): Automatische Systemmeldungen (z.B. Scan-Fehler via API-Key) und Admin-Announcements, Severity-Farben, Read-Status pro User
+  2. **Release-Info** (kleine Kachel): Aktuelle Version + Release Notes, expandierbar zu allen Releases
+  3. **Nachrichten / 1:1 Chat** (Button → Vollbild): Private Chats zwischen Nutzern, Lesebestaetigung (✓✓), Unread-Badge
+- **Polling**: QTimer alle 30s im Main-Thread (KEIN QThread), `GET /notifications/summary`
+- **Badge**: Roter Kreis auf "Zentrale"-Button mit Summe aus ungelesenen Chats + System-Meldungen
+- **Toast**: Bei neuer Chat-Nachricht Toast mit "Neue Nachricht von ..." + Klick-Aktion zum Chat
+- **Chat-Vollbild**: Sidebar wird versteckt (wie Admin), Conversation-Liste links, Nachrichten rechts
+- **Admin-Panel**: Neues Panel 10 "Mitteilungen" in Admin-View (CRUD)
+- **Sicherheit**: Content-Escaping (htmlspecialchars), Laengenlimits, Autorisierung (nur eigene Chats), kein HTML/Markdown
+- **DB-Tabellen**: `messages`, `message_reads`, `private_conversations`, `private_messages`
+- **Dateien**:
+  - `BiPro-Webspace Spiegelung Live/api/messages.php` → Mitteilungen API (GET/POST/PUT/DELETE)
+  - `BiPro-Webspace Spiegelung Live/api/chat.php` → Chat API (Conversations + Messages + Read)
+  - `BiPro-Webspace Spiegelung Live/api/notifications.php` → Leichtgewichtiger Polling-Endpoint
+  - `BiPro-Webspace Spiegelung Live/api/index.php` → 3 neue Route-Cases
+  - `BiPro-Webspace Spiegelung Live/setup/015_message_center.php` → DB-Migration (4 Tabellen)
+  - `src/api/messages.py` → MessagesAPI Client
+  - `src/api/chat.py` → ChatAPI Client
+  - `src/ui/message_center_view.py` → Dashboard-View (3 Kacheln)
+  - `src/ui/chat_view.py` → Vollbild-Chat-View
+  - `src/ui/main_hub.py` → NavButton + Badge + NotificationPoller + Chat-Sidebar-Hide
+  - `src/ui/admin_view.py` → Panel 10 Mitteilungen
+  - `src/i18n/de.py` → ~60 neue Keys (MSG_CENTER_, CHAT_, ADMIN_MSG_)
+
 ### 3. Datei öffnen/speichern
 - **Dateitypen**: *.gdv, *.txt, *.dat, *.vwb
 - **Encoding**: CP1252 (Standard), Latin-1, UTF-8 (Fallback)
@@ -946,7 +984,7 @@ Degenia liefert Dokumente als MTOM (Message Transmission Optimization Mechanism)
 
 ---
 
-## Aktueller Stand (10. Februar 2026)
+## Aktueller Stand (11. Februar 2026)
 
 ### Implementiert ✅
 - ✅ GDV-Dateien öffnen/parsen/speichern
@@ -1024,6 +1062,8 @@ Degenia liefert Dokumente als MTOM (Message Transmission Optimization Mechanism)
 - ✅ **processing_status='manual_excluded' in PHP State-Machine + Python-Client (v0.9.5)**
 - ✅ **Admin-/Rechte-System: 9 granulare Berechtigungen (inkl. smartscan_send), Admin/Benutzer-Kontotypen (v0.9.6+)**
 - ✅ **Server-seitiges Session-Tracking mit sessions-Tabelle (v0.9.6)**
+- ✅ **Single-Session-Enforcement: Pro Nutzer nur eine aktive Session, alte werden bei Login beendet (v2.0.0)**
+- ✅ **JWT-Gueltigkeit auf 30 Tage (1 Monat) erhoeht, vorher 8 Stunden (v2.0.0)**
 - ✅ **Umfassendes Activity-Logging: activity_log-Tabelle fuer jede API-Aktion (v0.9.6)**
 - ✅ **Permission-Middleware: requirePermission() + requireAdmin() in PHP (v0.9.6)**
 - ✅ **AdminView: 3-Tab-UI (Nutzerverwaltung, Sessions, Aktivitaetslog) (v0.9.6)**
@@ -1158,6 +1198,13 @@ Degenia liefert Dokumente als MTOM (Message Transmission Optimization Mechanism)
 - ✅ **Ungespeicherte-Aenderungen-Warnung beim Schliessen des PDF-Editors (v1.1.3)**
 - ✅ **i18n: ~14 neue PDF_EDIT_* Keys fuer PDF-Bearbeitung (v1.1.3)**
 - ✅ **App-Schließ-Schutz: Schliessen blockiert bei laufender KI-Verarbeitung/Kosten-Check/SmartScan (v1.1.4)**
+- ✅ **Mitteilungszentrale: Dashboard mit System/Admin-Meldungen, Release-Info, Chat-Button (v2.0.0)**
+- ✅ **System-Mitteilungen: API-Key oder Admin-Auth, Severity-Farben, per-User Read-Status (v2.0.0)**
+- ✅ **1:1 Chat: Private Nachrichten zwischen Nutzern, Lesebestaetigung, Vollbild-View (v2.0.0)**
+- ✅ **Notification-Polling: QTimer 30s im Main-Thread, Badge + Toast bei neuen Nachrichten (v2.0.0)**
+- ✅ **Admin Mitteilungen-Panel: Erstellen, Loeschen, Tabelle mit allen Mitteilungen (v2.0.0)**
+- ✅ **DB: 4 neue Tabellen (messages, message_reads, private_conversations, private_messages) (v2.0.0)**
+- ✅ **i18n: ~60 neue Keys (MSG_CENTER_, CHAT_, ADMIN_MSG_) (v2.0.0)**
 - ✅ **get_blocking_operations(): Neue Methode in ArchiveBoxesView prueft blockierende Worker (v1.1.4)**
 - ✅ **MainHub.closeEvent(): Blocking-Check vor GDV-Check, Toast-Warnung bei Block (v1.1.4)**
 - ✅ **i18n: 4 neue CLOSE_BLOCKED_* Keys fuer Schliess-Schutz (v1.1.4)**
@@ -1172,14 +1219,16 @@ Degenia liefert Dokumente als MTOM (Message Transmission Optimization Mechanism)
 
 ### Tech Debt
 - `bipro_view.py` ist sehr gross (~4900+ Zeilen) → Aufteilen: ParallelDownloadManager + MailImportWorker in eigene Dateien
-- `archive_boxes_view.py` ist sehr gross (~4600+ Zeilen) → SmartScanWorker, BoxDownloadWorker in eigene Dateien
-- `admin_view.py` ist sehr gross (~4000+ Zeilen) → 10 Panels in separate Dateien aufteilen
+- `archive_boxes_view.py` ist sehr gross (~5380+ Zeilen) → SmartScanWorker, BoxDownloadWorker in eigene Dateien
+- `admin_view.py` ist sehr gross (~4290+ Zeilen) → 11 Panels in separate Dateien aufteilen
+- `main_hub.py` ist gewachsen (~1324 Zeilen) → NotificationPoller + DropUploadWorker auslagern
 - `main_window.py` ist zu gross (~1060 Zeilen) → Aufteilen
 - `openrouter.py` ist gross (~1760+ Zeilen) → Triage/Klassifikation separieren
 - `partner_view.py` enthaelt viel Datenextraktion → nach `domain/` verschieben
 - Inline-Styles in Qt (gegen User-Rule) → CSS-Module einfuehren
 - MTOM-Parser in `bipro_view.py` ist Duplikat von `transfer_service.py` → Konsolidieren
 - `QFont::setPointSize: Point size <= 0 (-1)` Warnings beim Start → Font-Initialisierung pruefen
+- Chat-Polling (30s) erzeugt bei vielen Nutzern Last → WebSocket-Migration in Phase 2 geplant
 
 ---
 
@@ -1322,7 +1371,9 @@ python test_roundtrip.py
 | `src/parser/gdv_parser.py` | Parser (parse_file, save_file) |
 | `src/layouts/gdv_layouts.py` | Satzart-Definitionen |
 | `src/domain/models.py` | Domain-Klassen |
-| `src/ui/main_hub.py` | Navigation zwischen Bereichen + Schliess-Schutz (~1145 Zeilen) |
+| `src/ui/main_hub.py` | Navigation zwischen Bereichen + Schliess-Schutz + NotificationPoller (~1324 Zeilen) |
+| `src/ui/message_center_view.py` | **Mitteilungszentrale Dashboard (3 Kacheln) NEU v2.0.0** |
+| `src/ui/chat_view.py` | **Vollbild-Chat-View (1:1 Nachrichten) NEU v2.0.0** |
 | `src/ui/main_window.py` | GDV-Editor Hauptfenster |
 | `src/ui/partner_view.py` | Partner-Übersicht |
 | `src/ui/bipro_view.py` | **BiPRO UI (~4900 Zeilen) (VU-Verwaltung, ParallelDownloadManager, MailImportWorker)** |
@@ -1354,13 +1405,15 @@ python test_roundtrip.py
 | `src/api/releases.py` | **ReleasesAPI Client (Admin CRUD + Public Check)** |
 | `src/api/passwords.py` | **PasswordsAPI Client (Passwort-Verwaltung) NEU v1.0.5** |
 | `src/api/smartscan.py` | **SmartScanAPI + EmailAccountsAPI Clients (NEU v1.0.6)** |
+| `src/api/messages.py` | **MessagesAPI Client (Mitteilungen + Polling) NEU v2.0.0** |
+| `src/api/chat.py` | **ChatAPI Client (1:1 Chat-Nachrichten) NEU v2.0.0** |
 | `src/api/auth.py` | **AuthAPI Client (Login, User-Model mit Permissions)** |
 | `src/api/gdv_api.py` | **GDV API Client (GDV-Dateien server-seitig parsen/speichern)** |
 | `src/api/xml_index.py` | **XML-Index API Client (BiPRO-XML-Rohdaten-Index)** |
 | `src/api/smartadmin_auth.py` | **SmartAdmin-Authentifizierung (SAML-Token, 47 VUs, ~640 Zeilen)** |
 | `src/config/smartadmin_endpoints.py` | **SmartAdmin VU-Endpunkte (47 Versicherer, Auth-Typen)** |
 | `src/config/certificates.py` | **Zertifikat-Manager (PFX/P12, X.509)** |
-| `src/i18n/de.py` | **Zentrale i18n-Datei (~910 Keys: CLOSE_BLOCKED_, DUPLICATE_, SHORTCUT_, SMARTSCAN_, EMAIL_, etc.)** |
+| `src/i18n/de.py` | **Zentrale i18n-Datei (~980 Keys: MSG_CENTER_, CHAT_, ADMIN_MSG_, CLOSE_BLOCKED_, DUPLICATE_, SHORTCUT_, SMARTSCAN_, EMAIL_, etc.)** |
 | `VERSION` | **Zentrale Versionsdatei (Single Source of Truth)** |
 | `BIPRO_STATUS.md` | Aktueller Stand der BiPRO-Integration |
 
@@ -1383,6 +1436,9 @@ python test_roundtrip.py
 | `→ api/passwords.php` | **Passwort-Verwaltung (PDF/ZIP) Public + Admin (NEU v1.0.5)** |
 | `→ api/smartscan.php` | **SmartScan Settings + Send + Chunk + Historie (NEU v1.0.6)** |
 | `→ api/email_accounts.php` | **E-Mail-Konten CRUD + SMTP-Test + IMAP-Polling (NEU v1.0.6)** |
+| `→ api/messages.php` | **Mitteilungen API (System + Admin, Read-Status) NEU v2.0.0** |
+| `→ api/chat.php` | **1:1 Chat API (Conversations, Messages, Read) NEU v2.0.0** |
+| `→ api/notifications.php` | **Leichtgewichtiger Polling-Endpoint (Unread-Counts + Toast) NEU v2.0.0** |
 | `→ api/xml_index.php` | **XML-Index fuer BiPRO-Rohdaten (CRUD + Suche)** |
 | `→ api/lib/PHPMailer/` | **PHPMailer v6.9.3 (3 Dateien, SMTP-Versand) (NEU v1.0.6)** |
 | `→ releases/` | **Release-Dateien Storage (Installer-EXEs)** |

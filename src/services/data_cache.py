@@ -108,6 +108,10 @@ class DataCacheService(QObject):
         # Background-Worker laeuft?
         self._refresh_in_progress = False
         
+        # BUG-0036 Fix: Thread-sicherer Shadow-Wert fuer Timer-Status
+        # (QTimer.isActive() darf nur aus dem Owner-Thread aufgerufen werden)
+        self._auto_refresh_active = False
+        
         # Pause-Zaehler fuer verschachtelte Pause-Aufrufe
         # (z.B. wenn BiPRO-Download UND Verarbeitung gleichzeitig laufen)
         self._pause_count = 0
@@ -400,11 +404,13 @@ class DataCacheService(QObject):
         """
         self._auto_refresh_interval = interval_seconds
         self._auto_refresh_timer.start(interval_seconds * 1000)
+        self._auto_refresh_active = True  # BUG-0036 Fix: Shadow-Flag
         logger.info(f"Auto-Refresh gestartet: alle {interval_seconds} Sekunden")
     
     def stop_auto_refresh(self):
         """Stoppt den Auto-Refresh Timer."""
         self._auto_refresh_timer.stop()
+        self._auto_refresh_active = False  # BUG-0036 Fix: Shadow-Flag
         logger.info("Auto-Refresh gestoppt")
     
     def pause_auto_refresh(self):
@@ -432,6 +438,7 @@ class DataCacheService(QObject):
         # Timer-Stop ausserhalb Lock (Main-Thread QTimer Operation)
         if should_stop and self._was_running_before_pause:
             self._auto_refresh_timer.stop()
+            self._auto_refresh_active = False  # BUG-0036 Fix: Shadow-Flag
             logger.info("Auto-Refresh pausiert")
     
     def resume_auto_refresh(self):
@@ -450,6 +457,7 @@ class DataCacheService(QObject):
         # Timer-Start ausserhalb Lock (Main-Thread QTimer Operation)
         if should_resume:
             self._auto_refresh_timer.start(self._auto_refresh_interval * 1000)
+            self._auto_refresh_active = True  # BUG-0036 Fix: Shadow-Flag
             logger.info("Auto-Refresh fortgesetzt")
     
     def is_auto_refresh_paused(self) -> bool:
@@ -510,7 +518,10 @@ class DataCacheService(QObject):
             self.stats_updated.emit()
             
             # VU-Verbindungen
-            if self._connections_cache:
+            # BUG-0020 Fix: _connections_cache nur unter Lock lesen
+            with self._cache_lock:
+                has_connections = self._connections_cache is not None
+            if has_connections:
                 self._load_connections()
                 self.connections_updated.emit()
             
@@ -559,13 +570,17 @@ class DataCacheService(QObject):
         return None
     
     def get_cache_info(self) -> Dict[str, Any]:
-        """Gibt Cache-Status-Informationen zurueck (fuer Debug)."""
+        """Gibt Cache-Status-Informationen zurueck (fuer Debug).
+        
+        BUG-0036 Fix: Nutzt Shadow-Flag statt QTimer.isActive(),
+        da QTimer nur im Owner-Thread abgefragt werden darf.
+        """
         with self._cache_lock:
             return {
                 'documents_cached': list(self._documents_cache.keys()),
                 'stats_cached': self._stats_cache is not None,
                 'connections_cached': self._connections_cache is not None,
-                'auto_refresh_active': self._auto_refresh_timer.isActive(),
+                'auto_refresh_active': self._auto_refresh_active,
                 'auto_refresh_interval': self._auto_refresh_interval,
             }
     

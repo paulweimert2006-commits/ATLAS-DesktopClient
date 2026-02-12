@@ -134,7 +134,7 @@ class LoginDialog(QDialog):
         layout.addLayout(form_layout)
         
         # Angemeldet bleiben
-        self.remember_check = QCheckBox("Angemeldet bleiben (8 Stunden)")
+        self.remember_check = QCheckBox("Angemeldet bleiben (30 Tage)")
         layout.addWidget(self.remember_check)
         
         # Progress Bar (versteckt)

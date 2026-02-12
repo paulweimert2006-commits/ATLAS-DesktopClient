@@ -330,6 +330,10 @@ function validateAndResolveMimeType(string $fileName, string $contentType): stri
         'jpg'  => 'image/jpeg',
         'jpeg' => 'image/jpeg',
         'png'  => 'image/png',
+        'xlsx' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'xls'  => 'application/vnd.ms-excel',
+        'csv'  => 'text/csv',
+        'tsv'  => 'text/plain',
     ];
     
     // Extension ermitteln

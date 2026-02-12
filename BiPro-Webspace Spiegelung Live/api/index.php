@@ -188,10 +188,13 @@ try {
             break;
         
         case 'releases':
-            // Oeffentlicher Download-Endpoint
             require_once __DIR__ . '/releases.php';
             if ($action === 'download' && !empty($id) && is_numeric($id)) {
+                // Oeffentlicher Download-Endpoint
                 handleReleaseDownload((int)$id);
+            } elseif (empty($action) && $method === 'GET') {
+                // Oeffentliche Release-Liste (fuer Mitteilungszentrale)
+                handlePublicReleasesList();
             } else {
                 json_error('Unbekannte Releases-Aktion', 404);
             }
@@ -202,6 +205,28 @@ try {
             // Auth: API-Key im Header X-API-Key (kein JWT)
             require_once __DIR__ . '/incoming_scans.php';
             handleIncomingScansRequest($method);
+            break;
+        
+        case 'messages':
+            // Mitteilungszentrale: System- und Admin-Mitteilungen
+            // GET /messages, POST /messages, PUT /messages/read, DELETE /messages/{id}
+            require_once __DIR__ . '/messages.php';
+            handleMessagesRequest($action ?: '', $method);
+            break;
+        
+        case 'chat':
+            // Private 1:1 Chat-Nachrichten
+            // /chat/conversations, /chat/conversations/{id}/messages, /chat/users
+            require_once __DIR__ . '/chat.php';
+            $chatSub = $parts[3] ?? null;
+            handleChatRequest($action ?: '', $id ?: '', $method, $chatSub);
+            break;
+        
+        case 'notifications':
+            // Leichtgewichtiger Polling-Endpoint (alle 30s)
+            // GET /notifications/summary
+            require_once __DIR__ . '/notifications.php';
+            handleNotificationsRequest($action ?: '', $method);
             break;
             
         default:

@@ -2,7 +2,7 @@
 ; Erstellt einen professionellen Windows Installer
 
 #define MyAppName "ACENCIA ATLAS"
-#define MyAppVersion "1.6.0"
+#define MyAppVersion "2.0.1"
 #define MyAppPublisher "ACENCIA GmbH"
 #define MyAppURL "https://acencia.info"
 #define MyAppExeName "ACENCIA-ATLAS.exe"

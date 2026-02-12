@@ -125,6 +125,27 @@ function handleUpdateCheckRequest(string $method): void {
 
 
 /**
+ * Oeffentliche Release-Liste (fuer Mitteilungszentrale).
+ * Gibt aktive/mandatory Releases zurueck (ohne Admin-Felder).
+ * Keine Authentifizierung erforderlich.
+ */
+function handlePublicReleasesList(): void {
+    $releases = Database::query(
+        "SELECT version, release_notes, released_at, status
+         FROM releases
+         WHERE status NOT IN ('withdrawn')
+         ORDER BY released_at DESC
+         LIMIT 50"
+    );
+    
+    json_response([
+        'success' => true,
+        'data' => ['releases' => $releases ?: []]
+    ]);
+}
+
+
+/**
  * Oeffentlicher Download-Endpoint (zaehlt Downloads).
  */
 function handleReleaseDownload(int $releaseId): void {

@@ -1,4 +1,7 @@
-﻿- Delete Perfomance optmimierung
+﻿- Zentrale
+- Internes Nachrichtensystem
+- Komplette überarbeitung.
+- Delete Perfomance optmimierung
 - Post Performance optimierung
 - Verarbeitungs Performance optimierung
 - Refresh alle 10s

@@ -114,6 +114,7 @@ outlook_temp_*/
 
 # PyInstaller Output
 Output/*.exe
+Output/*.sha256
 
 # Sensible Server-Konfiguration (enthaelt DB-Credentials, API-Keys)
 BiPro-Webspace Spiegelung Live/api/config.php

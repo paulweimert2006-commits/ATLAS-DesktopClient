@@ -128,13 +128,22 @@ function handleLogin(): void {
     // SV-003: Rate-Limit-Counter nach erfolgreichem Login zuruecksetzen
     RateLimiter::reset($clientIp);
     
+    // Single-Session-Enforcement: Alle bestehenden Sessions des Nutzers beenden
+    // Ein Nutzer darf nur eine aktive Session gleichzeitig haben
+    $invalidatedCount = JWT::invalidateAllUserSessions($user['id']);
+    if ($invalidatedCount > 0) {
+        ActivityLogger::logAuth($user['id'], $username, 'sessions_invalidated', 
+            "Bestehende Sessions beendet bei Neuanmeldung ({$invalidatedCount} Session(s))",
+            'info', ['invalidated_count' => $invalidatedCount]);
+    }
+    
     // Token erstellen
     $token = JWT::create([
         'user_id' => $user['id'],
         'username' => $user['username']
     ]);
     
-    // Session in DB erstellen
+    // Session in DB erstellen (einzige aktive Session fuer diesen Nutzer)
     JWT::createSession($token, $user['id']);
     
     // last_login_at aktualisieren

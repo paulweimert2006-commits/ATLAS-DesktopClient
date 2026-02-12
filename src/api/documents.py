@@ -378,12 +378,19 @@ class DocumentsAPI:
             return 0
     
     def get_document(self, doc_id: int) -> Optional[Document]:
-        """Einzelnes Dokument abrufen."""
-        docs = self.list_documents()
-        for doc in docs:
-            if doc.id == doc_id:
-                return doc
-        return None
+        """Einzelnes Dokument per ID abrufen.
+        
+        BUG-0013 Fix: Nutzt dediziertes GET /documents/{id}/info statt
+        list_documents() + Client-seitige Filterung. Reduziert O(N) auf O(1).
+        """
+        try:
+            response = self.client.get(f'/documents/{doc_id}/info')
+            if response.get('success') and response.get('data', {}).get('document'):
+                return Document.from_dict(response['data']['document'])
+            return None
+        except APIError as e:
+            logger.warning(f"get_document({doc_id}) fehlgeschlagen: {e}")
+            return None
     
     def upload(self, file_path: str, 
                source_type: str = 'manual_upload',

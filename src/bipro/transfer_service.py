@@ -1516,12 +1516,30 @@ class SharedTokenManager:
             self._client._ensure_token()
             return self._client._build_soap_header()
     
+    def get_cert_config(self):
+        """
+        BUG-0015 Fix: Gibt NUR die Zertifikat-Konfiguration zurueck (thread-safe).
+        
+        Ersetzt get_session() um zu verhindern, dass die interne
+        requests.Session an mehrere Threads weitergegeben wird.
+        
+        Returns:
+            Zertifikat-Tupel oder None wenn kein Zertifikat konfiguriert
+        """
+        if not self._initialized or not self._client:
+            return None
+        session = self._client.session
+        if hasattr(session, 'cert') and session.cert:
+            return session.cert
+        return None
+    
     def get_session(self) -> requests.Session:
         """
         Gibt die konfigurierte Session zurück.
         
-        ACHTUNG: Die Session selbst ist nicht thread-safe für parallele Requests!
-        Für parallele Downloads sollte jeder Worker eine eigene Session erstellen.
+        DEPRECATED: Verwende get_cert_config() fuer Zertifikat-Info.
+        Diese Methode bleibt fuer Abwaertskompatibilitaet, sollte aber
+        NICHT fuer parallele Requests verwendet werden.
         
         Returns:
             requests.Session

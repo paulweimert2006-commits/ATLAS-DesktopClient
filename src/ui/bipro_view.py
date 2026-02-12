@@ -1051,11 +1051,12 @@ class ParallelDownloadManager(QThread):
         session.trust_env = False
         session.proxies = {'http': '', 'https': ''}
         
-        # Zertifikat von Token-Manager übernehmen falls vorhanden
+        # BUG-0015 Fix: Zertifikat via get_cert_config() statt get_session()
+        # (vermeidet Session-Sharing zwischen Threads)
         if self._token_manager.uses_certificate():
-            base_session = self._token_manager.get_session()
-            if hasattr(base_session, 'cert') and base_session.cert:
-                session.cert = base_session.cert
+            cert_config = self._token_manager.get_cert_config()
+            if cert_config:
+                session.cert = cert_config
         
         try:
             response = session.post(

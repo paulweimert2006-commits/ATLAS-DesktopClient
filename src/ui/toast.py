@@ -19,8 +19,8 @@ REGELN (siehe docs/ui/UX_RULES.md):
     - Optionaler Action-Button (Undo, Retry etc.)
 """
 
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QGraphicsOpacityEffect, QProgressBar
-from PySide6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, Signal, QPoint
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QGraphicsOpacityEffect, QProgressBar, QApplication
+from PySide6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, Signal, QPoint, QThread
 from PySide6.QtGui import QFont
 
 from ui.styles.tokens import (
@@ -490,9 +490,23 @@ class ToastManager:
         
         Schliesst sich NICHT automatisch - Aufrufer muss dismiss() aufrufen.
         
+        BUG-0012 Fix: Thread-Guard - darf nur im GUI-Thread aufgerufen werden.
+        Bei Aufruf aus Worker-Thread wird None zurueckgegeben und eine Warnung geloggt.
+        
         Returns:
-            ProgressToastWidget mit set_status(), set_progress(), dismiss()
+            ProgressToastWidget mit set_status(), set_progress(), dismiss() oder None
         """
+        app = QApplication.instance()
+        if app and QThread.currentThread() != app.thread():
+            # Progress-Toast kann nicht aus Worker-Thread dispatcht werden,
+            # da der Aufrufer die Referenz braucht. Warnung loggen.
+            import logging
+            logging.getLogger(__name__).warning(
+                "show_progress() aus Worker-Thread aufgerufen - nicht erlaubt. "
+                "Verwende Signal-Slot-Pattern fuer Progress-Toasts."
+            )
+            return None
+        
         toast = ProgressToastWidget(title=title, parent=self._parent)
         toast.closed.connect(self._on_toast_closed)
         
@@ -506,7 +520,19 @@ class ToastManager:
     def _show(self, toast_type: str, message: str,
               action_text: str = None, action_callback: callable = None,
               duration_ms: int = None):
-        """Erstellt und zeigt einen Toast."""
+        """Erstellt und zeigt einen Toast.
+        
+        BUG-0012 Fix: Thread-Guard - Qt-Widgets duerfen nur im GUI-Thread
+        erstellt werden. Falls aus Worker-Thread aufgerufen, wird der Aufruf
+        via QTimer.singleShot in den Main-Thread dispatcht.
+        """
+        app = QApplication.instance()
+        if app and QThread.currentThread() != app.thread():
+            # Aus Worker-Thread: via QTimer.singleShot in den Main-Thread dispatchen
+            QTimer.singleShot(0, lambda: self._show(
+                toast_type, message, action_text, action_callback, duration_ms))
+            return
+        
         toast = ToastWidget(
             toast_type=toast_type,
             message=message,

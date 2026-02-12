@@ -185,6 +185,9 @@ class AuthAPI:
         """
         Versucht automatischen Login mit gespeichertem Token.
         
+        BUG-0014 Fix: Token wird erst nach erfolgreicher Validierung
+        persistent gesetzt. Vorheriger Token wird bei Fehler zurueckgerollt.
+        
         Returns:
             AuthState
         """
@@ -198,11 +201,15 @@ class AuthAPI:
         if not token or not user_data:
             return AuthState(is_authenticated=False)
         
-        # Token setzen und validieren
+        # BUG-0014 Fix: Alten Token merken fuer Rollback bei Fehler
+        old_token = getattr(self.client, '_token', None)
+        
+        # Token temporaer setzen fuer Validierung (benoetigt fuer API-Call)
         self.client.set_token(token)
         
         verify_result = self._verify_token_with_permissions()
         if verify_result:
+            # Token ist gueltig - behalten
             self._current_user = User(
                 id=verify_result.get('user_id', user_data['id']),
                 username=verify_result.get('username', user_data['username']),
@@ -217,8 +224,11 @@ class AuthAPI:
                 token=token
             )
         else:
-            # Token ungültig, aufräumen
-            self.client.clear_token()
+            # Token ungueltig - auf alten Zustand zurueckrollen
+            if old_token:
+                self.client.set_token(old_token)
+            else:
+                self.client.clear_token()
             self._delete_saved_token()
             logger.info("Auto-Login fehlgeschlagen: Token abgelaufen")
             return AuthState(is_authenticated=False)
@@ -226,6 +236,9 @@ class AuthAPI:
     def re_authenticate(self) -> bool:
         """
         Versucht automatische Re-Authentifizierung.
+        
+        BUG-0014 Fix: Token wird erst nach erfolgreicher Validierung
+        persistent gesetzt. Vorheriger Token wird bei Fehler zurueckgerollt.
         
         Strategie:
         1. Token aus gespeicherter Datei laden
@@ -249,11 +262,15 @@ class AuthAPI:
             logger.warning("Gespeicherte Token-Daten unvollstaendig")
             return False
         
-        # Neuen Token setzen und pruefen
+        # BUG-0014 Fix: Alten Token merken fuer Rollback bei Fehler
+        old_token = getattr(self.client, '_token', None)
+        
+        # Token temporaer setzen fuer Validierung (benoetigt fuer API-Call)
         self.client.set_token(token)
         
         verify_result = self._verify_token_with_permissions()
         if verify_result:
+            # Token ist gueltig - behalten
             self._current_user = User(
                 id=verify_result.get('user_id', user_data['id']),
                 username=verify_result.get('username', user_data['username']),
@@ -264,8 +281,11 @@ class AuthAPI:
             logger.info(f"Re-Authentifizierung erfolgreich: {self._current_user.username}")
             return True
         
-        # Token ungueltig
-        self.client.clear_token()
+        # Token ungueltig - auf alten Zustand zurueckrollen
+        if old_token:
+            self.client.set_token(old_token)
+        else:
+            self.client.clear_token()
         logger.warning("Re-Authentifizierung fehlgeschlagen: Token ungueltig")
         return False
     

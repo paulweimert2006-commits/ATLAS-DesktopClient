@@ -122,7 +122,7 @@ def safe_atomic_write(content: bytes, target_path: str,
         if tmp_path.exists():
             try:
                 os.remove(tmp_path)
-            except:
+            except Exception:
                 pass
         logger.error(f"Atomic write fehlgeschlagen: {e}")
         return (False, str(e), None)
