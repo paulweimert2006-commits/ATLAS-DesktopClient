@@ -113,9 +113,9 @@ bipro_preview_cache/
 # Outlook COM temporaere Dateien
 outlook_temp_*/
 
-# PyInstaller Output
-Output/*.exe
-Output/*.sha256
+# PyInstaller Output / Build-Artefakte
+Output/
+dist/
 
 # Sensible Server-Konfiguration (enthaelt DB-Credentials, API-Keys)
 BiPro-Webspace Spiegelung Live/api/config.php

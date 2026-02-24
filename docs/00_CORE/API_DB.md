@@ -369,21 +369,7 @@
 
 ---
 
-## Berechtigungssystem (12 Permissions)
+## Berechtigungssystem
 
-| Permission | Bereich | Beschreibung |
-|------------|---------|--------------|
-| `vu_connections_manage` | BiPRO | VU-Verbindungen verwalten |
-| `bipro_fetch` | BiPRO | BiPRO-Daten abrufen |
-| `documents_manage` | Archiv | Dokumente verschieben, umbenennen |
-| `documents_delete` | Archiv | Dokumente loeschen |
-| `documents_upload` | Archiv | Dokumente hochladen |
-| `documents_download` | Archiv | Dokumente herunterladen |
-| `documents_process` | Archiv | KI-Verarbeitung ausloesen |
-| `documents_history` | Archiv | Dokumenten-Historie einsehen |
-| `gdv_edit` | GDV | GDV-Dateien bearbeiten |
-| `smartscan_send` | SmartScan | Dokumente per E-Mail versenden |
-| `provision_access` | Provision | Zugriff auf GF-Bereich |
-| `provision_manage` | Provision | Gefahrenzone + Rechtevergabe |
-
-**Wichtig**: `provision_access` und `provision_manage` werden NICHT automatisch an Administratoren vergeben. Sie muessen explizit zugewiesen werden.
+> **Detaillierte Dokumentation**: Siehe `docs/02_SECURITY/PERMISSIONS.md`
+> 14 Berechtigungen, 2 Kontotypen (Admin/Benutzer), Provisions-Sonderregel.

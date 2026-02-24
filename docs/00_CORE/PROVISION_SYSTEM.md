@@ -74,56 +74,20 @@ Das Provisionsmanagement ist das Geschaeftsfuehrer-Modul von ACENCIA ATLAS. Es e
 
 ---
 
-## Datenmodell (7 pm_* + 9 xempus_* Tabellen)
+## Datenmodell
 
-### pm_commission_models (Provisionssatzmodelle)
-- `id`, `name` (z.B. "Standard 80%"), `rate` (0-100), `is_active`
-- Bestimmt wie viel Prozent des Provisionsbetrags an den Berater gehen
+> **Detaillierte Feld-Definitionen**: Siehe `docs/00_CORE/DOMAIN.md` Abschnitt "Provisionsmanagement-Datenmodell"
 
-### pm_employees (Mitarbeiter)
-- `id`, `name`, `rolle` (consulter/teamleiter/backoffice)
-- `commission_model_id` → Verweis auf Provisionssatz
-- `teamleiter_id` → optionaler Teamleiter (Selbstreferenz)
-- `tl_override_rate` (0-100) → TL-Abzug vom Berater-Anteil
-- `tl_override_basis` (berater_anteil/gesamt_courtage) → Berechnungsbasis fuer TL
-- `effective_rate` → Berechneter Wert: Rate aus Modell
-
-### pm_contracts (Vertraege aus Xempus)
-- `id`, `vsnr` (Versicherungsschein-Nr.), `vsnr_normalized` (alle Nullen entfernt)
-- `versicherer`, `sparte`, `versicherungsnehmer`, `versicherungsnehmer_normalized`
-- `berater_id` → Zugewiesener Berater
-- `status` (offen/beantragt/aktiv/provision_erhalten/storniert)
-- `xempus_id`, `xempus_arbeitnehmer_id`, `xempus_arbeitgeber_id`
-
-### pm_commissions (Provisionsbuchungen)
-- `id`, `import_batch_id`, `vsnr`, `vsnr_normalized`
-- `versicherer`, `versicherungsnehmer`, `versicherungsnehmer_normalized`
-- `vermittler_name`, `vermittler_name_normalized`
-- `betrag` (Gesamtbetrag), `art` (provision/rueckbelastung/korrektur/nullmeldung)
-- **Match-Status**: `match_status` (unmatched/auto_matched/manual_matched/ignored)
-- `contract_id` → Zugeordneter Vertrag
-- `berater_id` → Zugeordneter Berater
-- `xempus_consultation_id` → Xempus-Beratung (v3.3.0)
-- **Splits** (berechnet durch Split-Engine):
-  - `berater_anteil` (Berater-Netto)
-  - `tl_anteil` (Teamleiter-Abzug)
-  - `ag_anteil` (Arbeitgeber/Firma-Anteil)
-- `row_hash` (SHA256) fuer Duplikat-Erkennung beim Import
-
-### pm_vermittler_mapping
-- `id`, `vermittler_name_normalized` (UNIQUE), `berater_id`
-- Uebersetzt VU-Vermittlernamen (z.B. "MUELLER HANS") auf interne Berater
-
-### pm_berater_abrechnungen (Monats-Snapshots)
-- `id`, `berater_id`, `monat` (YYYY-MM), `revision` (auto-increment)
-- `brutto_provision`, `tl_abzug`, `netto_provision`, `rueckbelastungen`, `auszahlung`
-- `status` (berechnet → geprueft → freigegeben → ausgezahlt)
-- UNIQUE(berater_id, monat, revision)
-
-### pm_import_batches
-- `id`, `source` (vu_liste/xempus/xempus_raw), `filename`, `sheet_name`
-- `total_rows`, `imported_rows`, `skipped_rows`, `error_rows`
-- `created_by`, `created_at`
+### PM-Tabellen (7 Stueck)
+| Tabelle | Zweck |
+|---------|-------|
+| `pm_commission_models` | Provisionssatzmodelle (Rate, Name) |
+| `pm_employees` | Mitarbeiter (Rolle, Provisionssatz, TL-Zuordnung) |
+| `pm_contracts` | Vertraege aus Xempus (VSNR, VU, Berater, Status) |
+| `pm_commissions` | Provisionsbuchungen (Betrag, Match-Status, Splits) |
+| `pm_vermittler_mapping` | VU-Vermittlername → interner Berater |
+| `pm_berater_abrechnungen` | Monats-Snapshots (Revisioniert, Status-Workflow) |
+| `pm_import_batches` | Import-Tracking (Source, Rows, Fehler) |
 
 ---
 
