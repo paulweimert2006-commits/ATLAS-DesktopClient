@@ -1,4 +1,47 @@
-﻿- Dokument Regeln.
+- Provisionsmanagement (v3.0.0)
+  - Eigenstaendiger Vollbild-Hub mit 8 Panels
+  - Dashboard mit 4 KPI-Karten, DonutChart, Berater-Ranking
+  - VU-Provisionslisten Import (Allianz, SwissLife, VB) mit parallelem Import
+  - Xempus-Beratungen Import mit Duplikat-Erkennung
+  - Auto-Matching: 5+2-Schritt Batch-JOIN (~11s fuer 15.010 Zeilen)
+  - Split-Engine: 3 Batch-SQL-Updates (Berater/TL/AG-Anteile)
+  - Monatsabrechnungen mit Snapshot-Prinzip und Status-Workflow
+  - Vermittler-Mapping (VU-Name → interner Berater)
+  - 7 pm_* DB-Tabellen, 32 PHP-Endpoints
+- GF-Rework (v3.1.0)
+  - Komplett neues UI-Design: Shared Widgets (PillBadge, DonutChart, FilterChipBar, KpiCard, etc.)
+  - Rich-Tooltips auf allen KPIs und Spalten
+  - Activity-Logging fuer alle PM-Aktionen
+  - Klaerfall-Counts vom Server (no_contract, unknown_vermittler, no_model, no_split)
+  - Audit-Endpunkt fuer PM-Aktivitaetshistorie
+- Matching V2 (v3.2.0)
+  - Multi-Level Matching Engine (Score 100/90/70/40)
+  - MatchContractDialog mit PillBadge-Delegates
+  - VN-Normalisierung (Umlaute, Klammern, Sonderzeichen)
+  - Server-seitige Pagination (page/per_page)
+  - Transaktionale Zuordnung (PUT /pm/assign)
+  - Reverse-Matching (Xempus-Vertraege ohne VU-Provision)
+- Stabilisierung (v3.2.1)
+  - 55 Befunde behoben: Transaktionen, Worker, Indizes, Validierung, UI-Fixes
+  - 8 operative DB-Indizes + UNIQUE Constraints
+  - 5 sync API-Calls durch QThread-Worker ersetzt
+  - 20 hardcodierte Strings migriert
+- Stabilisierung II (v3.2.2)
+  - VSNR-Normalisierung: Alle Nullen entfernen (nicht nur fuehrende)
+  - 0€-Zeilen als 'nullmeldung' importiert
+  - Gefahrenzone (Settings-Panel mit 3s-Countdown-Reset)
+- Xempus Insight Engine (v3.3.0)
+  - 4-Phasen-Import-Pipeline (RAW → Parse → Snapshot → Finalize)
+  - 9 neue xempus_* DB-Tabellen (Arbeitgeber, Tarife, Zuschuesse, ArbN, Beratungen)
+  - Dediziertes xempus.php Backend (~1360 Zeilen)
+  - 4-Tab UI-Panel (Arbeitgeber, Statistiken, Import, Status-Mapping)
+  - Snapshot-Diff-Vergleich zwischen Import-Batches
+  - Python-Parser fuer alle 5 Xempus-Excel-Sheets
+  - provision_access + provision_manage Permissions (explizite Zuweisung, nicht auto-Admin)
+- Grosse dateien ausgelagert
+- Performance und routing verbessert
+- anderes
+- Dokument Regeln.
 - Neu API. OpenAI API direkt angebunden um weitere Kosten zu sparen
 - Provider Model
 - verarbeitungsablauf konfi.
@@ -7,7 +50,7 @@
 - API, Proxy, Ablauf und Quell Rework.
 - ATLAS Index ist bereit und verfügbar!
 - Suche über alle Dokumente nach text inhalt, dateiname teiltreffer USW!
-- Text-Extraktion fuer Inhaltsduplikat-Erkennung
+- Text-Extraktion fuer Inhaltsduplikat-Erkennung k
 - Fehlerbehebung (Passwort-pdf und Outlook msg.)
 - Bug fix.
 - Vorbereitung für Spätere Features

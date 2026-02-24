@@ -1176,8 +1176,8 @@ Die Datei `BiPro-Webspace Spiegelung Live/api/config.php` enthält:
 - **Dateien**:
   - `src/ui/login_dialog.py` → `_clear_local_caches()`, Aufruf in `_try_auto_login()` else-Zweig
 
-### 3. Provisionsmanagement (Geschaeftsfuehrer-Ebene) ✅ (v3.0.0, GF-Rework v3.1.0, Stabilisierung v3.2.1)
-- **Zweck**: Zentrales Modul fuer Provisionsabrechnung, Berater-Verwaltung, VU-Datenimport und Monatsabrechnungen
+### 3. Provisionsmanagement (Geschaeftsfuehrer-Ebene) ✅ (v3.0.0, GF-Rework v3.1.0, Stabilisierung v3.2.1, Xempus Insight v3.3.0)
+- **Zweck**: Zentrales Modul fuer Provisionsabrechnung, Berater-Verwaltung, VU-Datenimport, Xempus-Datenanalyse und Monatsabrechnungen
 - **Phase 1 (aktuell)**: GF/Admin-only (voller Funktionsumfang nur fuer Administratoren mit `provision_manage` Permission)
 - **Phase 2 (geplant)**: Rollenbasierte Sichten (TL sieht Team, Berater sieht sich selbst)
 - **GF-Rework v3.1.0**: Komplettes visuelles und semantisches Rework der Management-Oberflaeche
@@ -1186,10 +1186,10 @@ Die Datei `BiPro-Webspace Spiegelung Live/api/config.php` enthält:
   - **Shared Widgets (`widgets.py`)**: PillBadgeDelegate, DonutChartWidget, FilterChipBar, SectionHeader, ThreeDotMenuDelegate, KpiCard, PaginationBar, StatementCard, ActivityFeedWidget
   - **Rich-Tooltips**: `build_rich_tooltip()` (Definition, Berechnung, Quelle, Hinweis) auf allen KPIs und Spalten
   - **Pill-Badges**: PILL_COLORS, ROLE_BADGE_COLORS, ART_BADGE_COLORS in tokens.py fuer Status/Rolle/Art
-  - **Activity-Logging**: Alle PM-Aktionen (Employee CRUD, Match, Ignore, Import, Abrechnung, Mapping) werden in activity_log geloggt
-  - **Klaerfall-Counts**: `GET /pm/clearance` liefert aufgeschluesselte Klaerfall-Typen (no_contract, unknown_vermittler, no_model, no_split)
+  - **Activity-Logging**: Alle PM-Aktionen (Employee CRUD, Match, Ignore, Import, Abrechnung, Mapping) werden in activity_log geloggt (15 geloggte Aktionstypen)
+  - **Klaerfall-Counts**: `GET /pm/clearance` liefert aufgeschluesselte Klaerfall-Typen (no_contract, no_berater, no_model, no_split)
   - **Audit-Endpunkt**: `GET /pm/audit[/{entity_type}/{entity_id}]` fuer PM-Aktivitaetshistorie
-- **Architektur**: Eigenstaendiger Hub mit eigener Sidebar (wie AdminView), 7 Sub-Panels, Lazy-Loading
+- **Architektur**: Eigenstaendiger Hub mit eigener Sidebar (wie AdminView), 8 Sub-Panels, Lazy-Loading
 - **Stabilisierung v3.2.1**: 55 Befunde aus Code-Audit behoben:
   - **Transaktions-Sicherheit**: /match und autoMatchCommissions() in DB-Transactions
   - **QThread-Worker**: 5 sync API-Calls durch Worker ersetzt (UI blockiert nicht mehr)
@@ -1202,6 +1202,16 @@ Die Datei `BiPro-Webspace Spiegelung Live/api/config.php` enthält:
   - **H-2 VSNR-Normalisierung**: Jetzt werden ALLE Nullen entfernt (nicht nur fuehrende), Migration 026 re-normalisiert Bestandsdaten
   - **L-15 betrag=0**: 0€-Zeilen werden jetzt importiert als `art='nullmeldung'`, gelbes Badge im UI
   - **M-20 VU-Abgleich**: Bewusst NICHT implementiert (VSNRs sind eindeutig, VU-Namen inkonsistent)
+- **Xempus Insight Engine (NEU v3.3.0)**: Eigenstaendiges Datenmodul fuer tiefgehende Xempus-Analyse
+  - **4-Phasen-Import**: RAW Ingest → Normalize/Parse → Snapshot Update → Finalize
+  - **9 neue `xempus_*` DB-Tabellen**: Arbeitgeber, Tarife, Zuschuesse, Arbeitnehmer, Beratungen, Rohdaten, Import-Batches, Commission-Matches, Status-Mappings
+  - **Eigenstaendiges PHP-Backend**: `xempus.php` (~1360 Zeilen) wird aus `provision.php` via `handleXempusRoute()` eingebunden
+  - **Snapshot-Versionierung**: Diff-Vergleich zwischen Import-Snapshots (neue/geaenderte/entfernte Entitaeten)
+  - **4-Tab UI**: Arbeitgeber (TreeView + Detail), Statistiken (KPI-Dashboard mit DonutCharts), Import (4-Phasen + Batch-Historie), Status-Mapping
+  - **Domain-Modelle**: `xempus_models.py` mit 9 Dataclasses (XempusEmployer, XempusTariff, XempusSubsidy, XempusEmployee, XempusConsultation, etc.)
+  - **Parser**: `xempus_parser.py` (~405 Zeilen) parst ALLE 5 Sheets (ArbG, ArbG-Tarife, ArbG-Zuschuesse, ArbN, Beratungen)
+  - **API-Client**: `xempus.py` (~377 Zeilen) mit XempusAPI (Chunked Import, CRUD, Stats, Diff, Status-Mapping, Sync)
+  - **Auto-Matching-Integration**: Step 1.5 (Xempus-Consultation-Match) und Step 2.5 (Berater via Xempus berater_name)
 - **Berechtigung**: `provision_access` fuer alle PM-Endpoints, `provision_manage` fuer Gefahrenzone + Rechtevergabe (NEU v3.3.0: Nicht automatisch fuer Admins, explizite Zuweisung noetig)
 - **Split-Engine (Batch-SQL, optimiert v3.0.0)**:
   - `batchRecalculateSplits()` berechnet Splits in 3 Batch-UPDATE-Queries statt per-Row-Loop
@@ -1244,10 +1254,12 @@ Die Datei `BiPro-Webspace Spiegelung Live/api/config.php` enthält:
   - Mit Datumsfilter (`from`, `to`) und Pagination
 - **VU-Vermittler-Spalte (NEU v3.2.0)**: Neue Spalte in Klaerfall- und Positionstabellen zeigt VU-Vermittlernamen
 - **Erweiterter Mapping-Dialog (NEU v3.2.0)**: Zeigt VU-Vermittlername + Xempus-Berater, Option beide gleichzeitig zu mappen
-- **Auto-Matching (5-Schritt Batch-JOIN)**:
+- **Auto-Matching (5+2-Schritt Batch-JOIN, erweitert v3.3.0)**:
   1. **VSNR-Match**: `pm_commissions.vsnr_normalized JOIN pm_contracts.vsnr_normalized`
+  1.5. **Xempus-Consultation-Match (NEU v3.3.0)**: `pm_commissions.vsnr_normalized JOIN xempus_consultations.versicherungsscheinnummer` (Setzt `xempus_consultation_id`, Confidence 0.85)
   2. **Alt-VSNR-Match**: Fallback auf `vsnr_alt_normalized` fuer umbenannte VSNRs
-  3. **Berater-Aufloesung**: `vermittler_name_normalized JOIN pm_vermittler_mapping.vermittler_name_normalized`
+  2.5. **Berater via Xempus (NEU v3.3.0)**: Vertraege ohne `berater_id` mit `berater_name` → Lookup in `pm_vermittler_mapping` → `berater_id` setzen + propagieren zu Commissions
+  3. **Berater via VU Vermittler-Mapping**: `pm_commissions.vermittler_name_normalized JOIN pm_vermittler_mapping`
   4. **Split-Berechnung**: `batchRecalculateSplits()` (3 Batch-UPDATEs)
   5. **Vertragsstatus-Update**: Vertraege auf `provision_erhalten` setzen
   - Performance: ~11s fuer 15.010 Provisionszeilen (vorher Timeout bei per-Row-Loop)
@@ -1256,78 +1268,116 @@ Die Datei `BiPro-Webspace Spiegelung Live/api/config.php` enthält:
   - Revision wird bei erneuter Generierung automatisch hochgezaehlt
   - Felder: brutto_provision, tl_abzug, netto_provision, rueckbelastungen, auszahlung
   - Status-Workflow: berechnet → geprueft → freigegeben → ausgezahlt
+- **Abrechnungs-Status-Transitions (State Machine)**:
+  - `berechnet` → `geprueft`
+  - `geprueft` → `berechnet` (Ruecksetzung) ODER `freigegeben`
+  - `freigegeben` → `geprueft` (Ruecksetzung) ODER `ausgezahlt`
+  - `ausgezahlt` → Terminal-State (keine Aenderung moeglich)
+  - `is_locked=1` bei `freigegeben`, `geprueft_von`/`freigegeben_von`/`freigegeben_am` werden automatisch gesetzt
+- **Employee-Validierungen**: `role` muss in `['consulter', 'teamleiter', 'backoffice']` sein, `commission_rate_override` 0-100, `tl_override_rate` 0-100, `tl_override_basis` in `['berater_anteil', 'gesamt_courtage']`, Selbstreferenz-Check (`teamleiter_id != id`)
 - **Dashboard (GF-Rework: Entscheidungs-Cockpit)**:
   - 4 KPI-Karten (2x2 Grid): Gesamtprovision, Zuordnungsquote (mit DonutChart), Klaerfaelle (Server-Counts), Auszahlungen
   - Jede Karte mit Subline, Tooltip, Extra-Labels und Action-Button
   - YTD-Werte, Trend vs. Vormonat, Top-3 VU
   - Per-Berater-Ranking: PillBadgeDelegate fuer Rollen
+  - Zeitraumfilter: Monat, Letzte 3/6/12 Monate, Bereich, Alle Zeit
 - **Import**:
-  - **VU-Provisionslisten**: Excel-Parser fuer 3 VU-Formate (Allianz, SwissLife, VB)
-  - **Xempus-Export**: Beratungen mit VSNR, VN, Sparte, Beitrag, Berater-Zuordnung
+  - **VU-Provisionslisten**: Excel-Parser fuer 3 VU-Formate (Allianz, SwissLife, VB) mit Auto-Detection via Header-Signaturen
+  - **Xempus-Export (Legacy)**: Beratungen mit VSNR, VN, Sparte, Beitrag, Berater-Zuordnung (via `provision_import.py`)
+  - **Xempus Insight Import (NEU v3.3.0)**: Vollstaendiger 5-Sheet-Import via `xempus_parser.py` + 4-Phasen-Pipeline
   - **Paralleler Import**: `VuImportWorker` mit `ThreadPoolExecutor` (max 15 Worker, adaptive Chunk-Groesse)
   - **Duplikat-Erkennung**: SHA256-basierter `row_hash` verhindert doppelte Zeilen
-  - **Column-Mappings**: Hardcodiert in `src/services/provision_import.py` (VU_COLUMN_MAPPINGS, XEMPUS_BERATUNGEN_COLUMNS)
-- **7 Panels (GF-Rework v3.1.0, Settings v3.2.2)** (mit Sidebar-Navigation + Subtexten):
-  1. **Uebersicht**: Entscheidungs-Cockpit mit 4 KPI-Karten (DonutChart, Klaerfall-Counts, Auszahlungen) + Berater-Ranking
-  2. **Abrechnungslaeufe**: VU-Abrechnung importieren, Import-Batch-Historie, Validierungsstatus-Badges
-  3. **Provisionspositionen**: Master-Detail-Tabelle mit FilterChips, PillBadges, ThreeDotMenu, Detail-Seitenpanel (Originaldaten, Matching, Verteilung, Auditlog)
-  4. **Zuordnung & Klaerfaelle**: Klaerfall-Typen mit FilterChips, ungematchte Positionen, Vermittler-Zuordnungen
-  5. **Verteilschluessel & Rollen**: Provisionsmodelle als Karten mit Beispielrechnung + Mitarbeiter-Tabelle mit Rollen-Badges
-  6. **Auszahlungen & Reports**: Monatsabrechnungen mit StatementCards, Status-Workflow, CSV/Excel-Export
-  7. **Einstellungen (NEU v3.2.2)**: Gefahrenzone mit Daten-Reset (3s-Countdown-Bestaetigung, loescht Commissions/Contracts/Batches/Abrechnungen, behaelt Employees/Models/Mappings)
-- **DB-Tabellen**: 7 neue `pm_*` Tabellen + 2 Permissions (`provision_access`, `provision_manage`)
+  - **Column-Mappings**: Hardcodiert in `src/services/provision_import.py` (VU_COLUMN_MAPPINGS mit VU_HEADER_SIGNATURES fuer Auto-Detection)
+- **8 Panels (GF-Rework v3.1.0, Xempus v3.3.0, Settings v3.2.2)** (mit Sidebar-Navigation + Subtexten):
+  1. **Uebersicht** (PANEL_OVERVIEW=0): Entscheidungs-Cockpit mit 4 KPI-Karten (DonutChart, Klaerfall-Counts, Auszahlungen) + Berater-Ranking
+  2. **Abrechnungslaeufe** (PANEL_IMPORT=1): VU-Abrechnung importieren, Import-Batch-Historie, Validierungsstatus-Badges
+  3. **Provisionspositionen** (PANEL_VU=2): Master-Detail-Tabelle mit FilterChips, PillBadges, ThreeDotMenu, Detail-Seitenpanel (Originaldaten, Matching, Verteilung, Auditlog)
+  4. **Xempus Insight** (PANEL_XEMPUS=3): **NEU v3.3.0** - 4-Tab-Panel (Arbeitgeber, Statistiken, Import, Status-Mapping) mit Snapshot-Diff
+  5. **Zuordnung & Klaerfaelle** (PANEL_CLEARANCE=4): Klaerfall-Typen mit FilterChips, ungematchte Positionen, Vermittler-Zuordnungen, MatchContractDialog
+  6. **Verteilschluessel & Rollen** (PANEL_DISTRIBUTION=5): Provisionsmodelle als Karten mit Beispielrechnung + Mitarbeiter-Tabelle mit Rollen-Badges
+  7. **Auszahlungen & Reports** (PANEL_PAYOUTS=6): Monatsabrechnungen mit StatementCards, Status-Workflow, CSV/Excel-Export
+  8. **Einstellungen** (PANEL_SETTINGS=7): Gefahrenzone mit Daten-Reset (3s-Countdown-Bestaetigung, loescht Commissions/Contracts/Batches/Abrechnungen, behaelt Employees/Models/Mappings)
+- **DB-Tabellen**: 7 `pm_*` Tabellen + 9 `xempus_*` Tabellen + 2 Permissions (`provision_access`, `provision_manage`)
   - `pm_commission_models`: Provisionssatzmodelle (Name, Rate, is_active)
   - `pm_employees`: Mitarbeiter (Name, Rolle, Model-ID, TL-Override-Rate/-Basis, Teamleiter-ID)
   - `pm_contracts`: Vertraege aus Xempus (VSNR, VU, Berater-ID, Status, xempus_id, versicherungsnehmer_normalized)
-  - `pm_commissions`: Provisionsbuchungen (VSNR, Betrag, Art, Match-Status, Splits, versicherungsnehmer_normalized)
-  - `pm_vermittler_mapping`: VU-Vermittlername → interner Berater
-  - `pm_berater_abrechnungen`: Monatsabrechnungen pro Berater (Snapshot)
+  - `pm_commissions`: Provisionsbuchungen (VSNR, Betrag, Art, Match-Status, Splits, versicherungsnehmer_normalized, xempus_consultation_id)
+  - `pm_vermittler_mapping`: VU-Vermittlername → interner Berater (UNIQUE vermittler_name_normalized)
+  - `pm_berater_abrechnungen`: Monatsabrechnungen pro Berater (Snapshot, UNIQUE abrechnungsmonat+berater_id+revision)
   - `pm_import_batches`: Import-Historie (Source, Filename, Sheet, Rows)
+  - `xempus_employers`: Arbeitgeber (Name, Adresse, IBAN/BIC, Tarif-/Zuschuss-Info, first/last_seen_batch_id)
+  - `xempus_tariffs`: Tarife pro Arbeitgeber (Versicherer, Typ, Durchfuehrungsweg, Tarif, Gruppennummer)
+  - `xempus_subsidies`: AG-Zuschuesse (Employer-ID, Typ, Betrag, Frequenz)
+  - `xempus_employees`: Arbeitnehmer (Employer-ID, Name, Geburtsdatum, Eintrittsdatum, Status)
+  - `xempus_consultations`: Beratungen (Employee-ID, VSNR, VU, Sparte, Status, Berater)
+  - `xempus_raw_rows`: Rohdaten (Batch-ID, Sheet, Row-Index, JSON, row_hash)
+  - `xempus_import_batches`: Xempus-Import-Batches (Phasen-Tracking, Content-Hash)
+  - `xempus_commission_matches`: Xempus-Commission Matches (consultation_id → commission_id)
+  - `xempus_status_mappings`: Xempus-Status → interner Status Mapping (konfigurierbar)
 - **PHP-Endpoints (alle unter `/pm/...`)**:
   | Route | Methoden | Beschreibung |
   |-------|----------|--------------|
   | `/pm/employees[/{id}]` | GET/POST/PUT/DELETE | Mitarbeiter-CRUD |
-  | `/pm/contracts[/{id}]` | GET/PUT | Vertraege + Berater-Zuweisung |
-  | `/pm/commissions` | GET | Provisionen (Filter: match_status, berater_id, von, bis, versicherer) |
-  | `/pm/commissions/{id}/match` | PUT | Manuelles Matching |
+  | `/pm/contracts[/{id}]` | GET/PUT | Vertraege + Berater-Zuweisung (Pagination: page/per_page) |
+  | `/pm/commissions` | GET | Provisionen (Filter: match_status, berater_id, von, bis, versicherer; Pagination: page/per_page) |
+  | `/pm/commissions/{id}/match` | PUT | Manuelles Matching (transaktional) |
   | `/pm/commissions/{id}/ignore` | PUT | Provision ignorieren |
   | `/pm/commissions/recalculate` | POST | Splits neu berechnen |
   | `/pm/import/vu-liste` | POST | VU-Provisionsliste importieren |
-  | `/pm/import/xempus` | POST | Xempus-Beratungen importieren |
-  | `/pm/import/match` | POST | Auto-Matching ausloesen |
+  | `/pm/import/xempus` | POST | Xempus-Beratungen importieren (Legacy) |
+  | `/pm/import/match` | POST | Auto-Matching ausloesen (transaktional, 5+2 Schritte) |
   | `/pm/import/batches` | GET | Import-Historie |
   | `/pm/dashboard/summary` | GET | Dashboard KPI-Daten |
   | `/pm/dashboard/berater/{id}` | GET | Berater-Detail mit Provisionen |
   | `/pm/mappings` | GET/POST | Vermittler-Mappings (GET: include_unmapped=1 fuer ungeloeste) |
   | `/pm/mappings/{id}` | DELETE | Mapping loeschen |
-  | `/pm/abrechnungen[/{id}]` | GET/POST/PUT | Abrechnungen generieren/laden/Status aendern |
-  | `/pm/models[/{id}]` | GET/POST/PUT | Provisionsmodelle CRUD |
-  | `/pm/clearance` | GET | **NEU v3.1.0**: Klaerfall-Counts (no_contract, unknown_vermittler, no_model, no_split) |
+  | `/pm/abrechnungen[/{id}]` | GET/POST/PUT | Abrechnungen generieren/laden/Status aendern (State Machine) |
+  | `/pm/models[/{id}]` | GET/POST/PUT/DELETE | Provisionsmodelle CRUD |
+  | `/pm/clearance` | GET | **NEU v3.1.0**: Klaerfall-Counts (no_contract, no_berater, no_model, no_split) |
   | `/pm/audit[/{type}/{id}]` | GET | **NEU v3.1.0**: PM-Aktivitaetshistorie (action_category=provision) |
-  | `/pm/match-suggestions` | GET | **NEU v3.2.0**: Multi-Level-Matching (forward/reverse, CASE-Scoring) |
+  | `/pm/match-suggestions` | GET | **NEU v3.2.0**: Multi-Level-Matching (forward/reverse, CASE-Scoring, limit 1-200) |
   | `/pm/assign` | PUT | **NEU v3.2.0**: Transaktionale Zuordnung (commission→contract, force_override) |
   | `/pm/contracts/unmatched` | GET | **NEU v3.2.0**: Xempus-Vertraege ohne VU-Provision (Pagination + Datumsfilter) |
   | `/pm/reset` | POST | **NEU v3.2.2**: Gefahrenzone - Loescht alle Import-Daten (Admin-only, behaelt Employees/Models/Mappings) |
+  | `/pm/xempus/import` | POST | **NEU v3.3.0**: Xempus RAW Ingest (Phase 1, Chunked) |
+  | `/pm/xempus/parse` | POST | **NEU v3.3.0**: Xempus Normalize + Parse (Phase 2) |
+  | `/pm/xempus/finalize` | POST | **NEU v3.3.0**: Xempus Finalize (Phase 4, Content-Hash) |
+  | `/pm/xempus/batches` | GET | **NEU v3.3.0**: Xempus-Import-Batches |
+  | `/pm/xempus/employers[/{id}]` | GET | **NEU v3.3.0**: Arbeitgeber (Liste + Detail mit Tarifen/Zuschuessen/Mitarbeitern) |
+  | `/pm/xempus/employees[/{id}]` | GET | **NEU v3.3.0**: Arbeitnehmer |
+  | `/pm/xempus/consultations` | GET | **NEU v3.3.0**: Beratungen |
+  | `/pm/xempus/stats` | GET | **NEU v3.3.0**: Statistiken (Counts, Aktive, Tarife, etc.) |
+  | `/pm/xempus/diff/{batch_id}` | GET | **NEU v3.3.0**: Snapshot-Diff (neue/geaenderte/entfernte Entitaeten) |
+  | `/pm/xempus/status-mapping` | GET/POST | **NEU v3.3.0**: Status-Mapping CRUD |
+  | `/pm/xempus/sync/{batch_id}` | POST | **NEU v3.3.0**: Xempus → pm_contracts Synchronisierung |
 - **Dateien**:
-  - `BiPro-Webspace Spiegelung Live/api/provision.php` → PHP Backend (~1400 Zeilen, Split-Engine, Auto-Matching, Activity-Logging, Clearance, Audit, Match-Suggestions, Assign, Pagination)
-  - `BiPro-Webspace Spiegelung Live/api/index.php` → Route `case 'pm'` → `handleProvisionRequest()`, + `match-suggestions`, `assign`
+  - `BiPro-Webspace Spiegelung Live/api/provision.php` → PHP Backend (~2289 Zeilen, Split-Engine, Auto-Matching, Activity-Logging, Clearance, Audit, Match-Suggestions, Assign, Pagination, Reset)
+  - `BiPro-Webspace Spiegelung Live/api/xempus.php` → **NEU v3.3.0**: Xempus Insight Engine PHP Backend (~1360 Zeilen, 4-Phasen-Import, CRUD, Stats, Diff, Status-Mapping, Sync)
+  - `BiPro-Webspace Spiegelung Live/api/index.php` → Route `case 'pm'` → `handleProvisionRequest()`, Xempus via `case 'xempus'` → `handleXempusRoute()`
   - `BiPro-Webspace Spiegelung Live/setup/024_provision_matching_v2.php` → **NEU v3.2.0**: DB-Migration (VN-Normalisierung, Indizes, UNIQUE Constraints, Backfill)
   - `BiPro-Webspace Spiegelung Live/setup/025_provision_indexes.php` → **NEU v3.2.1**: DB-Migration (8 operative Indizes auf pm_commissions/pm_contracts + UNIQUE auf pm_berater_abrechnungen)
   - `BiPro-Webspace Spiegelung Live/setup/026_vsnr_renormalize.php` → **NEU v3.2.2**: DB-Migration (Re-Normalisierung aller VSNRs: alle Nullen entfernen)
+  - `BiPro-Webspace Spiegelung Live/setup/028_xempus_complete.php` → **NEU v3.3.0**: DB-Migration (9 xempus_*-Tabellen + xempus_consultation_id auf pm_commissions)
   - `BiPro-Webspace Spiegelung Live/setup/029_provision_role_permissions.php` → **NEU v3.3.0**: DB-Migration (provision_access + provision_manage Permissions + admin-User Zuweisung)
-  - `src/api/provision.py` → Python API Client (~830 Zeilen, 11 Dataclasses inkl. ContractSearchResult + PaginationInfo + ProvisionAPI)
-  - `src/services/provision_import.py` → VU/Xempus-Parser (~650 Zeilen, Column-Mappings, normalize_vsnr/normalize_vermittler_name/normalize_for_db, Xempus-ID-Support)
-  - `src/ui/provision/provision_hub.py` → ProvisionHub (~217 Zeilen, 6-Panel Sidebar + QStackedWidget, Lazy-Loading, Subtexte)
-  - `src/ui/provision/widgets.py` → **NEU v3.1.0**: Shared Widgets (9 Klassen: PillBadgeDelegate, DonutChartWidget, FilterChipBar, SectionHeader, ThreeDotMenuDelegate, KpiCard, PaginationBar, StatementCard, ActivityFeedWidget)
-  - `src/ui/provision/dashboard_panel.py` → Dashboard (~383 Zeilen, 4 KPI-Karten mit DonutChart, Klaerfall-Counts vom Server, Berater-Ranking)
-  - `src/ui/provision/provisionspositionen_panel.py` → Provisionspositionen (~820 Zeilen, Master-Detail mit FilterChips, PillBadges, VU-Vermittler-Spalte, Mapping-Dialog, Detail-Seitenpanel)
-  - `src/ui/provision/zuordnung_panel.py` → Zuordnung & Klaerfaelle (~880 Zeilen, Klaerfall-Typen, VU-Vermittler-Spalte, MatchContractDialog, Mapping-Dialog, Reverse-Matching)
-  - `src/ui/provision/abrechnungslaeufe_panel.py` → **NEU v3.1.0**: Abrechnungslaeufe (~300 Zeilen, Import mit GF-Terminologie, Batch-Historie)
-  - `src/ui/provision/verteilschluessel_panel.py` → **NEU v3.1.0**: Verteilschluessel & Rollen (~250 Zeilen, Modell-Karten + Mitarbeiter-Tabelle)
-  - `src/ui/provision/auszahlungen_panel.py` → **NEU v3.1.0**: Auszahlungen & Reports (~340 Zeilen, StatementCards, Status-Workflow, Export)
+  - `src/api/provision.py` → Python API Client (~859 Zeilen, 11 Dataclasses inkl. ContractSearchResult + PaginationInfo + ProvisionAPI mit 40+ Methoden)
+  - `src/api/xempus.py` → **NEU v3.3.0**: Xempus API Client (~377 Zeilen, XempusAPI mit Chunked Import, CRUD, Stats, Diff, Status-Mapping, Sync)
+  - `src/domain/xempus_models.py` → **NEU v3.3.0**: 9 Dataclasses (XempusEmployer, XempusTariff, XempusSubsidy, XempusEmployee, XempusConsultation, XempusImportBatch, XempusStatusMapping, XempusRawRow, XempusDiff)
+  - `src/services/provision_import.py` → VU/Xempus-Legacy-Parser (~738 Zeilen, VU_COLUMN_MAPPINGS mit VU_HEADER_SIGNATURES, normalize_vsnr/normalize_vermittler_name/normalize_for_db, Xempus-ID-Support)
+  - `src/services/xempus_parser.py` → **NEU v3.3.0**: Xempus 5-Sheet-Parser (~405 Zeilen, parst ArbG/ArbG-Tarife/ArbG-Zuschuesse/ArbN/Beratungen komplett)
+  - `src/ui/provision/provision_hub.py` → ProvisionHub (~328 Zeilen, 8-Panel Sidebar + QStackedWidget, Lazy-Loading, Subtexte, get_blocking_operations())
+  - `src/ui/provision/widgets.py` → **NEU v3.1.0**: Shared Widgets (~821 Zeilen, 9 Klassen: PillBadgeDelegate, DonutChartWidget, FilterChipBar, SectionHeader, ThreeDotMenuDelegate, KpiCard, PaginationBar, StatementCard, ActivityFeedWidget + 4 Style-Helpers + ProvisionLoadingOverlay)
+  - `src/ui/provision/dashboard_panel.py` → Dashboard (~576 Zeilen, 4 KPI-Karten mit DonutChart, Klaerfall-Counts vom Server, Berater-Ranking, Zeitraumfilter, _BeraterRankingModel)
+  - `src/ui/provision/abrechnungslaeufe_panel.py` → Abrechnungslaeufe (~478 Zeilen, _ParseFileWorker, _ImportWorker mit Chunking 2000/Chunk, _BatchesModel, Auto-Detection)
+  - `src/ui/provision/provisionspositionen_panel.py` → Provisionspositionen (~883 Zeilen, Master-Detail mit FilterChips, PillBadges, VU-Vermittler-Spalte, Mapping-Dialog, Detail-Seitenpanel mit Auditlog, 5 Worker)
+  - `src/ui/provision/xempus_panel.py` → **NEU v3.3.0**: Xempus-Beratungen Listenansicht (~488 Zeilen, Filter: Status/Berater, Suche, Detail-Panel mit VU-Provisionen)
+  - `src/ui/provision/xempus_insight_panel.py` → **NEU v3.3.0**: Xempus Insight Panel (~1209 Zeilen, 4 Tabs: _EmployersTab, _StatsTab, _ImportTab, _StatusMappingTab, _DiffDialog, 8 Worker-Klassen, 3 TableModels)
+  - `src/ui/provision/zuordnung_panel.py` → Zuordnung & Klaerfaelle (~916 Zeilen, Klaerfall-Typen, VU-Vermittler-Spalte, MatchContractDialog mit Multi-Level-Matching, _MappingSyncWorker, Reverse-Matching)
+  - `src/ui/provision/verteilschluessel_panel.py` → Verteilschluessel & Rollen (~608 Zeilen, Modell-Karten mit Beispielrechnung + Mitarbeiter-Tabelle mit Rollen-Badges)
+  - `src/ui/provision/auszahlungen_panel.py` → Auszahlungen & Reports (~639 Zeilen, StatementCards, Status-Workflow, CSV/Excel-Export, PaginationBar 25/Seite)
+  - `src/ui/provision/settings_panel.py` → Einstellungen (~341 Zeilen, ResetConfirmDialog mit 3s-Countdown, _ResetWorker)
   - `src/ui/main_hub.py` → Nav-Button + show/leave Pattern + dynamische Stack-Indizes
   - `src/ui/styles/tokens.py` → PILL_COLORS, ROLE_BADGE_COLORS, ART_BADGE_COLORS, build_rich_tooltip(), get_provision_table_style()
-  - `src/i18n/de.py` → ~320 PROVISION_* Keys (6 Sektionen: Navigation, Dashboard, Positionen, Zuordnung, Verteilschluessel, Auszahlungen, Laeufe + Tooltips + Widget-Labels + Matching V2)
+  - `src/i18n/de.py` → ~320 PROVISION_* Keys (30 Sektionen: Navigation, Hub, Dashboard, Positionen, Zuordnung, Verteilschluessel, Auszahlungen, Laeufe, Settings, Xempus, Matching V2, Tooltips, Widget-Labels, etc.)
 
 ### 2x. Mitteilungszentrale / Communication Hub ✅ (v2.0.0)
 - **Zweck**: Zentrales Kommunikations- und Informationsportal in der App
@@ -2068,17 +2118,22 @@ python test_roundtrip.py
 | `src/api/smartscan.py` | **SmartScanAPI + EmailAccountsAPI Clients (NEU v1.0.6)** |
 | `src/api/messages.py` | **MessagesAPI Client (Mitteilungen + Polling) NEU v2.0.0** |
 | `src/api/chat.py` | **ChatAPI Client (1:1 Chat-Nachrichten) NEU v2.0.0** |
-| `src/api/provision.py` | **Provisions-API Client (~640 Zeilen, 9 Dataclasses + ProvisionAPI) NEU v3.0.0** |
-| `src/services/provision_import.py` | **VU/Xempus-Parser (~595 Zeilen, Column-Mappings, Normalisierung) NEU v3.0.0** |
-| `src/ui/provision/provision_hub.py` | **ProvisionHub (~230 Zeilen, eigene Sidebar + 7 Panels) NEU v3.0.0** |
-| `src/ui/provision/dashboard_panel.py` | **Dashboard (~232 Zeilen, KPI-Karten + BeraterRankingModel) NEU v3.0.0** |
-| `src/ui/provision/employees_panel.py` | **Mitarbeiter-CRUD (~312 Zeilen, EmployeeDialog, Rollenfarben) NEU v3.0.0** |
-| `src/ui/provision/contracts_panel.py` | **Vertraege-Tabelle (~183 Zeilen, Status-Filter, Berater-Zuweisung) NEU v3.0.0** |
-| `src/ui/provision/commissions_panel.py` | **Provisionen (~233 Zeilen, AutoMatchWorker, Status-Filter) NEU v3.0.0** |
-| `src/ui/provision/import_panel.py` | **VU/Xempus-Import (~739 Zeilen, VuImportWorker, ThreadPoolExecutor) NEU v3.0.0** |
-| `src/ui/provision/mappings_panel.py` | **Vermittler-Zuordnung (~202 Zeilen, MappingDialog) NEU v3.0.0** |
-| `src/ui/provision/billing_panel.py` | **Monatsabrechnungen (~247 Zeilen, GenerateWorker, Status-Workflow) NEU v3.0.0** |
-| `src/ui/provision/settings_panel.py` | **Einstellungen + Gefahrenzone (~280 Zeilen, ResetConfirmDialog mit 3s-Countdown, ResetWorker) NEU v3.2.2** |
+| `src/api/provision.py` | **Provisions-API Client (~859 Zeilen, 11 Dataclasses + ProvisionAPI mit 40+ Methoden) v3.0.0+** |
+| `src/api/xempus.py` | **Xempus Insight API Client (~377 Zeilen, XempusAPI, Chunked Import, CRUD, Stats, Diff) NEU v3.3.0** |
+| `src/domain/xempus_models.py` | **Xempus Domain-Modelle (~376 Zeilen, 9 Dataclasses: Employer, Tariff, Subsidy, Employee, Consultation, etc.) NEU v3.3.0** |
+| `src/services/provision_import.py` | **VU/Xempus-Legacy-Parser (~738 Zeilen, VU_COLUMN_MAPPINGS, VU_HEADER_SIGNATURES, Normalisierung) v3.0.0+** |
+| `src/services/xempus_parser.py` | **Xempus 5-Sheet-Parser (~405 Zeilen, parst alle Sheets: ArbG, Tarife, Zuschuesse, ArbN, Beratungen) NEU v3.3.0** |
+| `src/ui/provision/provision_hub.py` | **ProvisionHub (~328 Zeilen, 8-Panel Sidebar + QStackedWidget, Lazy-Loading, get_blocking_operations()) v3.0.0+** |
+| `src/ui/provision/widgets.py` | **Shared Provision Widgets (~821 Zeilen, 9 Widget-Klassen + 4 Style-Helpers + LoadingOverlay) NEU v3.1.0** |
+| `src/ui/provision/dashboard_panel.py` | **Dashboard Entscheidungs-Cockpit (~576 Zeilen, 4 KPI-Karten, Zeitraumfilter, BeraterRanking) v3.0.0+** |
+| `src/ui/provision/abrechnungslaeufe_panel.py` | **Abrechnungslaeufe + VU-Import (~478 Zeilen, ParseFileWorker, ImportWorker, Batch-Historie) v3.1.0** |
+| `src/ui/provision/provisionspositionen_panel.py` | **Provisionspositionen Master-Detail (~883 Zeilen, FilterChips, PillBadges, ThreeDotMenu, Detail-Panel, 5 Worker) v3.1.0+** |
+| `src/ui/provision/xempus_panel.py` | **Xempus-Beratungen Listenansicht (~488 Zeilen, Filter Status/Berater, Detail-Panel mit VU-Provisionen) NEU v3.3.0** |
+| `src/ui/provision/xempus_insight_panel.py` | **Xempus Insight 4-Tab-Panel (~1209 Zeilen, Arbeitgeber/Stats/Import/StatusMapping, 8 Worker, 3 TableModels) NEU v3.3.0** |
+| `src/ui/provision/zuordnung_panel.py` | **Zuordnung & Klaerfaelle (~916 Zeilen, MatchContractDialog, MappingSyncWorker, Reverse-Matching) v3.1.0+** |
+| `src/ui/provision/verteilschluessel_panel.py` | **Verteilschluessel & Rollen (~608 Zeilen, Modell-Karten, Mitarbeiter-Tabelle, CRUD-Dialoge) v3.1.0** |
+| `src/ui/provision/auszahlungen_panel.py` | **Auszahlungen & Reports (~639 Zeilen, StatementCard, Status-Workflow, CSV/Excel-Export) v3.1.0** |
+| `src/ui/provision/settings_panel.py` | **Einstellungen + Gefahrenzone (~341 Zeilen, ResetConfirmDialog mit 3s-Countdown, _ResetWorker) NEU v3.2.2** |
 | `src/api/auth.py` | **AuthAPI Client (Login, User-Model mit Permissions)** |
 | `src/api/gdv_api.py` | **GDV API Client (GDV-Dateien server-seitig parsen/speichern)** |
 | `src/api/xml_index.py` | **XML-Index API Client (BiPRO-XML-Rohdaten-Index)** |
@@ -2107,7 +2162,8 @@ python test_roundtrip.py
 | `→ api/ai_providers.php` | **KI-Provider-Verwaltung (CRUD, Aktivierung, Test) NEU v2.1.2** |
 | `→ api/model_pricing.php` | **Modell-Preise + Kosten-Helpers + Request-Logging NEU v2.1.2** |
 | `→ api/document_rules.php` | **Dokumenten-Regeln Settings (Public GET + Admin PUT) NEU v2.1.3** |
-| `→ api/provision.php` | **Provisionsmanagement Backend (~1100 Zeilen, Split-Engine, Auto-Matching, 15+ Routen) NEU v3.0.0** |
+| `→ api/provision.php` | **Provisionsmanagement Backend (~2289 Zeilen, Split-Engine, Auto-Matching, 34 Routen, Activity-Logging) v3.0.0+** |
+| `→ api/xempus.php` | **Xempus Insight Engine Backend (~1360 Zeilen, 4-Phasen-Import, CRUD, Stats, Diff, Sync) NEU v3.3.0** |
 | `→ api/releases.php` | **Release-Verwaltung + Update-Check (NEU v0.9.9)** |
 | `→ api/incoming_scans.php` | **Scan-Upload fuer Power Automate (API-Key-Auth) (NEU v1.0.2)** |
 | `→ api/passwords.php` | **Passwort-Verwaltung (PDF/ZIP) Public + Admin (NEU v1.0.5)** |

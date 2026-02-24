@@ -382,6 +382,253 @@ for contract in gdv_data.contracts:
 
 ---
 
+---
+
+## Provisionsmanagement-Datenmodell
+
+### Uebersicht
+
+Das Provisionsdatenmodell bildet die Geschaeftsfuehrer-Ebene der Provisionsabrechnung ab: VU-Provisionslisten werden importiert, automatisch Vertraegen zugeordnet und in Berater-Splits aufgeteilt.
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                      Provisionsmanagement                               │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│  pm_commission_models ──▶ pm_employees ──┬──▶ pm_commissions            │
+│  (Provisionssaetze)      (Berater/TL)    │    (VU-Buchungen)           │
+│                                          │        │                    │
+│                                          ├──▶ pm_berater_abrechnungen  │
+│                                          │    (Monats-Snapshots)       │
+│                          pm_contracts ───┘                              │
+│                          (Xempus-Vertraege)                            │
+│                              │                                          │
+│  pm_vermittler_mapping ◀────┘  pm_import_batches                       │
+│  (VU→Berater)                  (Import-Historie)                       │
+│                                                                         │
+│  ── Xempus Insight Engine ──                                           │
+│  xempus_employers ──▶ xempus_tariffs                                   │
+│       │             ──▶ xempus_subsidies                               │
+│       └──▶ xempus_employees ──▶ xempus_consultations                  │
+│  xempus_raw_rows, xempus_import_batches, xempus_status_mappings       │
+│  xempus_commission_matches                                              │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+### Provisions-Entitaeten
+
+#### CommissionModel (pm_commission_models)
+
+Provisionssatzmodell (z.B. "Standard 80%", "Senior 85%").
+
+| Feld | Typ | Beschreibung |
+|------|-----|--------------|
+| `id` | int | Primaerschluessel |
+| `name` | str | Modell-Name (z.B. "Standard") |
+| `commission_rate` | float | Provisionssatz in % (0-100) |
+| `is_active` | bool | Aktiv/Inaktiv |
+
+#### Employee (pm_employees)
+
+Mitarbeiter mit Rolle und Provisionsmodell.
+
+| Feld | Typ | Beschreibung |
+|------|-----|--------------|
+| `id` | int | Primaerschluessel |
+| `name` | str | Vollstaendiger Name |
+| `role` | enum | `consulter`, `teamleiter`, `backoffice` |
+| `commission_model_id` | int | FK → pm_commission_models |
+| `commission_rate_override` | float | Ueberschreibt Model-Rate (NULL = Model-Rate, 0-100) |
+| `teamleiter_id` | int | FK → pm_employees (Teamleiter des Beraters) |
+| `tl_override_rate` | float | TL-Abzugs-Rate in % (0-100) |
+| `tl_override_basis` | enum | `berater_anteil` oder `gesamt_courtage` |
+| `is_active` | bool | Aktiv (soft-delete) |
+
+**Properties**: `effective_rate` = `commission_rate_override` oder `model.commission_rate`
+
+**Validierung**: `role` Whitelist, Rate 0-100, `teamleiter_id != id` (keine Selbstreferenz)
+
+#### Contract (pm_contracts)
+
+Vertrag aus Xempus-Import.
+
+| Feld | Typ | Beschreibung |
+|------|-----|--------------|
+| `id` | int | Primaerschluessel |
+| `vsnr` | str | Versicherungsschein-Nr (Original) |
+| `vsnr_normalized` | str | Normalisiert (nur Ziffern, alle Nullen entfernt) |
+| `vsnr_alt` / `vsnr_alt_normalized` | str | Alternative VSNR (Umbenennungen) |
+| `vu_name` | str | Versicherer-Name |
+| `versicherungsnehmer` | str | Versicherungsnehmer |
+| `versicherungsnehmer_normalized` | str | Normalisiert fuer LIKE-Suche |
+| `sparte` | str | Versicherungssparte |
+| `beitrag` | float | Beitragssumme |
+| `berater_id` | int | FK → pm_employees (zugeordneter Berater) |
+| `status` | enum | `offen`, `beantragt`, `aktiv`, `provision_erhalten`, `gekuendigt`, `ruhend` |
+| `xempus_id` | str | Xempus-ID (UNIQUE) |
+| `import_batch_id` | int | FK → pm_import_batches |
+
+#### Commission (pm_commissions)
+
+Provisionsbuchung aus VU-Import.
+
+| Feld | Typ | Beschreibung |
+|------|-----|--------------|
+| `id` | int | Primaerschluessel |
+| `vsnr` / `vsnr_normalized` | str | Versicherungsschein-Nr |
+| `versicherer` | str | VU-Name |
+| `vermittler_name` / `vermittler_name_normalized` | str | VU-Vermittlername |
+| `versicherungsnehmer_normalized` | str | Normalisiert |
+| `betrag` | float | Provisionsbetrag (positiv oder negativ) |
+| `buchungsdatum` | str | Buchungsdatum (YYYY-MM-DD) |
+| `art` | enum | `provision`, `rueckbelastung`, `storno`, `nullmeldung` |
+| `contract_id` | int | FK → pm_contracts (gesetzt durch Matching) |
+| `berater_id` | int | FK → pm_employees (gesetzt durch Matching) |
+| `match_status` | enum | `unmatched`, `auto_matched`, `manual_matched`, `ignored` |
+| `match_confidence` | float | Matching-Konfidenz (0.0-1.0) |
+| `berater_anteil` | float | Berater-Anteil (berechnet) |
+| `tl_anteil` | float | Teamleiter-Anteil (berechnet) |
+| `ag_anteil` | float | Arbeitgeber-Anteil (berechnet) |
+| `xempus_consultation_id` | str | Xempus-Beratungs-ID (NEU v3.3.0) |
+| `row_hash` | str | SHA256 fuer Import-Duplikat-Erkennung |
+| `import_batch_id` | int | FK → pm_import_batches |
+
+**Invariante**: `berater_anteil + tl_anteil + ag_anteil == betrag` (immer)
+
+#### BeraterAbrechnung (pm_berater_abrechnungen)
+
+Monatsabrechnung pro Berater (Snapshot-Prinzip).
+
+| Feld | Typ | Beschreibung |
+|------|-----|--------------|
+| `id` | int | Primaerschluessel |
+| `berater_id` | int | FK → pm_employees |
+| `abrechnungsmonat` | str | Format YYYY-MM |
+| `brutto_provision` | float | Brutto-Provision |
+| `tl_abzug` | float | TL-Abzug |
+| `netto_provision` | float | Netto (brutto - tl_abzug) |
+| `rueckbelastungen` | float | Rueckbelastungen des Monats |
+| `auszahlung` | float | Auszahlungsbetrag |
+| `revision` | int | Auto-Inkrement bei erneuter Generierung |
+| `status` | enum | `berechnet`, `geprueft`, `freigegeben`, `ausgezahlt` |
+| `is_locked` | bool | Gesperrt ab `freigegeben` |
+
+**UNIQUE Constraint**: `(abrechnungsmonat, berater_id, revision)`
+
+#### VermittlerMapping (pm_vermittler_mapping)
+
+Zuordnung VU-Vermittlername → interner Berater.
+
+| Feld | Typ | Beschreibung |
+|------|-----|--------------|
+| `id` | int | Primaerschluessel |
+| `vermittler_name` | str | Original VU-Vermittlername |
+| `vermittler_name_normalized` | str | Normalisiert (UNIQUE) |
+| `berater_id` | int | FK → pm_employees |
+
+---
+
+### Xempus-Entitaeten (NEU v3.3.0)
+
+#### XempusEmployer (xempus_employers)
+
+Arbeitgeber aus Xempus-Import.
+
+| Feld | Typ | Beschreibung |
+|------|-----|--------------|
+| `id` | str | Xempus-ID |
+| `name` | str | Firmenname |
+| `street`, `plz`, `city` | str | Adresse |
+| `iban`, `bic` | str | Bankverbindung |
+| `first_seen_batch_id` / `last_seen_batch_id` | int | Import-Tracking |
+| `employee_count`, `tariff_count`, `subsidy_count` | int | Aggregierte Zaehler |
+
+#### XempusConsultation (xempus_consultations)
+
+Beratung (Vertrag) aus Xempus.
+
+| Feld | Typ | Beschreibung |
+|------|-----|--------------|
+| `id` | str | Xempus-ID |
+| `employee_id` | str | FK → xempus_employees |
+| `vsnr` | str | Versicherungsschein-Nr |
+| `versicherer` | str | VU-Name |
+| `sparte` | str | Sparte |
+| `status` | str | Beratungsstatus |
+| `berater_name` | str | Zustaendiger Berater |
+
+---
+
+### Provisions-Zustandsautomat
+
+#### Abrechnungs-Status
+
+```
+┌─────────────┐
+│  berechnet  │ ◀── generate_abrechnung()
+└──────┬──────┘
+       │ Status → geprueft
+       ▼
+┌─────────────┐
+│  geprueft   │ ◀── Ruecksetzung moeglich
+└──────┬──────┘
+       │ Status → freigegeben (is_locked=1)
+       ▼
+┌─────────────┐
+│ freigegeben │ ◀── Ruecksetzung moeglich
+└──────┬──────┘
+       │ Status → ausgezahlt
+       ▼
+┌─────────────┐
+│  ausgezahlt │  (Terminal-State)
+└─────────────┘
+```
+
+#### Matching-Status (Commission)
+
+```
+┌─────────────┐     Auto-Match     ┌────────────────┐
+│  unmatched  │ ──────────────────▶│ auto_matched   │
+└──────┬──────┘                    └────────────────┘
+       │ Manuell                           │
+       ▼                                   │
+┌────────────────┐                         │
+│manual_matched  │ ◀───────────────────────┘ (Reassignment)
+└────────────────┘
+       │ Ignorieren
+       ▼
+┌─────────────┐
+│   ignored   │
+└─────────────┘
+```
+
+---
+
+### Normalisierungsregeln
+
+#### VSNR-Normalisierung
+- Nicht-Ziffern entfernen
+- ALLE Nullen entfernen (fuehrend UND intern)
+- Scientific Notation zu Integer konvertieren
+- Beispiel: "00123-045" → "12345"
+
+#### Vermittler-Normalisierung
+- Lowercase
+- Umlaute → ae/oe/ue/ss
+- Sonderzeichen entfernen
+- Beispiel: "Müller-Schmidt" → "muellerschmidt"
+
+#### VN-Normalisierung (normalizeForDb)
+- Lowercase
+- Umlaute → ae/oe/ue/ss
+- Klammern aufloesen
+- Sonderzeichen entfernen
+- Beispiel: "Müller (Hans)" → "mueller hans"
+
+---
+
 ## Referenzen
 
 - **GDV-Spezifikation**: https://www.gdv-online.de/vuvm/bestand/

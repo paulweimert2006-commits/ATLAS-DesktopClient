@@ -5,7 +5,7 @@
 Ein einziger Befehl erledigt alles - Version hochzaehlen, bauen und hochladen:
 
 ```
-release.bat
+0_release.bat
 ```
 
 Das Script fragt interaktiv nach:
@@ -29,9 +29,9 @@ sodass sie bei zukuenftigen Releases im unteren Bereich erscheinen.
 
 **Optionen fuer Versions-Increment:**
 ```
-release.bat              ← Patch:  0.9.8 → 0.9.9  (Standard)
-release.bat minor        ← Minor:  0.9.8 → 0.10.0
-release.bat major        ← Major:  0.9.8 → 1.0.0
+0_release.bat              ← Patch:  0.9.8 → 0.9.9  (Standard)
+0_release.bat minor        ← Minor:  0.9.8 → 0.10.0
+0_release.bat major        ← Major:  0.9.8 → 1.0.0
 ```
 
 Nach Abschluss ist das Release sofort in der Admin-Verwaltung sichtbar.

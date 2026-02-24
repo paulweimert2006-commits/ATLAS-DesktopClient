@@ -9,9 +9,9 @@ REM   - App bauen (PyInstaller + Inno Setup)
 REM   - Auf Server hochladen
 REM
 REM Optionen:
-REM   release.bat              Patch-Increment (0.9.8 -> 0.9.9)
-REM   release.bat minor        Minor-Increment (0.9.8 -> 0.10.0)
-REM   release.bat major        Major-Increment (0.9.8 -> 1.0.0)
+REM   0_release.bat              Patch-Increment (0.9.8 -> 0.9.9)
+REM   0_release.bat minor        Minor-Increment (0.9.8 -> 0.10.0)
+REM   0_release.bat major        Major-Increment (0.9.8 -> 1.0.0)
 REM
 REM ============================================
 

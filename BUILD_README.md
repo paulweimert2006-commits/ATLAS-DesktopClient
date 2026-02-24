@@ -105,25 +105,28 @@ Verteile `Output\ACENCIA-ATLAS-Setup.exe`.
 - Startmenü-Eintrag
 - Saubere Deinstallation
 
-## Icon hinzufügen (optional)
+## Icon
 
-1. Erstelle `assets/icon.ico` (256x256 PNG → ICO konvertieren)
-2. Entferne `#` in `build_config.spec` Zeile 71 und `installer.iss` Zeile 21
-3. Neu bauen
+Das App-Icon liegt unter `src/ui/assets/icon.ico` und wird automatisch in den Build eingebunden.
 
-## Updates verteilen
+## Updates verteilen (empfohlen)
 
-Bei neuen Versionen:
-1. Version in `version_info.txt` erhöhen
-2. Version in `installer.iss` anpassen (Zeile 7)
-3. Neu bauen
-4. Installer verteilen
+Fuer neue Releases den automatisierten Workflow nutzen:
 
-## Auto-Update (zukünftig)
+```
+0_release.bat
+```
 
-Für automatische Updates siehe:
-- Sparkle (Windows): https://winsparkle.org/
-- PyUpdater: https://www.pyupdater.org/
+Das Script:
+1. Zaehlt die Version automatisch hoch (VERSION-Datei)
+2. Aktualisiert version_info.txt und installer.iss
+3. Baut die App (PyInstaller + Inno Setup)
+4. Laedt den Installer auf den Server hoch
+5. Erstellt den Release-Eintrag in der Datenbank
+
+Nutzer erhalten das Update automatisch (Auto-Update-System seit v0.9.9).
+
+Siehe `RELEASE_HOWTO.md` fuer Details.
 
 ---
 

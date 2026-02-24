@@ -30,7 +30,8 @@ wheels/
 
 # PyInstaller
 *.manifest
-*.spec
+# NICHT ignorieren: build_config.spec (wird fuer den Build benoetigt!)
+# *.spec
 
 # Installer logs
 pip-log.txt

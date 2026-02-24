@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
     QListWidget, QListWidgetItem, QTableWidget, QTableWidgetItem,
     QHeaderView, QPushButton, QLabel, QTextEdit, QProgressDialog, QFileDialog,
     QMessageBox, QDialog, QFormLayout, QLineEdit, QComboBox,
-    QDialogButtonBox, QCheckBox, QFrame, QProgressBar, QApplication
+    QDialogButtonBox, QCheckBox, QFrame, QProgressBar
 )
 from PySide6.QtCore import Qt, Signal, QThread, QTimer
 from PySide6.QtGui import QFont, QColor, QPainter
@@ -345,7 +345,6 @@ class BiPROProgressOverlay(QWidget):
         self.setGeometry(self.parent().rect() if self.parent() else self.rect())
         self.raise_()
         self.setVisible(True)
-        QApplication.processEvents()
     
     def update_download_progress(self, current: int, docs_count: int = 0, success: bool = True):
         """Aktualisiert den Download-Fortschritt (für sequentiellen Modus)."""
@@ -363,7 +362,6 @@ class BiPROProgressOverlay(QWidget):
         
         # Status-Text
         self._status_label.setText(f"{current} von {self._total} Lieferung(en) geladen")
-        QApplication.processEvents()
     
     def update_parallel_progress(self, current: int, total: int, docs_count: int, 
                                   failed_count: int, active_workers: int):
@@ -412,8 +410,6 @@ class BiPROProgressOverlay(QWidget):
                 font-size: {FONT_SIZE_CAPTION};
                 color: {TEXT_SECONDARY};
             """)
-        
-        QApplication.processEvents()
     
     # =========================================================================
     # PHASE 2: KI-Verarbeitung
@@ -429,7 +425,6 @@ class BiPROProgressOverlay(QWidget):
         self._subtitle_label.setText(f"{total_docs} Dokument(e) zur Analyse")
         self._status_label.setText("KI-Analyse läuft...")
         self._progress_bar.setValue(0)
-        QApplication.processEvents()
     
     def update_ai_progress(self, current: int, classified: bool = True):
         """Aktualisiert den KI-Fortschritt."""
@@ -447,7 +442,6 @@ class BiPROProgressOverlay(QWidget):
         
         # Status-Text
         self._status_label.setText(f"KI analysiert Dokumente ({current} / {self._total})")
-        QApplication.processEvents()
     
     # =========================================================================
     # PHASE 3: Abschluss
@@ -492,8 +486,6 @@ class BiPROProgressOverlay(QWidget):
         # Auto-Close starten
         if auto_close_seconds > 0:
             self._auto_close_timer.start(auto_close_seconds * 1000)
-        
-        QApplication.processEvents()
     
     def _on_auto_close(self):
         """Wird nach Auto-Close Timeout aufgerufen."""
@@ -2477,11 +2469,12 @@ class BiPROView(QWidget):
                 transfer_url=self._current_connection.get_effective_transfer_url(),
                 consumer_id=self._current_connection.consumer_id or "",
                 max_workers=max_workers,
+                api_client=self.docs_api.client,
                 parent=self
             )
             
             self._parallel_manager.progress_updated.connect(self._on_parallel_progress)
-            self._parallel_manager.download_finished.connect(self._on_parallel_download_finished)
+            self._parallel_manager.shipment_uploaded.connect(self._on_parallel_shipment_uploaded)
             self._parallel_manager.log_message.connect(self._log)
             self._parallel_manager.all_finished.connect(self._on_all_vus_vu_download_complete)
             self._parallel_manager.error.connect(self._on_all_vus_download_error)
@@ -2519,11 +2512,9 @@ class BiPROView(QWidget):
         self._progress_overlay._stats['download_failed'] = stats.get('failed', 0)
         self._progress_overlay._stats['download_docs'] = stats.get('docs', 0)
         
-        # Aufräumen
-        self._parallel_manager = None
+        self._cleanup_parallel_manager()
         self._current_credentials = None
         
-        # Naechste VU (kurze Pause fuer UI-Updates)
         QTimer.singleShot(200, self._process_next_vu)
     
     def _on_all_vus_download_error(self, error: str):
@@ -2531,7 +2522,7 @@ class BiPROView(QWidget):
         vu_name = self._current_connection.vu_name if self._current_connection else "?"
         self._log(f"[{vu_name}] Download-Fehler: {error}")
         self._all_vus_stats['vus_processed'] += 1
-        self._parallel_manager = None
+        self._cleanup_parallel_manager()
         self._current_credentials = None
         # Weiter mit naechster VU
         QTimer.singleShot(200, self._process_next_vu)
@@ -2941,7 +2932,6 @@ class BiPROView(QWidget):
                 parallel=True
             )
             
-            # ParallelDownloadManager erstellen
             self._parallel_manager = ParallelDownloadManager(
                 credentials=self._current_credentials,
                 vu_name=self._current_connection.vu_name,
@@ -2950,12 +2940,12 @@ class BiPROView(QWidget):
                 transfer_url=self._current_connection.get_effective_transfer_url(),
                 consumer_id=self._current_connection.consumer_id or "",
                 max_workers=max_workers,
+                api_client=self.docs_api.client,
                 parent=self
             )
             
-            # Signale verbinden
             self._parallel_manager.progress_updated.connect(self._on_parallel_progress)
-            self._parallel_manager.download_finished.connect(self._on_parallel_download_finished)
+            self._parallel_manager.shipment_uploaded.connect(self._on_parallel_shipment_uploaded)
             self._parallel_manager.log_message.connect(self._log)
             self._parallel_manager.all_finished.connect(self._on_parallel_all_finished)
             self._parallel_manager.error.connect(self._on_parallel_error)
@@ -2985,62 +2975,14 @@ class BiPROView(QWidget):
             current, total, docs_count, failed_count, active_workers
         )
     
-    def _on_parallel_download_finished(self, shipment_id: str, documents: list, 
-                                        raw_xml_path: str, category: str):
-        """Callback wenn eine Lieferung parallel heruntergeladen wurde."""
-        # Ins Archiv hochladen (laeuft im Haupt-Thread fuer Thread-Sicherheit)
-        vu_name = self._current_connection.vu_name if self._current_connection else None
-        upload_failed = 0
-        problem_pdfs = 0
+    def _on_parallel_shipment_uploaded(self, shipment_id: str, doc_count: int,
+                                        upload_errors: int):
+        """Callback wenn eine Lieferung heruntergeladen und hochgeladen wurde.
         
-        for doc in documents:
-            try:
-                # Bestimme Box und Validierungsstatus
-                validation_status = doc.get('validation_status')
-                is_valid = doc.get('is_valid', True)
-                
-                # Bei PDF-Problemen: In Sonstige-Box mit Reason-Code
-                if not is_valid and validation_status:
-                    problem_pdfs += 1
-                    self._log(f"    [PDF-PROBLEM] {doc.get('filename', 'unbekannt')}: {validation_status}")
-                    
-                    self.docs_api.upload(
-                        file_path=doc['filepath'],
-                        source_type='bipro_auto',
-                        shipment_id=shipment_id,
-                        vu_name=vu_name,
-                        bipro_category=category,
-                        validation_status=validation_status,
-                        box_type='sonstige'  # Problematische PDFs direkt in Sonstige-Box
-                    )
-                else:
-                    # Normale Dokumente in Eingangsbox
-                    self.docs_api.upload(
-                        file_path=doc['filepath'],
-                        source_type='bipro_auto',
-                        shipment_id=shipment_id,
-                        vu_name=vu_name,
-                        bipro_category=category,
-                        validation_status=validation_status if validation_status else 'OK'
-                    )
-            except Exception as e:
-                upload_failed += 1
-                self._log(f"    [!] Upload fehlgeschlagen: {doc.get('filename', 'unbekannt')}: {e}")
-        
-        if problem_pdfs > 0:
-            self._log(f"    [INFO] {problem_pdfs} problematische PDF(s) in Sonstige-Box")
-        
-        # Raw XML hochladen (direkt ins Roh-Archiv)
-        try:
-            self.docs_api.upload(
-                file_path=raw_xml_path,
-                source_type='bipro_auto',
-                shipment_id=shipment_id,
-                vu_name=vu_name,
-                box_type='roh'  # XML Rohdateien direkt ins Roh-Archiv
-            )
-        except Exception as e:
-            self._log(f"    [!] Raw XML Upload fehlgeschlagen: {e}")
+        Uploads laufen im Worker-Thread, dieser Handler protokolliert nur.
+        """
+        if upload_errors > 0:
+            self._log(f"    [WARN] Lieferung {shipment_id}: {upload_errors} Upload-Fehler")
     
     def _on_parallel_all_finished(self, stats: dict):
         """Callback wenn alle parallelen Downloads fertig sind."""
@@ -3085,11 +3027,16 @@ class BiPROView(QWidget):
         self._progress_overlay._stats['download_docs'] = stats.get('docs', 0)
         self._progress_overlay._stats['download_retries'] = stats.get('retries', 0)
         
-        # Fazit anzeigen
         self._progress_overlay.show_completion(auto_close_seconds=8)
         
-        # Manager aufräumen
-        self._parallel_manager = None
+        self._cleanup_parallel_manager()
+    
+    def _cleanup_parallel_manager(self):
+        """Wartet auf QThread-Ende und gibt die Referenz frei."""
+        if self._parallel_manager is not None:
+            if self._parallel_manager.isRunning():
+                self._parallel_manager.wait(5000)
+            self._parallel_manager = None
     
     def _on_parallel_error(self, error: str):
         """Callback bei Fehler im parallelen Download."""
@@ -3112,10 +3059,9 @@ class BiPROView(QWidget):
         self.download_btn.setEnabled(True)
         self.download_all_btn.setEnabled(True)
         self._current_credentials = None
-        self._parallel_manager = None
         
-        # Overlay schließen
         self._progress_overlay.setVisible(False)
+        self._cleanup_parallel_manager()
         
         self._toast_manager.show_error(f"Paralleler Download fehlgeschlagen:\n{error}")
     

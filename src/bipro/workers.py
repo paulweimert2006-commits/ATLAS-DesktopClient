@@ -649,30 +649,33 @@ class ParallelDownloadManager(QThread):
     """
     Manager für parallele BiPRO-Downloads mit Token-Sharing und Rate Limiting.
     
+    Downloads UND Uploads laufen komplett in Worker-Threads (per-Thread API-Client).
+    Der Main-Thread wird nicht blockiert.
+    
     Features:
     - Parallele Downloads mit konfigurierbarer Worker-Anzahl (Standard: 5)
     - Thread-safe Token-Sharing (Token wird nur 1x geholt)
     - Adaptives Rate Limiting (HTTP 429/503 Erkennung)
     - Automatische Retries bei Fehlern (max. 3 Versuche)
     - Keine Dokumentenverluste durch Retry-Queue
+    - Per-Thread API-Clients fuer thread-safe Uploads
+    - Early Text Extraction fuer Inhaltsduplikat-Erkennung
     
     Signals:
     - progress_updated: (current, total, docs_count, failed_count, active_workers)
-    - download_finished: (shipment_id, documents, raw_xml_path, category)
+    - shipment_uploaded: (shipment_id, doc_count, upload_errors)
     - log_message: (message)
     - all_finished: (stats_dict)
     - error: (error_message)
     """
     
-    # Signals für UI-Updates (thread-safe)
     progress_updated = Signal(int, int, int, int, int)  # current, total, docs, failed, active_workers
-    download_finished = Signal(str, list, str, str)  # shipment_id, docs, xml_path, category
+    shipment_uploaded = Signal(str, int, int)  # shipment_id, doc_count, upload_errors
     log_message = Signal(str)
     all_finished = Signal(dict)  # stats
     error = Signal(str)
     
-    # Konfiguration (kann über processing_rules.py überschrieben werden)
-    DEFAULT_MAX_WORKERS = 10  # Erhöht von 5 auf 10 für bessere Performance
+    DEFAULT_MAX_WORKERS = 10
     DEFAULT_MAX_RETRIES = 3
     DEFAULT_INITIAL_BACKOFF = 1.0
     DEFAULT_MAX_BACKOFF = 30.0
@@ -682,11 +685,12 @@ class ParallelDownloadManager(QThread):
         self,
         credentials: 'VUCredentials',
         vu_name: str,
-        shipments: list,  # Liste von Dicts mit 'id', 'category', 'created_at'
+        shipments: list,
         sts_url: str,
         transfer_url: str,
         consumer_id: str = "",
         max_workers: int = None,
+        api_client: 'APIClient' = None,
         parent=None
     ):
         super().__init__(parent)
@@ -697,18 +701,20 @@ class ParallelDownloadManager(QThread):
         self.sts_url = sts_url
         self.transfer_url = transfer_url
         self.consumer_id = consumer_id
+        self._api_client = api_client
         
-        # Worker-Pool Konfiguration - automatisch an Anzahl der Lieferungen anpassen
         self._configured_workers = max_workers or self.DEFAULT_MAX_WORKERS
         self.max_workers = min(self._configured_workers, len(shipments))
         
-        # Interne Verwaltung
         self._download_queue: queue.Queue = queue.Queue()
         self._token_manager: Optional[SharedTokenManager] = None
         self._rate_limiter: Optional[AdaptiveRateLimiter] = None
         self._executor: Optional[ThreadPoolExecutor] = None
         
-        # Statistiken (thread-safe)
+        # Per-Thread API-Clients (thread_id -> DocumentsAPI)
+        self._thread_apis: dict = {}
+        self._thread_apis_lock = threading.Lock()
+        
         self._stats_lock = threading.Lock()
         self._stats = {
             'total': len(shipments),
@@ -720,7 +726,6 @@ class ParallelDownloadManager(QThread):
         }
         self._processed_count = 0
         
-        # Abbruch-Flag
         self._cancelled = False
         self._shutdown_event = threading.Event()
     
@@ -871,13 +876,16 @@ class ParallelDownloadManager(QThread):
                 continue
             
             try:
-                # Download durchführen
                 documents, raw_xml_path = self._download_shipment(
                     shipment_id, category, created_at
                 )
                 
-                # Erfolg!
                 self._rate_limiter.on_success(shipment_id)
+                
+                # Upload direkt im Worker-Thread (per-Thread API-Client)
+                upload_errors = self._upload_shipment_docs(
+                    shipment_id, documents, raw_xml_path, category
+                )
                 
                 with self._stats_lock:
                     self._stats['success'] += 1
@@ -888,10 +896,9 @@ class ParallelDownloadManager(QThread):
                     docs = self._stats['docs']
                     failed = self._stats['failed']
                 
-                # UI-Update emittieren
                 active = self._rate_limiter.get_active_workers()
                 self.progress_updated.emit(current, total, docs, failed, active)
-                self.download_finished.emit(shipment_id, documents, raw_xml_path, category)
+                self.shipment_uploaded.emit(shipment_id, len(documents), upload_errors)
                 self.log_message.emit(f"  [OK] Lieferung {shipment_id}: {len(documents)} Dokument(e)")
                 
             except Exception as e:
@@ -933,6 +940,99 @@ class ParallelDownloadManager(QThread):
             
             finally:
                 self._download_queue.task_done()
+    
+    def _get_thread_api(self):
+        """Gibt eine thread-lokale DocumentsAPI-Instanz zurueck."""
+        if not self._api_client:
+            return None
+        tid = threading.get_ident()
+        with self._thread_apis_lock:
+            if tid not in self._thread_apis:
+                from api.client import APIClient
+                from api.documents import DocumentsAPI
+                client = APIClient(self._api_client.config)
+                client.set_token(self._api_client._token)
+                self._thread_apis[tid] = DocumentsAPI(client)
+            return self._thread_apis[tid]
+    
+    def _upload_shipment_docs(self, shipment_id: str, documents: list,
+                              raw_xml_path: str, category: str) -> int:
+        """Laedt Dokumente und Raw-XML im Worker-Thread hoch.
+        
+        Returns:
+            Anzahl fehlgeschlagener Uploads
+        """
+        docs_api = self._get_thread_api()
+        if not docs_api:
+            return 0
+        
+        upload_errors = 0
+        vu_name = self.vu_name
+        
+        for doc in documents:
+            try:
+                validation_status = doc.get('validation_status')
+                is_valid = doc.get('is_valid', True)
+                
+                if not is_valid and validation_status:
+                    self.log_message.emit(
+                        f"    [PDF-PROBLEM] {doc.get('filename', 'unbekannt')}: {validation_status}"
+                    )
+                    uploaded = docs_api.upload(
+                        file_path=doc['filepath'],
+                        source_type='bipro_auto',
+                        shipment_id=shipment_id,
+                        vu_name=vu_name,
+                        bipro_category=category,
+                        validation_status=validation_status,
+                        box_type='sonstige'
+                    )
+                else:
+                    uploaded = docs_api.upload(
+                        file_path=doc['filepath'],
+                        source_type='bipro_auto',
+                        shipment_id=shipment_id,
+                        vu_name=vu_name,
+                        bipro_category=category,
+                        validation_status=validation_status if validation_status else 'OK'
+                    )
+                
+                if uploaded and doc.get('is_valid', True):
+                    try:
+                        from services.early_text_extract import extract_and_save_text
+                        extract_and_save_text(
+                            docs_api, uploaded.id, doc['filepath'],
+                            doc.get('filename', '')
+                        )
+                    except Exception:
+                        pass
+            except Exception as e:
+                upload_errors += 1
+                self.log_message.emit(
+                    f"    [!] Upload fehlgeschlagen: {doc.get('filename', 'unbekannt')}: {e}"
+                )
+        
+        try:
+            docs_api.upload(
+                file_path=raw_xml_path,
+                source_type='bipro_auto',
+                shipment_id=shipment_id,
+                vu_name=vu_name,
+                box_type='roh'
+            )
+        except Exception as e:
+            self.log_message.emit(f"    [!] Raw XML Upload fehlgeschlagen: {e}")
+        
+        # Temp-Dateien aufraumen
+        try:
+            temp_dir = os.path.dirname(raw_xml_path)
+            if temp_dir and 'bipro_parallel_' in temp_dir:
+                import shutil
+                shutil.rmtree(temp_dir, ignore_errors=True)
+        except Exception:
+            pass
+        
+        return upload_errors
     
     def _download_shipment(self, shipment_id, category, created_at):
         """

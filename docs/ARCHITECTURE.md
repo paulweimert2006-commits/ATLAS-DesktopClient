@@ -1,50 +1,62 @@
-# Architektur - ACENCIA ATLAS v3.0.0
+# Architektur - ACENCIA ATLAS v3.3.0
 
-**Stand:** 19. Februar 2026
+**Stand:** 24. Februar 2026
 
 **Primaere Referenz: `AGENTS.md`** - Dieses Dokument enthaelt ergaenzende Architektur-Details. Fuer den aktuellen Feature-Stand und Debugging-Tipps siehe `AGENTS.md`.
 
-## Neue Features in v3.0.0 (Provisionsmanagement / GF-Bereich)
+## Neue Features in v3.0.0–v3.3.0 (Provisionsmanagement / GF-Bereich)
 
 ### Provisionsmanagement-Architektur
 
 Das Provisionsmanagement ist als eigenstaendiger Vollbild-Hub implementiert (identisches Pattern wie AdminView):
 
 ```
-┌─────────────────────────────────────────────────────────────────────────┐
-│  ProvisionHub (Vollbild)                                                │
-│  ┌──────────────┐  ┌──────────────────────────────────────────────────┐ │
-│  │ Sidebar      │  │ QStackedWidget (7 Panels, Lazy-Loading)         │ │
-│  │              │  │                                                  │ │
-│  │ ▸ Dashboard  │  │  ┌──────────────────────────────────────────┐   │ │
-│  │ ▸ Mitarb.   │  │  │ DashboardPanel                           │   │ │
-│  │ ▸ Vertraege │  │  │  KPI-Karten  |  Berater-Ranking-Tabelle  │   │ │
-│  │ ▸ Provision │  │  └──────────────────────────────────────────┘   │ │
-│  │ ▸ Import    │  │  ┌──────────────────────────────────────────┐   │ │
-│  │ ▸ Mappings  │  │  │ EmployeesPanel    (CRUD + EmployeeDialog)│   │ │
-│  │ ▸ Abrechn.  │  │  │ ContractsPanel    (Filter + Zuweisung)  │   │ │
-│  │              │  │  │ CommissionsPanel  (AutoMatch + Filter)   │   │ │
-│  │ [Zurueck]   │  │  │ ImportPanel       (VU + Xempus + Worker) │   │ │
-│  │              │  │  │ MappingsPanel     (VU→Berater Mapping)  │   │ │
-│  └──────────────┘  │  │ BillingPanel      (Generate + Workflow)  │   │ │
-│                     │  └──────────────────────────────────────────┘   │ │
-│                     └──────────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  ProvisionHub (Vollbild, ~328 Zeilen)                                       │
+│  ┌──────────────────┐  ┌──────────────────────────────────────────────────┐ │
+│  │ Sidebar (8 Items) │  │ QStackedWidget (8 Panels, Lazy-Loading)         │ │
+│  │                   │  │                                                  │ │
+│  │ ▸ Uebersicht     │  │  ┌──────────────────────────────────────────┐   │ │
+│  │ ▸ Abrechnungs-   │  │  │ DashboardPanel (~576 Z.)                │   │ │
+│  │   laeufe         │  │  │  4 KPI-Karten | Berater-Ranking         │   │ │
+│  │ ▸ Provisions-    │  │  │  DonutChart, Zeitraumfilter             │   │ │
+│  │   positionen     │  │  └──────────────────────────────────────────┘   │ │
+│  │ ▸ Xempus Insight │  │  ┌──────────────────────────────────────────┐   │ │
+│  │ ▸ Zuordnung &    │  │  │ AbrechnungslaeufPanel (~478 Z.)         │   │ │
+│  │   Klaerfaelle    │  │  │ ProvisionspositionenPanel (~883 Z.)     │   │ │
+│  │ ▸ Verteil-       │  │  │ XempusInsightPanel (~1209 Z.) [4 Tabs]  │   │ │
+│  │   schluessel     │  │  │ XempusPanel (~488 Z.)                   │   │ │
+│  │ ▸ Auszahlungen   │  │  │ ZuordnungPanel (~916 Z.)               │   │ │
+│  │ ▸ Einstellungen  │  │  │ VerteilschluesselPanel (~608 Z.)       │   │ │
+│  │                   │  │  │ AuszahlungenPanel (~639 Z.)            │   │ │
+│  │ [Zurueck]        │  │  │ SettingsPanel (~341 Z.)                 │   │ │
+│  └──────────────────┘  │  └──────────────────────────────────────────┘   │ │
+│                         └──────────────────────────────────────────────────┘ │
+│  Shared Widgets: widgets.py (~821 Z.)                                       │
+│  9 Klassen: PillBadgeDelegate, DonutChart, FilterChipBar, SectionHeader,    │
+│  ThreeDotMenu, KpiCard, PaginationBar, StatementCard, ActivityFeed          │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Datenmodell (7 pm_* Tabellen)
+### Datenmodell (7 pm_* + 9 xempus_* Tabellen)
 
 ```
 pm_commission_models ─┐
-                      ├──▶ pm_employees ──┬──▶ pm_commissions
-                      │                    │        │
+                      ├──▶ pm_employees ──┬──▶ pm_commissions ◀── xempus_commission_matches
+                      │                    │        │                    ▲
+                      │                    │        │    xempus_consultations
                       │                    ├──▶ pm_berater_abrechnungen
                       │                    │
-                      │    pm_contracts ───┘
+                      │    pm_contracts ───┘ ◀── xempus_consultations (Sync)
                       │        │
 pm_vermittler_mapping ◀───────┘
                       │
 pm_import_batches ────┘
+
+xempus_employers ──▶ xempus_tariffs
+      │           ──▶ xempus_subsidies
+      └──▶ xempus_employees ──▶ xempus_consultations
+xempus_raw_rows, xempus_import_batches, xempus_status_mappings
 ```
 
 | Tabelle | Zeilen (Testdaten) | Beschreibung |
@@ -53,9 +65,18 @@ pm_import_batches ────┘
 | `pm_employees` | ~3-10 | Mitarbeiter (Consulter, Teamleiter, Backoffice) |
 | `pm_contracts` | ~1.004 | Xempus-Vertraege mit VSNR, VU, Berater-Zuweisung |
 | `pm_commissions` | ~15.010 | Provisionsbuchungen mit Match-Status und Splits |
-| `pm_vermittler_mapping` | ~20-50 | VU-Vermittlername → interner Berater |
-| `pm_berater_abrechnungen` | ~5-20/Monat | Monatsabrechnungen (Snapshot-Prinzip) |
+| `pm_vermittler_mapping` | ~20-50 | VU-Vermittlername → interner Berater (UNIQUE) |
+| `pm_berater_abrechnungen` | ~5-20/Monat | Monatsabrechnungen (Snapshot, UNIQUE monat+berater+rev) |
 | `pm_import_batches` | ~2-10 | Import-Historie (Source, Filename, Rows) |
+| `xempus_employers` | variabel | Arbeitgeber (Name, Adresse, Tarif/Zuschuss-Info) |
+| `xempus_tariffs` | variabel | Tarife pro Arbeitgeber (Versicherer, Typ, Gruppeninfo) |
+| `xempus_subsidies` | variabel | AG-Zuschuesse (Typ, Betrag, Frequenz) |
+| `xempus_employees` | variabel | Arbeitnehmer (Name, Geburtstag, Status) |
+| `xempus_consultations` | variabel | Beratungen (VSNR, VU, Sparte, Berater) |
+| `xempus_raw_rows` | variabel | Rohdaten (Sheet, JSON, row_hash) |
+| `xempus_import_batches` | variabel | Xempus-Import (4-Phasen-Tracking, Content-Hash) |
+| `xempus_commission_matches` | variabel | Consultation → Commission Matches |
+| `xempus_status_mappings` | ~5-20 | Xempus-Status → interner Status |
 
 ### Split-Engine (Batch-SQL)
 
@@ -83,61 +104,120 @@ batchRecalculateSplits()
 
 **Invariante**: `berater_anteil + tl_anteil + ag_anteil == betrag` (immer)
 
-### Auto-Matching (5-Schritt Batch-JOIN)
+### Auto-Matching (5+2-Schritt Batch-JOIN, erweitert v3.3.0)
 
 ```
-autoMatchCommissions()
+autoMatchCommissions() [transaktional]
 │
-├── 1. VSNR-Match: commissions.vsnr_normalized JOIN contracts.vsnr_normalized
-│   → berater_id + match_status='auto_matched'
+├── 1.  VSNR-Match: commissions.vsnr_normalized JOIN contracts.vsnr_normalized
+│       → berater_id + match_status='auto_matched', confidence=1.0
 │
-├── 2. Alt-VSNR-Match: commissions.vsnr_normalized JOIN contracts.vsnr_alt_normalized
-│   → Fallback fuer umbenannte VSNRs
+├── 1.5 Xempus-Consultation-Match (NEU v3.3.0):
+│       commissions.vsnr_normalized JOIN xempus_consultations.versicherungsscheinnummer
+│       → xempus_consultation_id, confidence=0.85
 │
-├── 3. Vermittler-Mapping: commissions.vermittler_name_normalized
-│   JOIN pm_vermittler_mapping → berater_id (fuer Zeilen OHNE Vertrag)
+├── 2.  Alt-VSNR-Match: commissions.vsnr_normalized JOIN contracts.vsnr_alt_normalized
+│       → Fallback fuer umbenannte VSNRs, confidence=0.9
 │
-├── 4. batchRecalculateSplits() → 3 Batch-UPDATEs (siehe oben)
+├── 2.5 Berater via Xempus berater_name (NEU v3.3.0):
+│       Vertraege ohne berater_id → normalizeVermittlerName() → pm_vermittler_mapping
+│       → berater_id setzen + propagieren zu Commissions
 │
-└── 5. Vertragsstatus-Update: contracts SET status='provision_erhalten'
+├── 3.  Berater via VU Vermittler-Mapping:
+│       commissions.vermittler_name_normalized JOIN pm_vermittler_mapping
+│       → berater_id auf Commission + propagieren zu Vertrag
+│
+├── 4.  batchRecalculateSplits() → 3 Batch-UPDATEs
+│
+└── 5.  Vertragsstatus-Update: contracts SET status='provision_erhalten'
+        (nur bei betrag > 0, batch-scoped)
 ```
 
 Performance: ~11s fuer 15.010 Provisionszeilen (vorher Timeout bei per-Row-Loop)
 
-### Neue PHP-Endpunkte (alle unter `/pm/...`)
+### Xempus Insight Engine (NEU v3.3.0)
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  4-Phasen-Import-Pipeline                                           │
+│                                                                     │
+│  Phase 1: RAW Ingest                                               │
+│  Excel → xempus_parser.py → XempusAPI.import_raw() [chunked]      │
+│  → xempus_raw_rows (jede Zeile als JSON, row_hash, batch_id)      │
+│                                                                     │
+│  Phase 2: Normalize + Parse                                        │
+│  xempus.php → handleXempusParseRoute()                             │
+│  → raw_rows → xempus_employers, _tariffs, _subsidies,             │
+│    _employees, _consultations                                       │
+│                                                                     │
+│  Phase 3: Snapshot Update (serverseitig in Phase 2)                │
+│  → Diff-Berechnung: neue/geaenderte/entfernte Entitaeten          │
+│  → is_active-Flag aktualisieren                                     │
+│                                                                     │
+│  Phase 4: Finalize                                                  │
+│  → Content-Hash berechnen, import_phase='complete'                  │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### PHP-Endpunkte (alle unter `/pm/...`)
 
 | Endpunkt | Methoden | Beschreibung |
 |----------|----------|--------------|
-| `/pm/employees[/{id}]` | GET/POST/PUT/DELETE | Mitarbeiter-CRUD |
-| `/pm/contracts[/{id}]` | GET/PUT | Vertraege + Berater-Zuweisung |
-| `/pm/commissions` | GET | Provisionen (Filter: match_status, berater_id, von, bis, versicherer) |
-| `/pm/commissions/{id}/match` | PUT | Manuelles Matching |
+| `/pm/employees[/{id}]` | GET/POST/PUT/DELETE | Mitarbeiter-CRUD (Validierung: role, rate, self-ref) |
+| `/pm/contracts[/{id}]` | GET/PUT | Vertraege + Berater-Zuweisung (Pagination) |
+| `/pm/contracts/unmatched` | GET | Xempus-Vertraege ohne VU-Provision (Pagination + Datumsfilter) |
+| `/pm/commissions` | GET | Provisionen (Filter + Pagination: page/per_page) |
+| `/pm/commissions/{id}/match` | PUT | Manuelles Matching (transaktional) |
 | `/pm/commissions/{id}/ignore` | PUT | Provision ignorieren |
 | `/pm/commissions/recalculate` | POST | Splits neu berechnen |
 | `/pm/import/vu-liste` | POST | VU-Provisionsliste importieren |
-| `/pm/import/xempus` | POST | Xempus-Beratungen importieren |
-| `/pm/import/match` | POST | Auto-Matching ausloesen |
+| `/pm/import/xempus` | POST | Xempus-Beratungen importieren (Legacy) |
+| `/pm/import/match` | POST | Auto-Matching ausloesen (transaktional) |
 | `/pm/import/batches` | GET | Import-Historie |
 | `/pm/dashboard/summary` | GET | Dashboard KPI-Daten |
-| `/pm/mappings` | GET/POST | Vermittler-Mappings (include_unmapped=1 fuer ungeloeste) |
-| `/pm/abrechnungen[/{id}]` | GET/POST/PUT | Abrechnungen generieren/laden/Status aendern |
-| `/pm/models[/{id}]` | GET/POST/PUT | Provisionsmodelle CRUD |
+| `/pm/dashboard/berater/{id}` | GET | Berater-Detail mit Provisionen |
+| `/pm/mappings[/{id}]` | GET/POST/DELETE | Vermittler-Mappings CRUD |
+| `/pm/abrechnungen[/{id}]` | GET/POST/PUT | Abrechnungen (State Machine) |
+| `/pm/models[/{id}]` | GET/POST/PUT/DELETE | Provisionsmodelle CRUD |
+| `/pm/clearance` | GET | Klaerfall-Counts (4 Typen) |
+| `/pm/audit[/{type}/{id}]` | GET | PM-Aktivitaetshistorie |
+| `/pm/match-suggestions` | GET | Multi-Level-Matching (Score 100/90/70/40) |
+| `/pm/assign` | PUT | Transaktionale Zuordnung (force_override) |
+| `/pm/reset` | POST | Gefahrenzone (loescht Import-Daten) |
+| `/pm/xempus/import` | POST | **NEU v3.3.0**: RAW Ingest (chunked) |
+| `/pm/xempus/parse` | POST | **NEU v3.3.0**: Normalize + Parse |
+| `/pm/xempus/finalize` | POST | **NEU v3.3.0**: Finalize |
+| `/pm/xempus/batches` | GET | **NEU v3.3.0**: Import-Batches |
+| `/pm/xempus/employers[/{id}]` | GET | **NEU v3.3.0**: Arbeitgeber |
+| `/pm/xempus/employees[/{id}]` | GET | **NEU v3.3.0**: Arbeitnehmer |
+| `/pm/xempus/consultations` | GET | **NEU v3.3.0**: Beratungen |
+| `/pm/xempus/stats` | GET | **NEU v3.3.0**: Statistiken |
+| `/pm/xempus/diff/{batch_id}` | GET | **NEU v3.3.0**: Snapshot-Diff |
+| `/pm/xempus/status-mapping` | GET/POST | **NEU v3.3.0**: Status-Mapping |
+| `/pm/xempus/sync/{batch_id}` | POST | **NEU v3.3.0**: Sync → pm_contracts |
 
-### Neue Python-Klassen
+### Python-Klassen (Provision + Xempus)
 
 | Klasse | Datei | Beschreibung |
 |--------|-------|--------------|
-| `ProvisionAPI` | `src/api/provision.py` | API Client mit allen Endpoints |
-| `Employee` | `src/api/provision.py` | Dataclass: Mitarbeiter mit Rolle, Rate, TL-Override |
+| `ProvisionAPI` | `src/api/provision.py` | API Client mit 40+ Methoden (~859 Z.) |
+| `Employee` | `src/api/provision.py` | Dataclass: Mitarbeiter mit Rolle, Rate, TL-Override, effective_rate |
 | `Contract` | `src/api/provision.py` | Dataclass: Vertrag mit VSNR, VU, Berater-ID, Status |
-| `Commission` | `src/api/provision.py` | Dataclass: Provisionsbuchung mit Splits und Match-Info |
+| `Commission` | `src/api/provision.py` | Dataclass: Provisionsbuchung mit Splits, Match-Info, source_label |
+| `ContractSearchResult` | `src/api/provision.py` | Dataclass: Vertrag + Match-Score |
+| `PaginationInfo` | `src/api/provision.py` | Dataclass: Server-seitige Pagination (page, per_page, total, total_pages) |
 | `CommissionModel` | `src/api/provision.py` | Dataclass: Provisionssatzmodell |
 | `DashboardSummary` | `src/api/provision.py` | Dataclass: KPI-Zusammenfassung mit per_berater |
 | `ImportResult` / `ImportBatch` | `src/api/provision.py` | Dataclass: Import-Ergebnis und -Historie |
 | `BeraterAbrechnung` | `src/api/provision.py` | Dataclass: Monatsabrechnung pro Berater |
 | `VermittlerMapping` | `src/api/provision.py` | Dataclass: VU-Name → Berater-Zuordnung |
-| `ProvisionHub` | `src/ui/provision/provision_hub.py` | Vollbild-Hub mit Sidebar (7 Panels) |
-| `VuImportWorker` | `src/ui/provision/import_panel.py` | QThread: Paralleler Import mit ThreadPoolExecutor |
+| `XempusAPI` | `src/api/xempus.py` | **NEU v3.3.0**: Xempus API Client (~377 Z., Chunked Import, CRUD, Stats) |
+| `XempusEmployer` | `src/domain/xempus_models.py` | **NEU v3.3.0**: Arbeitgeber Dataclass |
+| `XempusConsultation` | `src/domain/xempus_models.py` | **NEU v3.3.0**: Beratung Dataclass |
+| `ProvisionHub` | `src/ui/provision/provision_hub.py` | Vollbild-Hub mit Sidebar (8 Panels, ~328 Z.) |
+| `XempusInsightPanel` | `src/ui/provision/xempus_insight_panel.py` | **NEU v3.3.0**: 4-Tab-Panel (~1209 Z.) |
+| `XempusPanel` | `src/ui/provision/xempus_panel.py` | **NEU v3.3.0**: Beratungen-Liste (~488 Z.) |
+| `MatchContractDialog` | `src/ui/provision/zuordnung_panel.py` | Multi-Level-Matching Dialog |
 
 ### QStackedWidget-Indizes (main_hub.py, erweitert)
 
@@ -149,7 +229,7 @@ Performance: ~11s fuer 15.010 Provisionszeilen (vorher Timeout bei per-Row-Loop)
 | 3 | GDV | Editor |
 | 4 | Admin | Vollbild mit eigener Sidebar |
 | 5 | Chat | Vollbild mit eigener Sidebar (v2.0.0) |
-| 6 | Provision | **Vollbild mit eigener Sidebar (NEU v3.0.0)** |
+| 6 | Provision | **Vollbild mit eigener Sidebar (v3.0.0, 8 Panels v3.3.0)** |
 
 ---
 
