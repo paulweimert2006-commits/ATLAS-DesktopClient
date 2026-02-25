@@ -2242,3 +2242,47 @@ PROVISION_DIST_EMP_TIP_RATE_CALC = "Ueberschreibt ggf. den Satz des Modells"
 PROVISION_DIST_EMP_TIP_TL_RATE_DEF = "Prozentualer Anteil fuer die Teamleitung"
 PROVISION_DIST_EMP_TIP_TL_RATE_CALC = "Wird je nach Basis vom Berater-Anteil oder der Gesamtprovision berechnet"
 PROVISION_PAGINATION_SHOWING = "Zeige {start}\u2013{end} von {total}"
+
+# ══════════════════════════════════════════════════════════════════════════
+# Server-Gesundheit (Admin Panel)
+# ══════════════════════════════════════════════════════════════════════════
+
+ADMIN_TAB_SERVER_HEALTH = "Server-Gesundheit"
+ADMIN_SECTION_SYSTEM = "SYSTEM"
+
+HEALTH_TITLE = "Server-Gesundheit"
+HEALTH_RUN_CHECK = "Health-Check starten"
+HEALTH_RUNNING = "Pruefung laeuft..."
+HEALTH_LAST_RUN = "Letzter Lauf: {time}"
+HEALTH_NO_RUNS = "Noch kein Health-Check ausgefuehrt"
+HEALTH_OVERALL_HEALTHY = "Gesund"
+HEALTH_OVERALL_DEGRADED = "Eingeschraenkt"
+HEALTH_OVERALL_CRITICAL = "Kritisch"
+HEALTH_OVERALL_ERROR = "Fehler"
+HEALTH_CHECKS_TOTAL = "{total} Checks"
+HEALTH_CHECKS_PASSED = "{count} OK"
+HEALTH_CHECKS_WARNINGS = "{count} Warnungen"
+HEALTH_CHECKS_CRITICAL = "{count} Kritisch"
+HEALTH_CHECKS_ERRORS = "{count} Fehler"
+HEALTH_DURATION = "Dauer: {ms}ms"
+HEALTH_ERROR_LOAD = "Health-Check fehlgeschlagen: {error}"
+
+HEALTH_CAT_CONNECTION = "Verbindung"
+HEALTH_CAT_PERFORMANCE = "Performance"
+HEALTH_CAT_STORAGE = "Speicher"
+HEALTH_CAT_CONFIG = "Konfiguration"
+HEALTH_CAT_STABILITY = "Stabilitaet"
+
+HEALTH_STATUS_OK = "OK"
+HEALTH_STATUS_WARNING = "Warnung"
+HEALTH_STATUS_CRITICAL = "Kritisch"
+HEALTH_STATUS_ERROR = "Fehler"
+
+HEALTH_TREND_BETTER = "{pct}% schneller als Durchschnitt"
+HEALTH_TREND_WORSE = "{pct}% langsamer als Durchschnitt"
+HEALTH_TREND_STABLE = "Im Normalbereich"
+HEALTH_NO_BASELINE = "Keine Vergleichsdaten"
+
+HEALTH_HISTORY_TITLE = "Verlauf"
+HEALTH_HISTORY_EMPTY = "Keine vergangenen Laeufe"
+HEALTH_HISTORY_RUN = "{date} - {status} ({duration}ms)"

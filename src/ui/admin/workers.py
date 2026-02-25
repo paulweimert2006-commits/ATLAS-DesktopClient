@@ -171,6 +171,41 @@ class UploadReleaseWorker(QThread):
             self.error.emit(str(e))
 
 
+class RunHealthCheckWorker(QThread):
+    """Fuehrt den Server-Health-Check im Hintergrund aus."""
+    finished = Signal(dict)
+    error = Signal(str)
+
+    def __init__(self, admin_api: AdminAPI):
+        super().__init__()
+        self._admin_api = admin_api
+
+    def run(self):
+        try:
+            result = self._admin_api.run_health_check()
+            self.finished.emit(result)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+class LoadHealthHistoryWorker(QThread):
+    """Laedt Health-Check-Historie im Hintergrund."""
+    finished = Signal(list)
+    error = Signal(str)
+
+    def __init__(self, admin_api: AdminAPI, limit: int = 20):
+        super().__init__()
+        self._admin_api = admin_api
+        self._limit = limit
+
+    def run(self):
+        try:
+            runs = self._admin_api.get_health_history(self._limit)
+            self.finished.emit(runs)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
 class ImapPollWorker(QThread):
     """Ruft IMAP-Postfach im Hintergrund ab (verhindert UI-Freeze)."""
     finished = Signal(dict)

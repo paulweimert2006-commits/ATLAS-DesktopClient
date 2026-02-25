@@ -9,6 +9,10 @@
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/lib/db.php';
 require_once __DIR__ . '/lib/response.php';
+require_once __DIR__ . '/lib/jwt.php';
+
+// Request-Timing: Startzeit erfassen
+$_requestStartTime = $_SERVER['REQUEST_TIME_FLOAT'] ?? microtime(true);
 
 // SV-002 Fix: Security Headers fuer alle Responses
 send_security_headers();
@@ -51,8 +55,13 @@ try {
                 'timestamp' => date('c')
             ];
             try {
+                $dbCheckStart = microtime(true);
                 $latest = Database::queryOne("SELECT migration_name FROM schema_migrations ORDER BY id DESC LIMIT 1");
+                $dbCheckMs = round((microtime(true) - $dbCheckStart) * 1000, 2);
+                
                 $statusData['schema_version'] = $latest ? $latest['migration_name'] : 'unknown';
+                $statusData['db_response_ms'] = $dbCheckMs;
+                
                 $allSetupFiles = glob(__DIR__ . '/../setup/0*.php');
                 $setupNames = array_map(function($f) { return pathinfo($f, PATHINFO_FILENAME); }, $allSetupFiles);
                 $applied = Database::query("SELECT migration_name FROM schema_migrations");
@@ -61,7 +70,105 @@ try {
                 $statusData['pending_migrations'] = count($pending);
             } catch (Exception $e) {
                 $statusData['schema_version'] = 'unavailable';
+                $statusData['db_error'] = true;
             }
+            
+            // Admin-Diagnostics: Erweiterte Metriken nur mit gueltigem Admin-JWT
+            $adminToken = JWT::getTokenFromHeader();
+            if ($adminToken) {
+                $adminPayload = JWT::verify($adminToken);
+                if ($adminPayload) {
+                    require_once __DIR__ . '/lib/permissions.php';
+                    if (isAdmin($adminPayload['user_id'])) {
+                        $diag = [];
+                        
+                        // DB Ping
+                        try {
+                            $t0 = microtime(true);
+                            Database::queryOne("SELECT 1");
+                            $diag['db_ping_ms'] = round((microtime(true) - $t0) * 1000, 2);
+                        } catch (Exception $e) {
+                            $diag['db_ping_ms'] = -1;
+                        }
+                        
+                        // Kerntabellen-Counts
+                        $tableCounts = [];
+                        $countTables = ['documents', 'activity_log', 'sessions', 'users'];
+                        foreach ($countTables as $tbl) {
+                            try {
+                                $t0 = microtime(true);
+                                $row = Database::queryOne("SELECT COUNT(*) as cnt FROM {$tbl}");
+                                $tableCounts[$tbl] = [
+                                    'count' => (int)$row['cnt'],
+                                    'duration_ms' => round((microtime(true) - $t0) * 1000, 2)
+                                ];
+                            } catch (Exception $e) {
+                                $tableCounts[$tbl] = ['error' => true];
+                            }
+                        }
+                        $diag['table_counts'] = $tableCounts;
+                        
+                        // DB-Groesse
+                        try {
+                            $sizeRow = Database::queryOne(
+                                "SELECT ROUND(SUM(DATA_LENGTH + INDEX_LENGTH) / 1024 / 1024, 2) as total_mb
+                                 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE()"
+                            );
+                            $diag['db_size_mb'] = (float)($sizeRow['total_mb'] ?? 0);
+                        } catch (Exception $e) {
+                            $diag['db_size_mb'] = -1;
+                        }
+                        
+                        // Aktive DB-Verbindungen
+                        try {
+                            $connRow = Database::queryOne(
+                                "SELECT COUNT(*) as cnt FROM INFORMATION_SCHEMA.PROCESSLIST WHERE DB = DATABASE()"
+                            );
+                            $diag['active_db_connections'] = (int)($connRow['cnt'] ?? 0);
+                        } catch (Exception $e) {
+                            $diag['active_db_connections'] = -1;
+                        }
+                        
+                        // Slow Queries (letzte 24h aus Activity Log)
+                        try {
+                            $slowRow = Database::queryOne(
+                                "SELECT COUNT(*) as cnt FROM activity_log 
+                                 WHERE action = 'slow_request' AND created_at > DATE_SUB(NOW(), INTERVAL 24 HOUR)"
+                            );
+                            $diag['slow_requests_24h'] = (int)($slowRow['cnt'] ?? 0);
+                        } catch (Exception $e) {
+                            $diag['slow_requests_24h'] = -1;
+                        }
+                        
+                        // PHP-Info
+                        $diag['php'] = [
+                            'version' => PHP_VERSION,
+                            'memory_usage_mb' => round(memory_get_usage(true) / 1024 / 1024, 2),
+                            'memory_peak_mb' => round(memory_get_peak_usage(true) / 1024 / 1024, 2),
+                            'memory_limit' => ini_get('memory_limit'),
+                            'max_execution_time' => ini_get('max_execution_time'),
+                            'opcache_enabled' => function_exists('opcache_get_status') ? 
+                                (opcache_get_status(false)['opcache_enabled'] ?? false) : false
+                        ];
+                        
+                        // MySQL-Version
+                        try {
+                            $verRow = Database::queryOne("SELECT VERSION() as v");
+                            $diag['mysql_version'] = $verRow['v'] ?? 'unknown';
+                        } catch (Exception $e) {
+                            $diag['mysql_version'] = 'unknown';
+                        }
+                        
+                        // Gesamtdauer der Diagnostics
+                        $diag['diagnostics_duration_ms'] = round(
+                            (microtime(true) - ($_requestStartTime ?? microtime(true))) * 1000, 2
+                        );
+                        
+                        $statusData['diagnostics'] = $diag;
+                    }
+                }
+            }
+            
             json_response($statusData);
             break;
             
@@ -222,6 +329,13 @@ try {
             if ($action === 'document-rules') {
                 require_once __DIR__ . '/document_rules.php';
                 handleAdminDocumentRulesRequest($method);
+                break;
+            }
+            
+            // /admin/diagnostics → Server-Performance-Diagnose
+            if ($action === 'diagnostics') {
+                require_once __DIR__ . '/diagnostics.php';
+                handleDiagnosticsRequest($method);
                 break;
             }
             
