@@ -2,7 +2,7 @@
 ACENCIA ATLAS - Hauptfenster (Hub)
 
 Modernes Hauptfenster mit Sidebar-Navigation und Bereichen:
-- BiPRO Datenabruf
+- Datenabruf (BiPRO + Mail)
 - Dokumentenarchiv  
 - GDV Editor
 
@@ -546,8 +546,8 @@ class MainHub(QMainWindow):
         self._notification_badge.move(self.btn_center.width() - 36, 6)
         self._notification_badge.hide()
         
-        # BiPRO Button
-        self.btn_bipro = NavButton("🔄", "BiPRO Datenabruf")
+        # Datenabruf Button
+        self.btn_bipro = NavButton("🔄", texts.NAV_BIPRO)
         self.btn_bipro.clicked.connect(self._show_bipro)
         sidebar_layout.addWidget(self.btn_bipro)
         
@@ -633,8 +633,8 @@ class MainHub(QMainWindow):
         self._placeholder_center = self._create_placeholder(texts.MSG_CENTER_TITLE, texts.MSG_CENTER_LOADING)
         self.content_stack.addWidget(self._placeholder_center)      # Index 0
         
-        # Index 1: BiPRO
-        self._placeholder_bipro = self._create_placeholder("BiPRO Datenabruf", "Wird geladen...")
+        # Index 1: Datenabruf
+        self._placeholder_bipro = self._create_placeholder(texts.NAV_BIPRO, "Wird geladen...")
         self.content_stack.addWidget(self._placeholder_bipro)       # Index 1
         
         # Index 2: Archiv
@@ -732,10 +732,15 @@ class MainHub(QMainWindow):
         
         if self._bipro_view is None:
             from ui.bipro_view import BiPROView
-            self._bipro_view = BiPROView(self.api_client)
+            user = self.auth_api.current_user
+            self._bipro_view = BiPROView(
+                self.api_client,
+                is_admin=user.is_admin if user else False,
+                username=user.username if user else "",
+            )
             self._bipro_view._toast_manager = self._toast_manager
             self._bipro_view.documents_uploaded.connect(self._on_documents_uploaded)
-            # Permission Guards setzen
+            self._bipro_view.request_archive_view.connect(self._show_archive)
             self._apply_bipro_permissions()
             
             # Placeholder ersetzen
@@ -916,8 +921,8 @@ class MainHub(QMainWindow):
             return
         
         if not user.has_permission('bipro_fetch'):
-            # Abruf-Buttons deaktivieren
-            for attr in ['mail_fetch_btn', 'download_btn', 'download_all_btn', 'fetch_all_vus_btn', 'acknowledge_btn']:
+            for attr in ['mail_fetch_btn', 'download_btn', 'download_all_btn',
+                         'fetch_all_vus_btn', 'acknowledge_btn', '_ack_btn']:
                 btn = getattr(view, attr, None)
                 if btn:
                     btn.setEnabled(False)

@@ -72,6 +72,23 @@ from bipro.mtom_parser import parse_mtom_response, extract_boundary, split_multi
 
 logger = logging.getLogger(__name__)
 
+RE_LIEFERUNG = re.compile(r'<(?:tran:|t:)?Lieferung[^>]*>(.*?)</(?:tran:|t:)?Lieferung>', re.DOTALL)
+RE_IDENTIFIER = re.compile(r'<wsc:Identifier>([^<]+)</wsc:Identifier>')
+RE_EXPIRES = re.compile(
+    r'<wsu:Expires>([^<]+)</wsu:Expires>|'
+    r'<Expires>([^<]+)</Expires>|'
+    r'<wst:Lifetime>.*?<wsu:Expires>([^<]+)</wsu:Expires>.*?</wst:Lifetime>',
+    re.DOTALL
+)
+RE_STATUS_NOK = re.compile(r'<(?:nac:|n:)?StatusID>NOK</(?:nac:|n:)?StatusID>')
+RE_STATUS_OK = re.compile(r'<(?:nac:|n:)?StatusID>OK</(?:nac:|n:)?StatusID>')
+RE_ERROR_TEXT = re.compile(r'<(?:nac:|n:)?Text>([^<]+)</(?:nac:|n:)?Text>')
+RE_FAULTSTRING = re.compile(r'<(?:faultstring|nac:Text)>([^<]+)</(?:faultstring|nac:Text)>')
+RE_DOC_BLOCK = re.compile(r'<[^>]*Dokument[^>]*>(.*?)</[^>]*Dokument>', re.DOTALL)
+RE_FILENAME = re.compile(r'<[^>]*Dateiname[^>]*>([^<]+)</[^>]*Dateiname>')
+RE_CONTENT = re.compile(r'<[^>]*(?:Inhalt|Content|Daten)[^>]*>([A-Za-z0-9+/=\s]+)</[^>]*(?:Inhalt|Content|Daten)>')
+RE_KATEGORIE = re.compile(r'<[^>]*Kategorie[^>]*>([^<]+)</[^>]*Kategorie>')
+
 # SV-008 Fix: atexit-basiertes Tracking fuer PEM-Temp-Files (Baustein B4)
 _temp_pem_files: list = []
 _temp_pem_lock = threading.Lock()
@@ -194,8 +211,7 @@ class ShipmentInfo:
         shipments = []
         
         # Alle Lieferung-Blöcke finden (verschiedene Namespace-Prefixe: tran:, t:, oder ohne)
-        pattern = r'<(?:tran:|t:)?Lieferung[^>]*>(.*?)</(?:tran:|t:)?Lieferung>'
-        matches = re.findall(pattern, xml_text, re.DOTALL)
+        matches = RE_LIEFERUNG.findall(xml_text)
         
         logger.debug(f"Gefundene Lieferungen: {len(matches)}")
         
@@ -672,19 +688,13 @@ class TransferServiceClient:
             logger.debug(f"STS Response: {response.text[:200]}...")
             
             # Token extrahieren
-            match = re.search(r'<wsc:Identifier>([^<]+)</wsc:Identifier>', response.text)
+            match = RE_IDENTIFIER.search(response.text)
             if match:
                 token = match.group(1)
                 logger.info(f"STS-Token erhalten: {token[:30]}...")
                 
                 # Token-Ablaufzeit extrahieren (wsu:Expires oder Lifetime/Expires)
-                expires_match = re.search(
-                    r'<wsu:Expires>([^<]+)</wsu:Expires>|'
-                    r'<Expires>([^<]+)</Expires>|'
-                    r'<wst:Lifetime>.*?<wsu:Expires>([^<]+)</wsu:Expires>.*?</wst:Lifetime>',
-                    response.text, 
-                    re.DOTALL
-                )
+                expires_match = RE_EXPIRES.search(response.text)
                 if expires_match:
                     expires_str = expires_match.group(1) or expires_match.group(2) or expires_match.group(3)
                     try:
@@ -708,7 +718,9 @@ class TransferServiceClient:
                 if response.status_code != 200:
                     logger.error(f"STS Response Status: {response.status_code}")
                 # Fehler aus Response extrahieren
-                error_match = re.search(r'<(?:faultstring|nac:Text)>([^<]+)</(?:faultstring|nac:Text)>', response.text)
+                error_match = RE_FAULTSTRING.search(response.text)
+                if not error_match:
+                    error_match = RE_ERROR_TEXT.search(response.text)
                 if error_match:
                     logger.error(f"STS Fehlermeldung: {error_match.group(1)}")
                 logger.error(f"STS Response (erste 1000 Zeichen): {response.text[:1000]}")
@@ -852,9 +864,8 @@ class TransferServiceClient:
             logger.debug(f"listShipments Response Status: {response.status_code}")
             
             # Status prüfen (verschiedene Namespace-Präfixe: nac:, n:, oder ohne)
-            if re.search(r'<(?:nac:|n:)?StatusID>NOK</(?:nac:|n:)?StatusID>', response.text):
-                # Fehlermeldung extrahieren
-                error_match = re.search(r'<(?:nac:|n:)?Text>([^<]+)</(?:nac:|n:)?Text>', response.text)
+            if RE_STATUS_NOK.search(response.text):
+                error_match = RE_ERROR_TEXT.search(response.text)
                 error_text = error_match.group(1) if error_match else "Unbekannter Fehler"
                 raise Exception(f"BiPRO Fehler: {error_text}")
             
@@ -981,12 +992,11 @@ class TransferServiceClient:
         metadata = {}
         
         # Dokumente mit Base64-Content suchen
-        doc_pattern = r'<[^>]*Dokument[^>]*>(.*?)</[^>]*Dokument>'
-        doc_matches = re.findall(doc_pattern, xml_text, re.DOTALL)
+        doc_matches = RE_DOC_BLOCK.findall(xml_text)
         
         for i, doc_xml in enumerate(doc_matches):
-            filename_match = re.search(r'<[^>]*Dateiname[^>]*>([^<]+)</[^>]*Dateiname>', doc_xml)
-            content_match = re.search(r'<[^>]*(?:Inhalt|Content|Daten)[^>]*>([A-Za-z0-9+/=\s]+)</[^>]*(?:Inhalt|Content|Daten)>', doc_xml)
+            filename_match = RE_FILENAME.search(doc_xml)
+            content_match = RE_CONTENT.search(doc_xml)
             
             if content_match:
                 content = content_match.group(1).replace('\n', '').replace(' ', '').replace('\r', '')
@@ -1004,7 +1014,7 @@ class TransferServiceClient:
                         pass
         
         # Metadaten
-        kategorie_match = re.search(r'<[^>]*Kategorie[^>]*>([^<]+)</[^>]*Kategorie>', xml_text)
+        kategorie_match = RE_KATEGORIE.search(xml_text)
         if kategorie_match:
             metadata['category'] = kategorie_match.group(1)
         
@@ -1066,14 +1076,14 @@ class TransferServiceClient:
             )
             
             # Prüfe auf OK-Status mit verschiedenen Namespace-Präfixen (nac:, n:, oder ohne)
-            success = bool(re.search(r'<(?:nac:|n:)?StatusID>OK</(?:nac:|n:)?StatusID>', response.text))
+            success = bool(RE_STATUS_OK.search(response.text))
             
             if success:
                 logger.info(f"acknowledgeShipment erfolgreich: {shipment_id}")
             else:
                 # Fehlermeldung extrahieren
-                error_match = re.search(r'<(?:nac:|n:)?Text>([^<]+)</(?:nac:|n:)?Text>', response.text)
-                error_text = error_match.group(1) if error_match else "Unbekannter Fehler"
+                ack_error_match = RE_ERROR_TEXT.search(response.text)
+                error_text = ack_error_match.group(1) if ack_error_match else "Unbekannter Fehler"
                 logger.warning(f"acknowledgeShipment fehlgeschlagen für {shipment_id}: {error_text}")
                 # SV-014 Fix: Response kuerzen
                 logger.debug(f"acknowledgeShipment Response: {response.text[:200]}...")
