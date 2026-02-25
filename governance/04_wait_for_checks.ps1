@@ -50,9 +50,13 @@ $elapsed = 0
 $lastStatus = ""
 
 while ($true) {
-    $checksJson = gh pr checks $PRNumber --json "name,state,conclusion" 2>&1
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    $checksJson = gh pr checks $PRNumber --json "name,state" 2>&1
+    $ghExit = $LASTEXITCODE
+    $ErrorActionPreference = $prev
 
-    if ($LASTEXITCODE -ne 0) {
+    if ($ghExit -ne 0) {
         if ($elapsed -eq 0) {
             Write-Warn "Noch keine Checks gestartet. Warte..."
         }
@@ -66,14 +70,15 @@ while ($true) {
             exit 0
         }
 
-        $terminalStates = @("COMPLETED", "SUCCESS", "FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "STALE")
-        $failConclusions = @("FAILURE", "failure", "TIMED_OUT", "timed_out")
-        $cancelConclusions = @("CANCELLED", "cancelled", "STALE", "stale")
+        $successStates = @("SUCCESS")
+        $failStates = @("FAILURE", "ERROR", "TIMED_OUT", "STARTUP_FAILURE", "ACTION_REQUIRED")
+        $cancelStates = @("CANCELLED", "STALE", "SKIPPED")
+        $pendingStates = @("IN_PROGRESS", "PENDING", "QUEUED", "WAITING", "REQUESTED")
 
-        $completed = @($checks | Where-Object { $_.state -in $terminalStates -and $_.conclusion -notin ($failConclusions + $cancelConclusions) })
-        $pending = @($checks | Where-Object { $_.state -notin $terminalStates })
-        $failed = @($checks | Where-Object { $_.conclusion -in $failConclusions -or $_.state -in @("FAILURE", "ERROR") })
-        $cancelled = @($checks | Where-Object { $_.conclusion -in $cancelConclusions -or $_.state -in @("CANCELLED", "STALE") })
+        $completed = @($checks | Where-Object { $_.state -in $successStates })
+        $pending = @($checks | Where-Object { $_.state -in $pendingStates })
+        $failed = @($checks | Where-Object { $_.state -in $failStates })
+        $cancelled = @($checks | Where-Object { $_.state -in $cancelStates })
 
         $statusLine = "  Checks: $($completed.Count) ok, $($pending.Count) laufend, $($failed.Count) fehlgeschlagen, $($cancelled.Count) abgebrochen ($($elapsed)s)"
 
@@ -86,19 +91,19 @@ while ($true) {
             Write-Host ""
             Write-Err "CI-Checks FEHLGESCHLAGEN:"
             foreach ($f in $failed) {
-                Write-Host "    X $($f.name): $($f.conclusion)" -ForegroundColor Red
+                Write-Host "    X $($f.name): $($f.state)" -ForegroundColor Red
             }
             foreach ($c in $completed) {
-                Write-Host "    + $($c.name): $($c.conclusion)" -ForegroundColor Green
+                Write-Host "    + $($c.name): $($c.state)" -ForegroundColor Green
             }
             exit 1
         }
 
-        if ($cancelled.Count -gt 0 -and $pending.Count -eq 0) {
+        if ($cancelled.Count -gt 0 -and $pending.Count -eq 0 -and $completed.Count -eq 0) {
             Write-Host ""
             Write-Err "CI-Checks ABGEBROCHEN:"
             foreach ($c in $cancelled) {
-                Write-Host "    ~ $($c.name): $($c.conclusion)" -ForegroundColor Yellow
+                Write-Host "    ~ $($c.name): $($c.state)" -ForegroundColor Yellow
             }
             exit 1
         }
@@ -107,7 +112,12 @@ while ($true) {
             Write-Host ""
             Write-Ok "Alle CI-Checks bestanden:"
             foreach ($c in $completed) {
-                Write-Host "    + $($c.name): $($c.conclusion)" -ForegroundColor Green
+                Write-Host "    + $($c.name): $($c.state)" -ForegroundColor Green
+            }
+            if ($cancelled.Count -gt 0) {
+                foreach ($c in $cancelled) {
+                    Write-Host "    ~ $($c.name): $($c.state) (uebersprungen)" -ForegroundColor Yellow
+                }
             }
             exit 0
         }
