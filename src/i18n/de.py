@@ -28,7 +28,7 @@ SUCCESS = "Erfolgreich"
 # === Navigation ===
 NAV_BEREICHE = "BEREICHE"
 NAV_SYSTEM = "SYSTEM"
-NAV_BIPRO = "BiPRO Datenabruf"
+NAV_BIPRO = "Datenabruf"
 NAV_ARCHIV = "Dokumentenarchiv"
 NAV_GDV_EDITOR = "GDV Editor"
 NAV_VU_VERBINDUNGEN = "VU-Verbindungen"
@@ -108,7 +108,11 @@ SMARTADMIN_NOT_CONFIGURED = "SmartAdmin nicht konfiguriert"
 SMARTADMIN_TOKEN_VALID = "Token gültig bis"
 SMARTADMIN_TOKEN_EXPIRED = "Token abgelaufen"
 
-# === BiPRO Datenabruf ===
+# === Datenabruf (BiPRO + Mail) ===
+BIPRO_HEADER = "Datenabruf"
+BIPRO_VIEW_TOGGLE_STANDARD = "Standard"
+BIPRO_VIEW_TOGGLE_ADMIN = "Admin"
+
 BIPRO_FETCH_SHIPMENTS = "Lieferungen abrufen"
 BIPRO_NO_SHIPMENTS = "Keine neuen Lieferungen"
 BIPRO_SHIPMENT = "Lieferung"
@@ -131,9 +135,10 @@ BIPRO_MAIL_FETCH_PROGRESS = "Verarbeite Anhang {current}/{total}..."
 BIPRO_MAIL_FETCH_PHASE_POLL = "Postfach abrufen..."
 BIPRO_MAIL_FETCH_PHASE_IMPORT = "Anhaenge importieren"
 
-# === Alle VUs abholen ===
-BIPRO_FETCH_ALL = "Alle VUs abholen"
-BIPRO_FETCH_ALL_TOOLTIP = "Holt Lieferungen von allen aktiven VU-Verbindungen nacheinander ab"
+# === Alle VUs abholen (Unified Fetch) ===
+BIPRO_FETCH_ALL = "Alle neuen Dokumente abrufen"
+BIPRO_FETCH_ALL_TOOLTIP = "Ruft Dokumente von allen Versicherern und E-Mail-Konten ab"
+BIPRO_FETCH_ALL_LAST_INFO = "Zuletzt: {timestamp} von {user}"
 BIPRO_FETCH_ALL_NO_ACTIVE = "Keine aktiven VU-Verbindungen vorhanden."
 BIPRO_FETCH_ALL_START = "=== Starte Abruf fuer alle VUs ({count} aktive Verbindungen) ==="
 BIPRO_FETCH_ALL_VU_START = "--- [{current}/{total}] {vu_name} ---"
@@ -142,6 +147,47 @@ BIPRO_FETCH_ALL_VU_CREDENTIALS_ERROR = "[{vu_name}] Zugangsdaten nicht verfuegba
 BIPRO_FETCH_ALL_VU_DONE = "[{vu_name}] Abgeschlossen: {success} Lieferung(en), {docs} Dokument(e)"
 BIPRO_FETCH_ALL_DONE = "=== Alle VUs abgeschlossen: {total_vus} VUs, {total_shipments} Lieferung(en), {total_docs} Dokument(e) ==="
 BIPRO_FETCH_ALL_IN_PROGRESS = "Alle VUs werden abgeholt... ({current}/{total}): {vu_name}"
+
+# === BiPRO Status-Karte ===
+BIPRO_STATUS_LAST_FETCH = "Letzter Abruf: {timestamp}"
+BIPRO_STATUS_LAST_DOCS = "Neue Dokumente beim letzten Abruf: {count}"
+BIPRO_STATUS_NO_FETCH = "Noch kein Abruf durchgefuehrt"
+BIPRO_STATUS_FETCHING = "Abruf laeuft..."
+BIPRO_STATUS_VU_PROGRESS = "{vu_name}: {docs} Dokument(e)"
+BIPRO_STATUS_MAIL_PROGRESS = "Mail-Import: {count} Anhaenge"
+BIPRO_STATUS_TOTAL = "Gesamt: {count} neue Dokumente"
+BIPRO_STATUS_FETCH_SUCCESS = "{count} Dokumente erfolgreich importiert"
+
+# === BiPRO UI-Elemente ===
+BIPRO_SHOW_DETAILS = "Details anzeigen"
+BIPRO_HIDE_DETAILS = "Details ausblenden"
+BIPRO_GO_TO_ARCHIVE = "Zum Archiv"
+BIPRO_FETCH_ONLY_MAIL = "Nur Mails"
+BIPRO_FETCH_ONLY_VU = "Nur ausgewaehlte VU"
+
+# === Quittieren ===
+BIPRO_ACK_BUTTON = "Quittieren"
+BIPRO_ACK_LAST_INFO = "Letzte Quittierung: {timestamp} von {user}"
+BIPRO_ACK_ALL_WARNING = (
+    "ACHTUNG: Sie sind dabei, alle {count} gelisteten Lieferung(en) zu quittieren.\n\n"
+    "Quittierte Lieferungen werden vom Versicherer-Server GELOESCHT\n"
+    "und koennen NICHT erneut abgerufen werden!\n\n"
+    "Haben Sie alle Dokumente heruntergeladen und gesichert?\n\n"
+    "Moechten Sie fortfahren?"
+)
+BIPRO_ACK_SUCCESS = "{count} Lieferung(en) bei {vu_count} Versicherer(n) quittiert"
+BIPRO_ACK_NO_SHIPMENTS = "Keine Lieferungen zum Quittieren vorhanden."
+
+# === Vorschau-Karten ===
+BIPRO_PREVIEW_LOADING = "Lieferungen werden geladen..."
+BIPRO_PREVIEW_EMPTY = "Keine Lieferungen verfuegbar"
+BIPRO_PREVIEW_REFRESH = "Aktualisieren"
+BIPRO_PREVIEW_CARD_VU = "{vu_name}"
+BIPRO_PREVIEW_CARD_CATEGORY = "Kategorie: {name}"
+BIPRO_PREVIEW_CARD_DATE = "Eingestellt: {date}"
+BIPRO_PREVIEW_CARD_SHIPMENT = "ID: {id}"
+BIPRO_PREVIEW_COUNT = "{count} Lieferung(en) von {vu_count} Versicherer(n)"
+BIPRO_PREVIEW_ERROR = "{vu_name}: Fehler beim Laden"
 
 # === ATLAS Index (Volltextsuche) ===
 ATLAS_INDEX_TITLE = "ATLAS Index"
@@ -546,6 +592,7 @@ RELEASES_STATUS_WITHDRAWN = "Zurueckgezogen"
 RELEASES_CHANNEL_STABLE = "Stable"
 RELEASES_CHANNEL_BETA = "Beta"
 RELEASES_CHANNEL_DEV = "Dev"
+RELEASES_CHANNEL_INTERNAL = "Internal"
 RELEASES_UPLOAD_TITLE = "Neues Release hochladen"
 RELEASES_EDIT_TITLE = "Release bearbeiten"
 RELEASES_EDIT_BTN = "Bearbeiten"
