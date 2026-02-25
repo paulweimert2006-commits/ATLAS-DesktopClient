@@ -239,3 +239,29 @@ class AdminAPI:
             logger.error(f"Fehler beim Laden der Aktivitaets-Statistiken: {e}")
             raise
         return {}
+
+    # ================================================================
+    # Server-Diagnostik
+    # ================================================================
+
+    def run_health_check(self) -> Dict:
+        """Vollstaendigen Server-Health-Check ausfuehren."""
+        try:
+            response = self.client.get('/admin/diagnostics')
+            if response.get('success'):
+                return response['data']
+        except APIError as e:
+            logger.error(f"Fehler beim Health-Check: {e}")
+            raise
+        return {}
+
+    def get_health_history(self, limit: int = 20) -> List[Dict]:
+        """Vergangene Health-Check-Laeufe abrufen."""
+        try:
+            response = self.client.get(f'/admin/diagnostics/history?limit={limit}')
+            if response.get('success'):
+                return response['data'].get('runs', [])
+        except APIError as e:
+            logger.error(f"Fehler beim Laden der Health-History: {e}")
+            raise
+        return []
