@@ -14,6 +14,17 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+RE_BOUNDARY_QUOTED = re.compile(r'boundary="([^"]+)"', re.IGNORECASE)
+RE_BOUNDARY_UNQUOTED = re.compile(r'boundary=([^;\s]+)', re.IGNORECASE)
+RE_CONTENT_ID = re.compile(r'content-id:\s*<?([^>\s\r\n]+)>?', re.IGNORECASE)
+RE_CONTENT_TYPE = re.compile(r'content-type:\s*([^\s;]+)', re.IGNORECASE)
+RE_DATEI_BLOCK = re.compile(r'<(?:gevo:|a:|allg:)?Datei[^>]*>(.*?)</(?:gevo:|a:|allg:)?Datei>', re.DOTALL)
+RE_FILENAME_MTOM = re.compile(r'<(?:a:|allg:|gevo:)?Dateiname>([^<]+)</(?:a:|allg:|gevo:)?Dateiname>', re.IGNORECASE)
+RE_XOP_INCLUDE = re.compile(r'<xop:Include\s+href="cid:([^"]+)"', re.IGNORECASE)
+RE_CID_HREF = re.compile(r'href="cid:([^"]+)"', re.IGNORECASE)
+RE_KATEGORIE_MTOM = re.compile(r'<(?:tran:|t:)?Kategorie>([^<]+)</(?:tran:|t:)?Kategorie>', re.IGNORECASE)
+RE_VSNR_MTOM = re.compile(r'<(?:a:|allg:|t:)?Versicherungsscheinnummer>([^<]+)</(?:a:|allg:|t:)?Versicherungsscheinnummer>', re.IGNORECASE)
+
 
 def extract_boundary(content_type: str) -> Optional[bytes]:
     """
@@ -30,9 +41,9 @@ def extract_boundary(content_type: str) -> Optional[bytes]:
     
     # Pattern: boundary="uuid:12345" oder boundary=uuid:12345
     # Auch mit Quotes oder ohne
-    match = re.search(r'boundary="([^"]+)"', content_type, re.IGNORECASE)
+    match = RE_BOUNDARY_QUOTED.search(content_type)
     if not match:
-        match = re.search(r'boundary=([^;\s]+)', content_type, re.IGNORECASE)
+        match = RE_BOUNDARY_UNQUOTED.search(content_type)
     
     if match:
         boundary = match.group(1)
@@ -144,7 +155,7 @@ def parse_mtom_response(content: bytes, content_type: str = "") -> tuple:
         
         # Content-ID extrahieren - robusteres Pattern für verschiedene Varianten
         # Unterstützt: <cid>, cid, url-encoded cid, mit/ohne spitze Klammern
-        cid_match = re.search(r'content-id:\s*<?([^>\s\r\n]+)>?', headers_raw)
+        cid_match = RE_CONTENT_ID.search(headers_raw)
         content_id = cid_match.group(1) if cid_match else None
         
         # URL-Decoding für Content-ID falls nötig (z.B. %40 -> @)
@@ -156,7 +167,7 @@ def parse_mtom_response(content: bytes, content_type: str = "") -> tuple:
                 pass
         
         # Content-Type extrahieren
-        ct_match = re.search(r'content-type:\s*([^\s;]+)', headers_raw)
+        ct_match = RE_CONTENT_TYPE.search(headers_raw)
         part_content_type = ct_match.group(1) if ct_match else 'application/octet-stream'
         
         if 'xml' in part_content_type or 'soap' in part_content_type:
@@ -187,21 +198,18 @@ def parse_mtom_response(content: bytes, content_type: str = "") -> tuple:
         
         # Dateiname aus XML extrahieren - VEMA verwendet verschiedene Namespace-Präfixe
         # a:, allg:, gevo:, oder ohne Präfix
-        datei_pattern = r'<(?:gevo:|a:|allg:)?Datei[^>]*>(.*?)</(?:gevo:|a:|allg:)?Datei>'
-        datei_matches = re.findall(datei_pattern, xml_text, re.DOTALL)
+        datei_matches = RE_DATEI_BLOCK.findall(xml_text)
         
         logger.debug(f"Gefundene Datei-Blöcke: {len(datei_matches)}")
         
         if not datei_matches:
             # Alternatives Pattern - direkte Suche nach Dateiname und XOP
             # VEMA-Format: <a:Dateiname>...</a:Dateiname>
-            filename_pattern = r'<(?:a:|allg:|gevo:)?Dateiname>([^<]+)</(?:a:|allg:|gevo:)?Dateiname>'
-            filename_matches = re.findall(filename_pattern, xml_text)
+            filename_matches = RE_FILENAME_MTOM.findall(xml_text)
             logger.debug(f"Gefundene Dateinamen: {filename_matches}")
             
             # XOP Include finden
-            xop_pattern = r'<xop:Include\s+href="cid:([^"]+)"'
-            xop_matches = re.findall(xop_pattern, xml_text)
+            xop_matches = RE_XOP_INCLUDE.findall(xml_text)
             logger.debug(f"Gefundene XOP-Referenzen: {xop_matches}")
             
             for i, cid in enumerate(xop_matches):
@@ -218,8 +226,8 @@ def parse_mtom_response(content: bytes, content_type: str = "") -> tuple:
         else:
             for datei_xml in datei_matches:
                 # VEMA verwendet a:Dateiname statt allg:Dateiname
-                filename_match = re.search(r'<(?:a:|allg:|gevo:)?Dateiname>([^<]+)</(?:a:|allg:|gevo:)?Dateiname>', datei_xml)
-                xop_match = re.search(r'href="cid:([^"]+)"', datei_xml)
+                filename_match = RE_FILENAME_MTOM.search(datei_xml)
+                xop_match = RE_CID_HREF.search(datei_xml)
                 
                 if xop_match:
                     cid = xop_match.group(1)
@@ -235,11 +243,11 @@ def parse_mtom_response(content: bytes, content_type: str = "") -> tuple:
                         logger.info(f"Dokument extrahiert: {filename}, {len(data)} Bytes")
         
         # Metadaten extrahieren - verschiedene Namespace-Präfixe
-        kategorie_match = re.search(r'<(?:tran:|t:)?Kategorie>([^<]+)</(?:tran:|t:)?Kategorie>', xml_text)
+        kategorie_match = RE_KATEGORIE_MTOM.search(xml_text)
         if kategorie_match:
             metadata['category'] = kategorie_match.group(1)
         
-        vsnr_match = re.search(r'<(?:a:|allg:|t:)?Versicherungsscheinnummer>([^<]+)</(?:a:|allg:|t:)?Versicherungsscheinnummer>', xml_text)
+        vsnr_match = RE_VSNR_MTOM.search(xml_text)
         if vsnr_match:
             metadata['versicherungsschein_nr'] = vsnr_match.group(1)
     

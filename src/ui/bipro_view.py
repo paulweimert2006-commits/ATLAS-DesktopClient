@@ -18,10 +18,11 @@ from PySide6.QtWidgets import (
     QListWidget, QListWidgetItem, QTableWidget, QTableWidgetItem,
     QHeaderView, QPushButton, QLabel, QTextEdit, QProgressDialog, QFileDialog,
     QMessageBox, QDialog, QFormLayout, QLineEdit, QComboBox,
-    QDialogButtonBox, QCheckBox, QFrame, QProgressBar
+    QDialogButtonBox, QCheckBox, QFrame, QProgressBar,
+    QScrollArea, QGridLayout,
 )
-from PySide6.QtCore import Qt, Signal, QThread, QTimer
-from PySide6.QtGui import QFont, QColor, QPainter
+from PySide6.QtCore import Qt, Signal, QThread, QTimer, QSettings
+from PySide6.QtGui import QFont, QColor, QPainter, QShortcut, QKeySequence
 
 from api.client import APIClient
 from api.vu_connections import VUConnectionsAPI, VUConnection, VUCredentials
@@ -38,7 +39,8 @@ from ui.styles.tokens import (
     FONT_HEADLINE, FONT_BODY,
     FONT_SIZE_H2, FONT_SIZE_BODY, FONT_SIZE_CAPTION,
     RADIUS_MD,
-    get_button_primary_style, get_button_secondary_style, get_button_ghost_style
+    get_button_primary_style, get_button_secondary_style, get_button_ghost_style,
+    get_button_danger_style,
 )
 
 
@@ -96,6 +98,7 @@ from bipro.workers import (
     AcknowledgeShipmentWorker,
     MailImportWorker,
     ParallelDownloadManager,
+    PreviewAllShipmentsWorker,
 )
 
 
@@ -1587,18 +1590,22 @@ class BiPROView(QWidget):
     
     # Signal wenn Dokumente ins Archiv übertragen wurden
     documents_uploaded = Signal()
+    # Signal wenn Navigation zum Archiv gewünscht
+    request_archive_view = Signal()
     
-    def __init__(self, api_client: APIClient, parent=None):
+    def __init__(self, api_client: APIClient, parent=None,
+                 is_admin: bool = False, username: str = ""):
         super().__init__(parent)
         
         self.api_client = api_client
         self.vu_api = VUConnectionsAPI(api_client)
         self.docs_api = DocumentsAPI(api_client)
+        self._is_admin = is_admin
+        self._username = username
         
         # Cache-Service fuer VU-Verbindungen
         from services.data_cache import get_cache_service
         self._cache = get_cache_service(api_client)
-        # WICHTIG: QueuedConnection verwenden, da Signals aus Background-Thread kommen!
         self._cache.connections_updated.connect(
             self._on_cache_connections_updated,
             Qt.ConnectionType.QueuedConnection
@@ -1611,16 +1618,17 @@ class BiPROView(QWidget):
         
         self._fetch_worker = None
         self._download_worker = None
-        self._parallel_manager = None  # ParallelDownloadManager für parallele Downloads
+        self._parallel_manager = None
         self._acknowledge_worker = None
-        self._mail_import_worker = None  # MailImportWorker fuer IMAP-Import
-        self._mail_progress_toast = None  # Progress-Toast fuer Mail-Import
+        self._mail_import_worker = None
+        self._mail_progress_toast = None
+        self._preview_worker = None
         self._download_queue = []
         self._download_stats = {}
         
         # "Alle VUs abholen" State Machine
         self._all_vus_mode = False
-        self._vu_queue: list = []  # Queue von VUConnections
+        self._vu_queue: list = []
         self._all_vus_current_index = 0
         self._all_vus_total = 0
         self._all_vus_stats = {
@@ -1628,8 +1636,31 @@ class BiPROView(QWidget):
             'total_events': 0, 'vus_skipped': 0
         }
         
+        # Unified Fetch State (VU + Mail parallel)
+        self._unified_fetch_active = False
+        self._unified_mail_done = False
+        self._unified_vus_done = False
+        self._unified_mail_docs = 0
+        
+        # View-Mode: Standard vs Admin
+        self._admin_view_active = False
+        
+        # Preview-Cache
+        self._preview_cache: list = []
+        self._preview_cache_time: float = 0
+        self._PREVIEW_CACHE_TTL = 180  # 3 Minuten
+        self._last_manual_refresh_time: float = 0  # Rate-Limit: 30s Cooldown
+        
+        # Letzter Abruf / Letzte Quittierung (aus QSettings)
+        self._last_fetch_info = self._load_fetch_info()
+        self._last_ack_info = self._load_ack_info()
+        
         # Liste aller aktiven Worker fuer sauberes Cleanup
         self._active_workers: list = []
+        
+        # Widget-Listen fuer View-Toggle
+        self._admin_only_widgets: list = []
+        self._standard_only_widgets: list = []
         
         self._setup_ui()
         
@@ -1637,7 +1668,10 @@ class BiPROView(QWidget):
         self._progress_overlay = BiPROProgressOverlay(self)
         self._progress_overlay.close_requested.connect(self._on_progress_overlay_closed)
         
-        self._load_connections(force_refresh=False)  # Aus Cache
+        self._load_connections(force_refresh=False)
+        
+        # Auto-Preview starten
+        self._start_preview_load()
     
     def _register_worker(self, worker: QThread):
         """Registriert einen Worker fuer spaeteres Cleanup."""
@@ -1677,6 +1711,9 @@ class BiPROView(QWidget):
         if self._acknowledge_worker and self._acknowledge_worker.isRunning():
             self._acknowledge_worker.quit()
             self._acknowledge_worker.wait(1000)
+        if self._preview_worker and self._preview_worker.isRunning():
+            self._preview_worker.quit()
+            self._preview_worker.wait(1000)
     
     def closeEvent(self, event):
         """Wird aufgerufen wenn das Widget geschlossen wird."""
@@ -1684,10 +1721,12 @@ class BiPROView(QWidget):
         super().closeEvent(event)
     
     def resizeEvent(self, event):
-        """Passt das Progress-Overlay an die Fenstergröße an."""
+        """Passt das Progress-Overlay und die Karten-Anordnung an die Fenstergroesse an."""
         super().resizeEvent(event)
         if hasattr(self, '_progress_overlay'):
             self._progress_overlay.setGeometry(self.rect())
+        if hasattr(self, '_preview_cache') and self._preview_cache:
+            self._render_preview_cards(self._preview_cache)
     
     def _on_progress_overlay_closed(self):
         """Callback wenn das Progress-Overlay geschlossen wird."""
@@ -1695,178 +1734,931 @@ class BiPROView(QWidget):
         self.documents_uploaded.emit()
     
     def _setup_ui(self):
-        """UI aufbauen (ACENCIA Design)."""
+        """UI aufbauen -- Standard-View (einfach) + Admin-View (technisch)."""
+        from i18n.de import (
+            BIPRO_HEADER, BIPRO_VIEW_TOGGLE_STANDARD, BIPRO_VIEW_TOGGLE_ADMIN,
+            BIPRO_FETCH_ALL, BIPRO_FETCH_ALL_TOOLTIP, BIPRO_FETCH_ALL_LAST_INFO,
+            BIPRO_MAIL_FETCH_TOOLTIP,
+            BIPRO_FETCH_ONLY_MAIL, BIPRO_FETCH_ONLY_VU,
+            BIPRO_SHOW_DETAILS, BIPRO_HIDE_DETAILS, BIPRO_GO_TO_ARCHIVE,
+            BIPRO_ACK_BUTTON, BIPRO_ACK_LAST_INFO,
+            BIPRO_PREVIEW_REFRESH, BIPRO_PREVIEW_LOADING, BIPRO_PREVIEW_EMPTY,
+        )
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 16, 16, 16)
-        
-        # Header (ACENCIA Style)
-        header = QLabel("BiPRO Datenabruf")
+        layout.setSpacing(12)
+
+        # ── Header-Zeile: Titel + Refresh + Admin-Toggle ──
+        header_row = QHBoxLayout()
+        header_row.setSpacing(12)
+
+        header = QLabel(BIPRO_HEADER)
         header.setStyleSheet(f"""
             font-family: {FONT_HEADLINE};
             font-size: {FONT_SIZE_H2};
             color: {TEXT_PRIMARY};
             font-weight: 400;
-            padding-bottom: 8px;
         """)
-        layout.addWidget(header)
-        
-        # Splitter
+        header_row.addWidget(header)
+
+        self._refresh_btn = QPushButton(BIPRO_PREVIEW_REFRESH)
+        self._refresh_btn.setFixedHeight(28)
+        self._refresh_btn.setStyleSheet(get_button_ghost_style())
+        self._refresh_btn.setToolTip("Vorschau manuell aktualisieren (max. 1x / 30s)")
+        self._refresh_btn.clicked.connect(self._on_manual_refresh)
+        header_row.addWidget(self._refresh_btn)
+
+        header_row.addStretch()
+
+        self._admin_toggle = QPushButton(BIPRO_VIEW_TOGGLE_STANDARD)
+        self._admin_toggle.setFixedHeight(28)
+        self._admin_toggle.setCheckable(True)
+        self._admin_toggle.setChecked(False)
+        self._admin_toggle.setStyleSheet(f"""
+            QPushButton {{
+                background: {BG_SECONDARY};
+                border: 1px solid {BORDER_DEFAULT};
+                border-radius: 4px;
+                padding: 2px 12px;
+                font-size: {FONT_SIZE_CAPTION};
+                color: {TEXT_SECONDARY};
+            }}
+            QPushButton:checked {{
+                background: {PRIMARY_900};
+                color: white;
+                border-color: {PRIMARY_900};
+            }}
+        """)
+        self._admin_toggle.toggled.connect(self._toggle_view_mode)
+        self._admin_toggle.setVisible(self._is_admin)
+        header_row.addWidget(self._admin_toggle)
+
+        layout.addLayout(header_row)
+
+        # ==============================================================
+        # STANDARD VIEW -- Aktions-Buttons, Quittieren, Vorschau-Karten
+        # ==============================================================
+        self._standard_container = QWidget()
+        std_layout = QVBoxLayout(self._standard_container)
+        std_layout.setContentsMargins(0, 0, 0, 0)
+        std_layout.setSpacing(12)
+
+        # ── Aktions-Buttons ──
+        action_bar = QHBoxLayout()
+        action_bar.setSpacing(8)
+
+        self.fetch_all_vus_btn = QPushButton(BIPRO_FETCH_ALL)
+        self.fetch_all_vus_btn.setFixedHeight(44)
+        self.fetch_all_vus_btn.setStyleSheet(get_button_primary_style())
+        self.fetch_all_vus_btn.setToolTip(BIPRO_FETCH_ALL_TOOLTIP)
+        self.fetch_all_vus_btn.setShortcut("F5")
+        self.fetch_all_vus_btn.clicked.connect(self._unified_fetch)
+        action_bar.addWidget(self.fetch_all_vus_btn)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.VLine)
+        sep.setStyleSheet(f"color: {BORDER_DEFAULT};")
+        action_bar.addWidget(sep)
+
+        self.mail_fetch_btn = QPushButton(BIPRO_FETCH_ONLY_MAIL)
+        self.mail_fetch_btn.setFixedHeight(30)
+        self.mail_fetch_btn.setStyleSheet(get_button_secondary_style())
+        self.mail_fetch_btn.setToolTip(BIPRO_MAIL_FETCH_TOOLTIP)
+        self.mail_fetch_btn.clicked.connect(self._fetch_mails)
+        action_bar.addWidget(self.mail_fetch_btn)
+
+        self.fetch_single_vu_btn = QPushButton(BIPRO_FETCH_ONLY_VU)
+        self.fetch_single_vu_btn.setFixedHeight(30)
+        self.fetch_single_vu_btn.setStyleSheet(get_button_secondary_style())
+        self.fetch_single_vu_btn.clicked.connect(self._fetch_selected_vu)
+        action_bar.addWidget(self.fetch_single_vu_btn)
+
+        action_bar.addStretch()
+
+        self._ack_btn = QPushButton(BIPRO_ACK_BUTTON)
+        self._ack_btn.setFixedHeight(36)
+        self._ack_btn.setStyleSheet(get_button_danger_style())
+        self._ack_btn.setToolTip(
+            "Quittiert ALLE gelisteten Lieferungen bei allen Versicherern.\n"
+            "ACHTUNG: Quittierte Lieferungen werden vom Server geloescht!"
+        )
+        self._ack_btn.clicked.connect(self._acknowledge_all_listed)
+        action_bar.addWidget(self._ack_btn)
+
+        std_layout.addLayout(action_bar)
+
+        # ── Info-Zeile unter Buttons ──
+        info_row = QHBoxLayout()
+        info_row.setSpacing(24)
+
+        self._fetch_info_label = QLabel()
+        self._fetch_info_label.setStyleSheet(f"""
+            font-size: {FONT_SIZE_CAPTION};
+            color: {TEXT_SECONDARY};
+        """)
+        info_row.addWidget(self._fetch_info_label)
+
+        self._ack_info_label = QLabel()
+        self._ack_info_label.setStyleSheet(f"""
+            font-size: {FONT_SIZE_CAPTION};
+            color: {TEXT_SECONDARY};
+        """)
+        info_row.addWidget(self._ack_info_label)
+        info_row.addStretch()
+        std_layout.addLayout(info_row)
+
+        self._update_fetch_info_label()
+        self._update_ack_info_label()
+
+        # ── Status-Karte (Abruf-Fortschritt) ──
+        self._status_card = QFrame()
+        self._status_card.setObjectName("statusCard")
+        self._status_card.setStyleSheet(f"""
+            QFrame#statusCard {{
+                background-color: {BG_SECONDARY};
+                border: 1px solid {BORDER_DEFAULT};
+                border-radius: 10px;
+                padding: 4px 12px;
+            }}
+            QFrame#statusCard QLabel {{
+                border: none; background: transparent;
+            }}
+        """)
+        status_card_layout = QVBoxLayout(self._status_card)
+        status_card_layout.setContentsMargins(12, 6, 12, 6)
+        status_card_layout.setSpacing(2)
+
+        self._status_title_label = QLabel()
+        self._status_title_label.setStyleSheet(f"""
+            font-family: {FONT_BODY}; font-size: {FONT_SIZE_CAPTION};
+            color: {TEXT_SECONDARY}; background: transparent; border: none;
+        """)
+        status_card_layout.addWidget(self._status_title_label)
+
+        self._status_docs_label = QLabel()
+        self._status_docs_label.setStyleSheet(f"""
+            font-family: {FONT_HEADLINE}; font-size: {FONT_SIZE_BODY};
+            color: {TEXT_PRIMARY}; font-weight: 600;
+            background: transparent; border: none;
+        """)
+        status_card_layout.addWidget(self._status_docs_label)
+
+        self._status_progress_bar = QProgressBar()
+        self._status_progress_bar.setVisible(False)
+        self._status_progress_bar.setTextVisible(True)
+        self._status_progress_bar.setFormat("%p%")
+        self._status_progress_bar.setFixedHeight(14)
+        self._status_progress_bar.setStyleSheet(f"""
+            QProgressBar {{
+                background-color: {PRIMARY_0};
+                border: 1px solid {BORDER_DEFAULT};
+                border-radius: 4px; text-align: center;
+                font-size: {FONT_SIZE_CAPTION};
+            }}
+            QProgressBar::chunk {{
+                background-color: {ACCENT_500};
+                border-radius: 3px;
+            }}
+        """)
+        status_card_layout.addWidget(self._status_progress_bar)
+
+        self._status_detail_label = QLabel()
+        self._status_detail_label.setStyleSheet(f"""
+            font-family: {FONT_BODY}; font-size: {FONT_SIZE_CAPTION};
+            color: {TEXT_SECONDARY}; background: transparent; border: none;
+        """)
+        self._status_detail_label.setWordWrap(True)
+        self._status_detail_label.setVisible(False)
+        status_card_layout.addWidget(self._status_detail_label)
+
+        status_action_row = QHBoxLayout()
+        self._archive_link_btn = QPushButton(BIPRO_GO_TO_ARCHIVE)
+        self._archive_link_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent; color: {ACCENT_500};
+                border: none; font-weight: 600;
+                font-size: {FONT_SIZE_BODY};
+                text-decoration: underline; padding: 0;
+            }}
+            QPushButton:hover {{ color: {PRIMARY_900}; }}
+        """)
+        self._archive_link_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._archive_link_btn.setVisible(False)
+        self._archive_link_btn.clicked.connect(self.request_archive_view.emit)
+        status_action_row.addStretch()
+        status_action_row.addWidget(self._archive_link_btn)
+        status_card_layout.addLayout(status_action_row)
+
+        self._status_card.setVisible(False)
+        std_layout.addWidget(self._status_card)
+
+        self._init_status_card()
+
+        # ── Vorschau-Karten Bereich ──
+        self._preview_header_label = QLabel(BIPRO_PREVIEW_LOADING)
+        self._preview_header_label.setStyleSheet(f"""
+            font-family: {FONT_BODY}; font-size: {FONT_SIZE_BODY};
+            color: {TEXT_SECONDARY}; padding: 4px 0;
+        """)
+        std_layout.addWidget(self._preview_header_label)
+
+        # Zusammenfassungs-Karte (pro VU aggregiert)
+        self._preview_summary = QFrame()
+        self._preview_summary.setObjectName("previewSummary")
+        self._preview_summary.setStyleSheet(f"""
+            QFrame#previewSummary {{
+                background-color: {BG_SECONDARY};
+                border: 1px solid {BORDER_DEFAULT};
+                border-radius: 10px;
+                padding: 12px 16px;
+            }}
+            QFrame#previewSummary QLabel {{
+                border: none; background: transparent;
+            }}
+        """)
+        self._preview_summary_layout = QVBoxLayout(self._preview_summary)
+        self._preview_summary_layout.setContentsMargins(12, 8, 12, 8)
+        self._preview_summary_layout.setSpacing(4)
+        self._preview_summary.setVisible(False)
+        std_layout.addWidget(self._preview_summary)
+
+        self._preview_scroll = QScrollArea()
+        self._preview_scroll.setWidgetResizable(True)
+        self._preview_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._preview_scroll.setMinimumHeight(120)
+
+        self._preview_cards_widget = QWidget()
+        self._preview_cards_layout = QGridLayout(self._preview_cards_widget)
+        self._preview_cards_layout.setContentsMargins(0, 0, 0, 0)
+        self._preview_cards_layout.setHorizontalSpacing(6)
+        self._preview_cards_layout.setVerticalSpacing(6)
+        self._preview_scroll.setWidget(self._preview_cards_widget)
+        std_layout.addWidget(self._preview_scroll, 1)
+
+        layout.addWidget(self._standard_container)
+
+        # ==============================================================
+        # ADMIN VIEW -- VU-Verwaltung, Shipment-Tabelle, Log
+        # ==============================================================
+        self._admin_container = QWidget()
+        admin_layout = QVBoxLayout(self._admin_container)
+        admin_layout.setContentsMargins(0, 0, 0, 0)
+        admin_layout.setSpacing(8)
+
+        # Splitter: VU-Liste links, Shipment-Details rechts
         splitter = QSplitter(Qt.Orientation.Horizontal)
-        
-        # Linke Seite: Verbindungen
+
+        # -- Linke Seite: Verbindungen --
         left_widget = QWidget()
         left_layout = QVBoxLayout(left_widget)
         left_layout.setContentsMargins(0, 0, 0, 0)
-        
+
         conn_header = QHBoxLayout()
         conn_header.addWidget(QLabel("VU-Verbindungen"))
-        
+
         add_btn = QPushButton("Hinzufügen")
         add_btn.setStyleSheet(get_button_secondary_style())
         add_btn.clicked.connect(self._add_connection)
         conn_header.addWidget(add_btn)
-        
+
         left_layout.addLayout(conn_header)
-        
+
         self.connections_list = QListWidget()
         self.connections_list.itemClicked.connect(self._on_connection_selected)
         self.connections_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.connections_list.customContextMenuRequested.connect(self._show_connection_context_menu)
         left_layout.addWidget(self.connections_list)
-        
-        # Buttons unter der Liste
+
         conn_buttons = QHBoxLayout()
-        
         edit_btn = QPushButton("Bearbeiten")
-        edit_btn.setToolTip("Verbindung bearbeiten")
         edit_btn.setStyleSheet(get_button_ghost_style())
         edit_btn.clicked.connect(self._edit_connection)
         conn_buttons.addWidget(edit_btn)
-        
         show_pw_btn = QPushButton("Passwort")
-        show_pw_btn.setToolTip("Passwort anzeigen")
         show_pw_btn.setStyleSheet(get_button_ghost_style())
         show_pw_btn.clicked.connect(self._show_password)
         conn_buttons.addWidget(show_pw_btn)
-        
         delete_btn = QPushButton("Löschen")
-        delete_btn.setToolTip("Verbindung löschen")
         delete_btn.setStyleSheet(get_button_ghost_style())
         delete_btn.clicked.connect(self._delete_connection)
         conn_buttons.addWidget(delete_btn)
-        
         conn_buttons.addStretch()
         left_layout.addLayout(conn_buttons)
-        
+
         splitter.addWidget(left_widget)
-        
-        # Rechte Seite: Lieferungen
+
+        # -- Rechte Seite: Shipment-Tabelle + Details --
         right_widget = QWidget()
         right_layout = QVBoxLayout(right_widget)
         right_layout.setContentsMargins(0, 0, 0, 0)
-        
-        # Toolbar
-        toolbar = QHBoxLayout()
-        
-        # "Mails abholen" Button (IMAP-Import, braucht keine VU-Auswahl)
-        from i18n.de import BIPRO_MAIL_FETCH, BIPRO_MAIL_FETCH_TOOLTIP
-        self.mail_fetch_btn = QPushButton(f"  {BIPRO_MAIL_FETCH}")
-        self.mail_fetch_btn.setFixedHeight(30)
-        self.mail_fetch_btn.setToolTip(BIPRO_MAIL_FETCH_TOOLTIP)
-        self.mail_fetch_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #4CAF50;
-                color: white;
-                border: none;
-                border-radius: 4px;
-                padding: 4px 14px;
-                font-size: 13px;
-                font-weight: 600;
-            }
-            QPushButton:hover {
-                background-color: #43A047;
-            }
-            QPushButton:pressed {
-                background-color: #388E3C;
-            }
-            QPushButton:disabled {
-                background-color: #A5D6A7;
-                color: #E8F5E9;
-            }
+        right_layout.setSpacing(6)
+
+        self._details_toggle_btn = QPushButton(BIPRO_SHOW_DETAILS + "  \u25BE")
+        self._details_toggle_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent; color: {TEXT_SECONDARY};
+                border: none; font-size: {FONT_SIZE_BODY};
+                text-align: left; padding: 4px 0;
+            }}
+            QPushButton:hover {{ color: {TEXT_PRIMARY}; }}
         """)
-        self.mail_fetch_btn.clicked.connect(self._fetch_mails)
-        toolbar.addWidget(self.mail_fetch_btn)
-        
-        self.download_btn = QPushButton("📥 Ausgewählte herunterladen")
+        self._details_toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._details_toggle_btn.clicked.connect(self._toggle_details)
+        right_layout.addWidget(self._details_toggle_btn)
+
+        self._details_widget = QWidget()
+        self._details_widget.setVisible(False)
+        details_layout = QVBoxLayout(self._details_widget)
+        details_layout.setContentsMargins(0, 0, 0, 0)
+        details_layout.setSpacing(6)
+
+        details_toolbar = QHBoxLayout()
+        self.download_btn = QPushButton("Ausgewaehlte herunterladen")
         self.download_btn.setEnabled(False)
+        self.download_btn.setStyleSheet(get_button_ghost_style())
         self.download_btn.clicked.connect(self._download_selected)
-        toolbar.addWidget(self.download_btn)
-        
+        details_toolbar.addWidget(self.download_btn)
         self.download_all_btn = QPushButton("Alle herunterladen")
         self.download_all_btn.setEnabled(False)
+        self.download_all_btn.setStyleSheet(get_button_ghost_style())
         self.download_all_btn.clicked.connect(self._download_all)
-        toolbar.addWidget(self.download_all_btn)
-        
-        # Separator
-        separator_line = QFrame()
-        separator_line.setFrameShape(QFrame.Shape.VLine)
-        separator_line.setStyleSheet(f"color: {BORDER_DEFAULT};")
-        toolbar.addWidget(separator_line)
-        
-        # "Alle VUs abholen" Button (braucht keine VU-Auswahl)
-        from i18n.de import BIPRO_FETCH_ALL, BIPRO_FETCH_ALL_TOOLTIP
-        self.fetch_all_vus_btn = QPushButton(BIPRO_FETCH_ALL)
-        self.fetch_all_vus_btn.setStyleSheet(get_button_primary_style())
-        self.fetch_all_vus_btn.setToolTip(BIPRO_FETCH_ALL_TOOLTIP)
-        self.fetch_all_vus_btn.clicked.connect(self._fetch_all_vus)
-        toolbar.addWidget(self.fetch_all_vus_btn)
-        
-        # Quittieren-Button (manuell, nicht automatisch)
+        details_toolbar.addWidget(self.download_all_btn)
         self.acknowledge_btn = QPushButton("Ausgewaehlte quittieren")
-        self.acknowledge_btn.setToolTip("Quittiert die ausgewaehlten Lieferungen beim Versicherer.\nACHTUNG: Quittierte Lieferungen werden vom Server geloescht!")
+        self.acknowledge_btn.setToolTip(
+            "Quittiert die ausgewaehlten Lieferungen beim Versicherer.\n"
+            "ACHTUNG: Quittierte Lieferungen werden vom Server geloescht!"
+        )
         self.acknowledge_btn.setEnabled(False)
+        self.acknowledge_btn.setStyleSheet(get_button_ghost_style())
         self.acknowledge_btn.clicked.connect(self._acknowledge_selected)
-        toolbar.addWidget(self.acknowledge_btn)
-        
-        toolbar.addStretch()
-        right_layout.addLayout(toolbar)
-        
-        # Lieferungstabelle
+        details_toolbar.addWidget(self.acknowledge_btn)
+        details_toolbar.addStretch()
+        details_layout.addLayout(details_toolbar)
+
         self.shipments_table = QTableWidget()
         self.shipments_table.setColumnCount(5)
         self.shipments_table.setHorizontalHeaderLabels([
-            "ID", "Eingestellt", "Kategorie", "Verfügbar bis", "Transfers"
+            "ID", "Eingestellt", "Kategorie", "Verfuegbar bis", "Transfers"
         ])
-        header = self.shipments_table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
-        
+        tbl_header = self.shipments_table.horizontalHeader()
+        tbl_header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        tbl_header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        tbl_header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        tbl_header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        tbl_header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
         self.shipments_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        right_layout.addWidget(self.shipments_table)
-        
+        details_layout.addWidget(self.shipments_table)
+
+        right_layout.addWidget(self._details_widget)
+        right_layout.addStretch()
+
         splitter.addWidget(right_widget)
-        splitter.setSizes([300, 700])
-        
-        layout.addWidget(splitter)
-        
+        splitter.setSizes([280, 720])
+
+        admin_layout.addWidget(splitter)
+
         # Log-Bereich
         log_group = QGroupBox("Protokoll")
-        log_layout = QVBoxLayout(log_group)
-        
+        log_inner = QVBoxLayout(log_group)
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
         self.log_text.setMaximumHeight(150)
-        log_layout.addWidget(self.log_text)
-        
-        layout.addWidget(log_group)
+        log_inner.addWidget(self.log_text)
+        admin_layout.addWidget(log_group)
+
+        self._admin_container.setVisible(False)
+        layout.addWidget(self._admin_container)
+
+        self._admin_only_widgets = [self._admin_container]
+        self._standard_only_widgets = [self._standard_container]
+
+        self._apply_view_mode()
     
     def _log(self, message: str):
         """Nachricht ins Log schreiben."""
         timestamp = datetime.now().strftime("%H:%M:%S")
         self.log_text.append(f"[{timestamp}] {message}")
+
+    # ── View Toggle ──
+
+    def _toggle_view_mode(self, checked: bool):
+        """Schaltet zwischen Standard- und Admin-Ansicht."""
+        from i18n.de import BIPRO_VIEW_TOGGLE_STANDARD, BIPRO_VIEW_TOGGLE_ADMIN
+        self._admin_view_active = checked
+        self._admin_toggle.setText(
+            BIPRO_VIEW_TOGGLE_ADMIN if checked else BIPRO_VIEW_TOGGLE_STANDARD
+        )
+        self._apply_view_mode()
+
+    def _apply_view_mode(self):
+        """Setzt Sichtbarkeit der UI-Sektionen je nach View-Mode."""
+        admin = self._admin_view_active
+        for w in self._standard_only_widgets:
+            w.setVisible(not admin)
+        for w in self._admin_only_widgets:
+            w.setVisible(admin)
+
+    # ── Fetch / Ack Info Labels ──
+
+    def _load_fetch_info(self) -> dict:
+        settings = QSettings("ACENCIA", "ATLAS")
+        return {
+            'timestamp': settings.value("bipro/last_fetch_timestamp", ""),
+            'user': settings.value("bipro/last_fetch_user", ""),
+        }
+
+    def _save_fetch_info(self):
+        ts = datetime.now().strftime("%d.%m.%Y %H:%M")
+        settings = QSettings("ACENCIA", "ATLAS")
+        settings.setValue("bipro/last_fetch_timestamp", ts)
+        settings.setValue("bipro/last_fetch_user", self._username)
+        self._last_fetch_info = {'timestamp': ts, 'user': self._username}
+        self._update_fetch_info_label()
+
+    def _load_ack_info(self) -> dict:
+        settings = QSettings("ACENCIA", "ATLAS")
+        return {
+            'timestamp': settings.value("bipro/last_ack_timestamp", ""),
+            'user': settings.value("bipro/last_ack_user", ""),
+        }
+
+    def _save_ack_info(self):
+        ts = datetime.now().strftime("%d.%m.%Y %H:%M")
+        settings = QSettings("ACENCIA", "ATLAS")
+        settings.setValue("bipro/last_ack_timestamp", ts)
+        settings.setValue("bipro/last_ack_user", self._username)
+        self._last_ack_info = {'timestamp': ts, 'user': self._username}
+        self._update_ack_info_label()
+
+    def _update_fetch_info_label(self):
+        from i18n.de import BIPRO_FETCH_ALL_LAST_INFO
+        info = self._last_fetch_info
+        if info.get('timestamp'):
+            self._fetch_info_label.setText(
+                BIPRO_FETCH_ALL_LAST_INFO.format(
+                    timestamp=info['timestamp'], user=info.get('user', ''))
+            )
+        else:
+            self._fetch_info_label.setText("")
+
+    def _update_ack_info_label(self):
+        from i18n.de import BIPRO_ACK_LAST_INFO
+        info = self._last_ack_info
+        if info.get('timestamp'):
+            self._ack_info_label.setText(
+                BIPRO_ACK_LAST_INFO.format(
+                    timestamp=info['timestamp'], user=info.get('user', ''))
+            )
+        else:
+            self._ack_info_label.setText("")
+
+    # ── Preview-Karten ──
+
+    def _start_preview_load(self, force: bool = False):
+        """Laedt Lieferungs-Vorschau fuer alle VUs (komplett im Hintergrund).
+
+        Args:
+            force: True = Cache und Rate-Limit ignorieren (automatischer Aufruf).
+                   Manueller Refresh hat ein eigenes 30s-Cooldown.
+        """
+        import time as _time
+
+        if not force and self._preview_cache and \
+                (_time.time() - self._preview_cache_time) < self._PREVIEW_CACHE_TTL:
+            self._render_preview_cards(self._preview_cache)
+            return
+
+        if self._preview_worker and self._preview_worker.isRunning():
+            return
+
+        from i18n.de import BIPRO_PREVIEW_LOADING
+        self._preview_header_label.setText(BIPRO_PREVIEW_LOADING)
+        self._clear_preview_cards()
+
+        active = [c for c in self._connections if c.is_active]
+        if not active:
+            from i18n.de import BIPRO_PREVIEW_EMPTY
+            self._preview_header_label.setText(BIPRO_PREVIEW_EMPTY)
+            return
+
+        self._preview_worker = PreviewAllShipmentsWorker(
+            connections=active,
+            vu_api=self.vu_api,
+            cert_config_loader=self._load_certificate_config,
+        )
+        self._preview_worker.finished.connect(self._on_preview_loaded)
+        self._preview_worker.vu_error.connect(self._on_preview_vu_error)
+        self._register_worker(self._preview_worker)
+        self._preview_worker.start()
+
+    def _get_credentials_for_connection(self, conn) -> 'Optional[VUCredentials]':
+        """Holt Credentials fuer eine VU-Verbindung (ohne UI-Fehler).
+
+        Wird nur fuer synchrone Aktionen verwendet (z.B. Quittierung),
+        nicht fuer Preview (dort laueft alles im Worker-Thread).
+        """
+        if conn.auth_type == 'certificate':
+            cert_config = self._load_certificate_config(conn.id)
+            if not cert_config:
+                return None
+            cert_format = cert_config.get('cert_format', 'pfx')
+            if cert_format == 'jks':
+                return VUCredentials(
+                    username="", password="",
+                    jks_path=cert_config.get('jks_path', ''),
+                    jks_password=cert_config.get('jks_password', ''),
+                    jks_alias=cert_config.get('jks_alias', ''),
+                    jks_key_password=cert_config.get('jks_key_password', ''),
+                )
+            return VUCredentials(
+                username="", password="",
+                pfx_path=cert_config.get('pfx_path', ''),
+                pfx_password=cert_config.get('pfx_password', ''),
+            )
+        try:
+            return self.vu_api.get_credentials(conn.id)
+        except Exception:
+            return None
+
+    def _on_manual_refresh(self):
+        """Manueller Refresh mit 30-Sekunden-Cooldown."""
+        import time as _time
+        now = _time.time()
+        if (now - self._last_manual_refresh_time) < 30:
+            remaining = int(30 - (now - self._last_manual_refresh_time))
+            if hasattr(self, '_toast_manager') and self._toast_manager:
+                self._toast_manager.show_info(
+                    f"Bitte {remaining}s warten vor dem naechsten Aktualisieren."
+                )
+            return
+        self._last_manual_refresh_time = now
+        self._start_preview_load(force=True)
+
+    def _on_preview_loaded(self, results: list):
+        """Callback wenn PreviewAllShipmentsWorker fertig ist."""
+        import time as _time
+        self._preview_cache = results
+        self._preview_cache_time = _time.time()
+        self._render_preview_cards(results)
+
+    def _on_preview_vu_error(self, vu_name: str, error_msg: str):
+        from i18n.de import BIPRO_PREVIEW_ERROR
+        logger.warning(BIPRO_PREVIEW_ERROR.format(vu_name=vu_name) + f": {error_msg}")
+
+    def _clear_preview_cards(self):
+        """Entfernt alle Karten aus dem Preview-Grid."""
+        while self._preview_cards_layout.count():
+            item = self._preview_cards_layout.takeAt(0)
+            w = item.widget()
+            if w:
+                w.deleteLater()
+
+    def _render_preview_cards(self, results: list):
+        """Baut Zusammenfassung + Vorschau-Karten aus den Preview-Ergebnissen."""
+        from i18n.de import BIPRO_PREVIEW_COUNT, BIPRO_PREVIEW_EMPTY
+        self._clear_preview_cards()
+        self._clear_preview_summary()
+
+        vu_stats: dict = {}
+        cards = []
+        for vu_name, shipments in results:
+            if vu_name not in vu_stats:
+                vu_stats[vu_name] = {'count': 0, 'categories': set()}
+            for ship in shipments:
+                vu_stats[vu_name]['count'] += 1
+                if ship.category:
+                    vu_stats[vu_name]['categories'].add(
+                        get_category_short_name(ship.category) or ship.category
+                    )
+                cards.append((vu_name, ship))
+
+        total_shipments = sum(v['count'] for v in vu_stats.values())
+
+        if total_shipments == 0:
+            self._preview_header_label.setText(BIPRO_PREVIEW_EMPTY)
+            self._preview_summary.setVisible(False)
+            return
+
+        self._preview_header_label.setText(
+            BIPRO_PREVIEW_COUNT.format(
+                count=total_shipments, vu_count=len(vu_stats))
+        )
+        self._build_preview_summary(vu_stats, total_shipments)
+
+        available_w = self._preview_scroll.viewport().width() or self.width() - 40
+        cols = max(1, available_w // 180)
+        for i, (vu_name, ship) in enumerate(cards):
+            card = self._build_shipment_card(vu_name, ship)
+            row, col = divmod(i, cols)
+            self._preview_cards_layout.addWidget(card, row, col)
+
+    def _clear_preview_summary(self):
+        """Entfernt alle Widgets aus der Zusammenfassungs-Karte."""
+        while self._preview_summary_layout.count():
+            item = self._preview_summary_layout.takeAt(0)
+            w = item.widget()
+            if w:
+                w.deleteLater()
+
+    def _build_preview_summary(self, vu_stats: dict, total: int):
+        """Baut die Zusammenfassungs-Karte oberhalb der Einzelkarten."""
+        self._preview_summary.setVisible(True)
+
+        title = QLabel(f"{total} Lieferung(en) verfuegbar")
+        title.setStyleSheet(f"""
+            font-family: {FONT_HEADLINE}; font-weight: 600;
+            font-size: {FONT_SIZE_BODY}; color: {TEXT_PRIMARY};
+        """)
+        self._preview_summary_layout.addWidget(title)
+
+        for vu_name, stats in vu_stats.items():
+            count = stats['count']
+            cats = stats['categories']
+            cat_text = ", ".join(sorted(cats)[:3])
+            if len(cats) > 3:
+                cat_text += f" (+{len(cats) - 3})"
+            line_text = f"{vu_name}: {count} Lieferung(en)"
+            if cat_text:
+                line_text += f"  —  {cat_text}"
+            line = QLabel(line_text)
+            line.setStyleSheet(f"""
+                font-size: {FONT_SIZE_CAPTION}; color: {TEXT_SECONDARY};
+            """)
+            self._preview_summary_layout.addWidget(line)
+
+    def _build_shipment_card(self, vu_name: str, shipment) -> QFrame:
+        """Erstellt eine einzelne Vorschau-Karte fuer eine Lieferung."""
+        from i18n.de import (
+            BIPRO_PREVIEW_CARD_CATEGORY, BIPRO_PREVIEW_CARD_DATE,
+        )
+
+        card = QFrame()
+        card.setObjectName("shipmentCard")
+        card.setMinimumWidth(160)
+        card.setStyleSheet(f"""
+            QFrame#shipmentCard {{
+                background-color: {BG_SECONDARY};
+                border: 1px solid {BORDER_DEFAULT};
+                border-radius: 12px;
+                padding: 10px;
+            }}
+            QFrame#shipmentCard:hover {{
+                border-color: {ACCENT_500};
+            }}
+            QFrame#shipmentCard QLabel {{
+                border: none;
+                background: transparent;
+            }}
+        """)
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(10, 8, 10, 8)
+        card_layout.setSpacing(3)
+
+        cat_code = shipment.category or ""
+        cat_icon = get_category_icon(cat_code) if cat_code else ""
+        cat_name = get_category_short_name(cat_code) if cat_code else ""
+
+        vu_label = QLabel(f"{cat_icon} {vu_name}")
+        vu_label.setStyleSheet(f"""
+            font-family: {FONT_HEADLINE}; font-weight: 600;
+            font-size: {FONT_SIZE_BODY}; color: {TEXT_PRIMARY};
+        """)
+        card_layout.addWidget(vu_label)
+
+        if cat_name:
+            cat_label = QLabel(BIPRO_PREVIEW_CARD_CATEGORY.format(name=cat_name))
+            cat_label.setStyleSheet(f"""
+                font-size: {FONT_SIZE_CAPTION}; color: {TEXT_SECONDARY};
+            """)
+            card_layout.addWidget(cat_label)
+
+        date_str = format_date_german(shipment.created_at) if shipment.created_at else ""
+        if date_str:
+            date_label = QLabel(BIPRO_PREVIEW_CARD_DATE.format(date=date_str))
+            date_label.setStyleSheet(f"""
+                font-size: {FONT_SIZE_CAPTION}; color: {TEXT_PRIMARY};
+            """)
+            card_layout.addWidget(date_label)
+
+        return card
+
+    # ── Acknowledge All Listed (Standard-View) ──
+
+    def _acknowledge_all_listed(self):
+        """Quittiert alle in der Vorschau gelisteten Lieferungen."""
+        from i18n.de import (
+            BIPRO_ACK_ALL_WARNING, BIPRO_ACK_SUCCESS,
+            BIPRO_ACK_NO_SHIPMENTS, BIPRO_ACK_BUTTON,
+        )
+
+        if not self._preview_cache:
+            if hasattr(self, '_toast_manager') and self._toast_manager:
+                self._toast_manager.show_info(BIPRO_ACK_NO_SHIPMENTS)
+            return
+
+        total = sum(len(ships) for _, ships in self._preview_cache)
+        if total == 0:
+            if hasattr(self, '_toast_manager') and self._toast_manager:
+                self._toast_manager.show_info(BIPRO_ACK_NO_SHIPMENTS)
+            return
+
+        reply = QMessageBox.warning(
+            self, BIPRO_ACK_BUTTON,
+            BIPRO_ACK_ALL_WARNING.format(count=total),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        self._ack_btn.setEnabled(False)
+        self._ack_all_queue = []
+        for vu_name, shipments in self._preview_cache:
+            if not shipments:
+                continue
+            conn = self._find_connection_by_name(vu_name)
+            if not conn:
+                continue
+            creds = self._get_credentials_for_connection(conn)
+            if not creds:
+                continue
+            for ship in shipments:
+                self._ack_all_queue.append((conn, creds, ship.shipment_id))
+
+        if not self._ack_all_queue:
+            self._ack_btn.setEnabled(True)
+            return
+
+        self._ack_all_success = 0
+        self._ack_all_total = len(self._ack_all_queue)
+        self._ack_all_vus = set()
+        self._process_next_ack_all()
+
+    def _find_connection_by_name(self, vu_name: str):
+        for conn in self._connections:
+            if conn.vu_name == vu_name:
+                return conn
+        return None
+
+    def _process_next_ack_all(self):
+        """Verarbeitet die naechste Quittierung in der Queue."""
+        if not self._ack_all_queue:
+            self._on_ack_all_finished()
+            return
+
+        conn, creds, ship_id = self._ack_all_queue.pop(0)
+        worker = AcknowledgeShipmentWorker(
+            creds, conn.vu_name, ship_id,
+            sts_url=conn.get_effective_sts_url(),
+            transfer_url=conn.get_effective_transfer_url(),
+            consumer_id=conn.consumer_id or "",
+        )
+        worker.finished.connect(lambda sid: self._on_ack_all_item_done(conn.vu_name, True))
+        worker.error.connect(lambda err: self._on_ack_all_item_done("", False))
+        self._register_worker(worker)
+        worker.start()
+        self._acknowledge_worker = worker
+
+    def _on_ack_all_item_done(self, vu_name: str, success: bool):
+        if success:
+            self._ack_all_success += 1
+            if vu_name:
+                self._ack_all_vus.add(vu_name)
+        self._process_next_ack_all()
+
+    def _on_ack_all_finished(self):
+        from i18n.de import BIPRO_ACK_SUCCESS
+        self._ack_btn.setEnabled(True)
+        self._save_ack_info()
+        self._preview_cache = []
+        self._preview_cache_time = 0
+        self._start_preview_load(force=True)
+        if hasattr(self, '_toast_manager') and self._toast_manager:
+            self._toast_manager.show_success(
+                BIPRO_ACK_SUCCESS.format(
+                    count=self._ack_all_success,
+                    vu_count=len(self._ack_all_vus),
+                )
+            )
+
+    # ── Status-Karte ──
+    
+    def _init_status_card(self):
+        """Initialisiert die Status-Karte mit persistierten Daten."""
+        from i18n.de import BIPRO_STATUS_LAST_FETCH, BIPRO_STATUS_LAST_DOCS, BIPRO_STATUS_NO_FETCH
+        settings = QSettings("ACENCIA", "ATLAS")
+        last_ts = settings.value("bipro/last_fetch_timestamp", "")
+        last_docs = settings.value("bipro/last_fetch_docs", 0, type=int)
+        
+        if last_ts:
+            self._status_title_label.setText(BIPRO_STATUS_LAST_FETCH.format(timestamp=last_ts))
+            self._status_docs_label.setText(BIPRO_STATUS_LAST_DOCS.format(count=last_docs))
+            self._archive_link_btn.setVisible(last_docs > 0)
+        else:
+            self._status_title_label.setText(BIPRO_STATUS_NO_FETCH)
+            self._status_docs_label.setText("")
+            self._archive_link_btn.setVisible(False)
+    
+    def _update_status_card_fetching(self):
+        """Setzt Status-Karte in den Abruf-Modus."""
+        from i18n.de import BIPRO_STATUS_FETCHING
+        self._status_card.setVisible(True)
+        self._status_title_label.setText(BIPRO_STATUS_FETCHING)
+        self._status_docs_label.setText("")
+        self._status_progress_bar.setValue(0)
+        self._status_progress_bar.setVisible(True)
+        self._status_detail_label.setVisible(True)
+        self._status_detail_label.setText("")
+        self._archive_link_btn.setVisible(False)
+    
+    def _update_status_card_progress(self, current: int, total: int, docs: int, detail_text: str = ""):
+        """Aktualisiert die Status-Karte waehrend des Abrufs."""
+        from i18n.de import BIPRO_STATUS_TOTAL
+        if total > 0:
+            pct = int((current / total) * 100)
+            self._status_progress_bar.setValue(pct)
+        self._status_docs_label.setText(BIPRO_STATUS_TOTAL.format(count=docs))
+        if detail_text:
+            self._status_detail_label.setText(detail_text)
+    
+    def _update_status_card_complete(self, total_docs: int):
+        """Setzt Status-Karte in den Abschluss-Modus und persistiert."""
+        from i18n.de import (
+            BIPRO_STATUS_LAST_FETCH, BIPRO_STATUS_FETCH_SUCCESS, BIPRO_GO_TO_ARCHIVE
+        )
+        now_str = datetime.now().strftime("%d.%m.%Y \u2013 %H:%M")
+        
+        settings = QSettings("ACENCIA", "ATLAS")
+        settings.setValue("bipro/last_fetch_timestamp", now_str)
+        settings.setValue("bipro/last_fetch_docs", total_docs)
+        
+        self._status_card.setVisible(True)
+        self._status_title_label.setText(BIPRO_STATUS_LAST_FETCH.format(timestamp=now_str))
+        self._status_docs_label.setText(BIPRO_STATUS_FETCH_SUCCESS.format(count=total_docs))
+        self._status_progress_bar.setVisible(False)
+        self._status_detail_label.setVisible(False)
+        self._archive_link_btn.setVisible(total_docs > 0)
+        
+        self._save_fetch_info()
+        self._preview_cache = []
+        self._preview_cache_time = 0
+        
+        if total_docs > 0 and hasattr(self, '_toast_manager') and self._toast_manager:
+            from i18n.de import BIPRO_STATUS_FETCH_SUCCESS as msg
+            self._toast_manager.show_success(
+                msg.format(count=total_docs),
+                action_text=BIPRO_GO_TO_ARCHIVE,
+                action_callback=self.request_archive_view.emit
+            )
+    
+    # ── Details Toggle ──
+    
+    def _toggle_details(self):
+        """Klappt den Details-Bereich ein/aus."""
+        from i18n.de import BIPRO_SHOW_DETAILS, BIPRO_HIDE_DETAILS
+        visible = not self._details_widget.isVisible()
+        self._details_widget.setVisible(visible)
+        arrow = "\u25B4" if visible else "\u25BE"
+        text = BIPRO_HIDE_DETAILS if visible else BIPRO_SHOW_DETAILS
+        self._details_toggle_btn.setText(f"{text}  {arrow}")
+    
+    # ── Unified Fetch ──
+    
+    def _unified_fetch(self):
+        """Startet den vereinheitlichten Abruf: Alle VUs + Mail-Import parallel."""
+        if self._all_vus_mode:
+            return
+        
+        self._unified_fetch_active = True
+        self._unified_mail_done = False
+        self._unified_vus_done = False
+        self._unified_mail_docs = 0
+        
+        self._update_status_card_fetching()
+        
+        self._fetch_mails()
+        self._fetch_all_vus()
+    
+    def _check_unified_complete(self):
+        """Prueft ob beide Teile des Unified Fetch abgeschlossen sind."""
+        if not getattr(self, '_unified_fetch_active', False):
+            return
+        if not self._unified_mail_done or not self._unified_vus_done:
+            return
+        
+        total_docs = self._all_vus_stats.get('total_docs', 0) + self._unified_mail_docs
+        self._update_status_card_complete(total_docs)
+        self._unified_fetch_active = False
+    
+    def _fetch_selected_vu(self):
+        """Ruft nur die aktuell ausgewaehlte VU-Verbindung ab."""
+        current_item = self.connections_list.currentItem()
+        if not current_item:
+            if hasattr(self, '_toast_manager') and self._toast_manager:
+                self._toast_manager.show_info("Bitte eine VU-Verbindung auswaehlen.")
+            return
+        self._on_connection_selected(current_item)
     
     def _load_connections(self, force_refresh: bool = True):
         """
@@ -2543,7 +3335,6 @@ class BiPROView(QWidget):
         """Wird aufgerufen wenn alle VUs abgearbeitet sind."""
         from i18n.de import BIPRO_FETCH_ALL, BIPRO_FETCH_ALL_DONE
         
-        # Auto-Refresh wieder aktivieren
         try:
             from services.data_cache import DataCacheService
             cache = DataCacheService()
@@ -2565,18 +3356,22 @@ class BiPROView(QWidget):
         if stats['vus_skipped'] > 0:
             self._log(f"  Uebersprungen: {stats['vus_skipped']} VU(s)")
         
-        # UI entsperren
         self._all_vus_mode = False
         self.fetch_all_vus_btn.setEnabled(True)
         self.fetch_all_vus_btn.setText(BIPRO_FETCH_ALL)
         
-        # Fazit im Overlay anzeigen
         self._progress_overlay._stats['download_success'] = stats['total_shipments']
         self._progress_overlay._stats['download_docs'] = stats['total_docs']
         self._progress_overlay.show_completion(auto_close_seconds=10)
         
-        # Signal fuer Archiv-Refresh
         self.documents_uploaded.emit()
+        
+        # Unified Fetch Koordinierung
+        if self._unified_fetch_active:
+            self._unified_vus_done = True
+            self._check_unified_complete()
+        else:
+            self._update_status_card_complete(stats.get('total_docs', 0))
     
     def _update_shipments_table(self, shipments):
         """Aktualisiert die Lieferungstabelle (fuer Alle-VUs-Modus wiederverwendbar)."""
@@ -2706,7 +3501,6 @@ class BiPROView(QWidget):
         
         self.mail_fetch_btn.setEnabled(True)
         
-        # Progress-Toast schliessen
         toast = getattr(self, '_mail_progress_toast', None)
         if toast:
             toast.dismiss()
@@ -2722,17 +3516,23 @@ class BiPROView(QWidget):
             )
             if failed > 0:
                 msg += f" ({failed} fehlgeschlagen)"
-            self._toast_manager.show_success(msg)
+            if not self._unified_fetch_active:
+                self._toast_manager.show_success(msg)
             self._log(msg)
-            # Archiv-Refresh ausloesen
             self.documents_uploaded.emit()
         else:
-            self._toast_manager.show_info(texts.BIPRO_MAIL_FETCH_NO_NEW)
+            if not self._unified_fetch_active:
+                self._toast_manager.show_info(texts.BIPRO_MAIL_FETCH_NO_NEW)
             self._log(texts.BIPRO_MAIL_FETCH_NO_NEW)
         
-        # Fehler loggen
         for err in stats.get('errors', []):
             self._log(f"  Fehler: {err}")
+        
+        # Unified Fetch Koordinierung
+        if self._unified_fetch_active:
+            self._unified_mail_done = True
+            self._unified_mail_docs = imported
+            self._check_unified_complete()
     
     def _on_mail_import_error(self, error: str):
         """Fehler beim Mail-Import."""
@@ -2990,6 +3790,8 @@ class BiPROView(QWidget):
         self._progress_overlay.update_parallel_progress(
             current, total, docs_count, failed_count, active_workers
         )
+        vu_name = self._current_connection.vu_name if self._current_connection else ""
+        self._update_status_card_progress(current, total, docs_count, detail_text=vu_name)
     
     def _on_parallel_shipment_uploaded(self, shipment_id: str, doc_count: int,
                                         upload_errors: int):
@@ -3474,6 +4276,9 @@ class BiPROView(QWidget):
         self.download_btn.setEnabled(True)
         self.download_all_btn.setEnabled(True)
         self._current_credentials = None
+        
+        if successful:
+            self._save_ack_info()
         
         self._log(f"=== Quittierung abgeschlossen ===")
         self._log(f"Erfolgreich: {len(successful)}")

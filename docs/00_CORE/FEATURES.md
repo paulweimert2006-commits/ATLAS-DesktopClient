@@ -16,7 +16,7 @@
 Die App hat eine linke Sidebar mit 5 Navigationspunkten:
 
 1. **Zentrale** (Mitteilungszentrale) - Index 0
-2. **BiPRO** (Datenabruf) - Index 1
+2. **Datenabruf** (BiPRO + Mail) - Index 1
 3. **Archiv** (Dokumentenarchiv) - Index 2
 4. **GDV** (Editor) - Index 3
 5. **GF** (Provisionsmanagement) - nur mit `provision_access` sichtbar
@@ -48,27 +48,38 @@ Beim Wechsel in Admin, Chat oder GF-Bereich verschwindet die Sidebar und der Ber
 
 ---
 
-## 2. BiPRO Datenabruf
+## 2. Datenabruf (BiPRO + Mail)
 
-### Was der Nutzer sieht:
-- **VU-Dropdown**: Versicherungsunternehmen auswaehlen (z.B. Degenia, VEMA)
-- **"Alle VUs abholen" Button**: Alle aktiven VUs nacheinander abrufen
-- **"Mails abholen" Button**: IMAP-E-Mails abrufen und Anhaenge importieren
-- **Lieferungstabelle**: Liste der verfuegbaren Lieferungen mit Kategorie, Datum, Groesse
-- **Download**: Einzeln oder alle Lieferungen herunterladen
+### Zwei Ansichten (View-Toggle):
 
-### Ablauf (BiPRO-Abruf):
-1. VU auswaehlen → Credentials werden vom Server geholt
-2. STS-Token (Security Token) bei der VU anfordern (BiPRO 410)
-3. Lieferungen auflisten (BiPRO 430 listShipments)
-4. Dokumente herunterladen (getShipment mit MTOM/XOP)
-5. Automatisch ins Dokumentenarchiv hochladen
-6. Empfang quittieren (acknowledgeShipment) -- parallelisiert bei >3 Lieferungen (max 4 gleichzeitig)
+**Standard-Ansicht** (Default, fuer alle Nutzer):
+- **"Alle neuen Dokumente abrufen" (F5)**: Dominanter Primary-Button -- startet Abruf aller VUs + Mail-Import
+- **Sekundaere Aktionen**: "Nur Mails" und "Nur ausgewaehlte VU" fuer gezielten Abruf
+- **"Quittieren" (rot)**: Prominenter Danger-Button -- quittiert alle gelisteten Lieferungen
+- **Info-Zeilen**: Letzter Abruf (Zeitpunkt + wer) und letzte Quittierung unter den Buttons
+- **Vorschau-Karten**: Beim Seitenaufruf werden automatisch alle VU-Lieferungen abgefragt (listShipments) und als Karten dargestellt (VU-Name, Kategorie, Datum, ID). 3-Minuten-Cache, manueller Refresh-Button
+- **Status-Karte**: Erscheint waehrend Abruf mit Live-Fortschritt und Ergebnis-Zusammenfassung
+- Keine VU-Verbindungsverwaltung, kein Protokoll sichtbar
+
+**Admin-Ansicht** (nur fuer Admins, Toggle oben rechts):
+- Alles aus Standard-Ansicht PLUS:
+- **VU-Verbindungen** (links): Verwaltung der Versicherer-Verbindungen (Hinzufuegen, Bearbeiten, Passwort, Loeschen)
+- **Shipment-Tabelle**: Technische Details, Einzel-Downloads, Einzel-Quittierung
+- **Protokoll**: Technisches Log aller Operationen
+
+### Ablauf (Unified Fetch):
+1. Nutzer klickt "Alle neuen Dokumente abrufen" (oder F5)
+2. Parallel: Alle aktiven VUs abrufen + IMAP-Mail-Import
+3. Pro VU: STS-Token holen (BiPRO 410) → Lieferungen auflisten (BiPRO 430) → Dokumente herunterladen
+4. Automatisch ins Dokumentenarchiv hochladen
+5. Status-Karte zeigt Live-Fortschritt und Gesamtergebnis
+6. Empfang quittieren (acknowledgeShipment) -- ueber roten Quittieren-Button oder Admin-Details
 
 ### Parallelisierung:
 - Max. 10 Worker-Threads fuer gleichzeitige Downloads
+- Session-Reuse pro Thread (TCP/TLS Connection-Pooling)
+- Pre-compilierte Regex-Pattern fuer XML/MTOM-Parsing
 - Max. 4 parallele Quittierungen (bei >3 Lieferungen)
-- Automatische Anpassung bei wenigen Lieferungen
 - AdaptiveRateLimiter bei HTTP 429/503
 
 ### Mail-Import:
