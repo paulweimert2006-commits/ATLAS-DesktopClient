@@ -136,6 +136,93 @@ class FetchShipmentsWorker(QThread):
             self.error.emit(str(e))
 
 
+class PreviewAllShipmentsWorker(QThread):
+    """Worker der listShipments fuer alle VUs im Hintergrund ausfuehrt.
+
+    Holt Credentials und ruft list_shipments pro VU -- alles im Worker-Thread,
+    damit der Main-Thread nie blockiert wird.
+    """
+    finished = Signal(list)       # [(vu_name, [ShipmentInfo, ...]), ...]
+    vu_error = Signal(str, str)   # (vu_name, error_msg)
+    progress = Signal(str)
+
+    def __init__(self, connections: list, vu_api, cert_config_loader=None):
+        """
+        Args:
+            connections: Liste aktiver VUConnection-Objekte
+            vu_api: VUConnectionsAPI-Instanz (thread-safe HTTP-Calls)
+            cert_config_loader: Callable(connection_id) -> dict (Zertifikats-Config)
+        """
+        super().__init__()
+        self._connections = connections
+        self._vu_api = vu_api
+        self._cert_config_loader = cert_config_loader
+
+    def _resolve_credentials(self, conn):
+        """Holt Credentials fuer eine VU-Verbindung (laeuft im Worker-Thread)."""
+        if conn.auth_type == 'certificate':
+            if not self._cert_config_loader:
+                return None
+            cert_config = self._cert_config_loader(conn.id)
+            if not cert_config:
+                return None
+            cert_format = cert_config.get('cert_format', 'pfx')
+            if cert_format == 'jks':
+                return VUCredentials(
+                    username="", password="",
+                    jks_path=cert_config.get('jks_path', ''),
+                    jks_password=cert_config.get('jks_password', ''),
+                    jks_alias=cert_config.get('jks_alias', ''),
+                    jks_key_password=cert_config.get('jks_key_password', ''),
+                )
+            return VUCredentials(
+                username="", password="",
+                pfx_path=cert_config.get('pfx_path', ''),
+                pfx_password=cert_config.get('pfx_password', ''),
+            )
+        try:
+            return self._vu_api.get_credentials(conn.id)
+        except Exception:
+            return None
+
+    def run(self):
+        from bipro.transfer_service import TransferServiceClient, BiPROCredentials
+        results = []
+        total = len(self._connections)
+        for i, conn in enumerate(self._connections):
+            vu_name = conn.vu_name
+            try:
+                self.progress.emit(f"{vu_name} ({i + 1}/{total})...")
+                creds = self._resolve_credentials(conn)
+                if not creds:
+                    logger.warning(f"Preview: Keine Credentials fuer {vu_name}")
+                    self.vu_error.emit(vu_name, "Credentials nicht verfuegbar")
+                    results.append((vu_name, []))
+                    continue
+                bipro_creds = BiPROCredentials(
+                    username=creds.username,
+                    password=creds.password,
+                    endpoint_url=conn.get_effective_transfer_url(),
+                    sts_endpoint_url=conn.get_effective_sts_url(),
+                    vu_name=vu_name,
+                    consumer_id=conn.consumer_id or '',
+                    pfx_path=getattr(creds, 'pfx_path', ''),
+                    pfx_password=getattr(creds, 'pfx_password', ''),
+                    jks_path=getattr(creds, 'jks_path', ''),
+                    jks_password=getattr(creds, 'jks_password', ''),
+                    jks_alias=getattr(creds, 'jks_alias', ''),
+                    jks_key_password=getattr(creds, 'jks_key_password', ''),
+                )
+                with TransferServiceClient(bipro_creds) as client:
+                    shipments = client.list_shipments(confirmed=True)
+                    results.append((vu_name, shipments))
+            except Exception as e:
+                logger.warning(f"Preview fehlgeschlagen fuer {vu_name}: {e}")
+                self.vu_error.emit(vu_name, str(e))
+                results.append((vu_name, []))
+        self.finished.emit(results)
+
+
 class DownloadShipmentWorker(QThread):
     """Worker zum Herunterladen einer Lieferung."""
     finished = Signal(str, list, str)  # shipment_id, documents, raw_xml_path
@@ -864,102 +951,65 @@ class ParallelDownloadManager(QThread):
     def _worker_loop(self, worker_id: int):
         """
         Worker-Loop: Holt Shipments aus Queue und lädt sie herunter.
+        Erstellt eine Session pro Thread fuer TCP/TLS Connection-Pooling.
         
         Args:
             worker_id: ID des Workers (für Logging)
         """
-        while not self._cancelled and not self._shutdown_event.is_set():
-            # Prüfen ob Worker aktiv sein darf (Rate Limiting)
-            active_workers = self._rate_limiter.get_active_workers()
-            if worker_id >= active_workers:
-                # Dieser Worker ist deaktiviert (Rate Limit)
-                time.sleep(0.5)
-                continue
-            
-            # Backoff warten falls nötig
-            self._rate_limiter.wait_if_needed()
-            
-            try:
-                # Nächstes Item aus Queue (mit Timeout)
-                shipment_info = self._download_queue.get(timeout=0.5)
-            except queue.Empty:
-                # Queue leer - Worker beenden
-                break
-            
-            logger.info(f"Worker {worker_id}: Got shipment from queue: {shipment_info.keys()}")
-            
-            try:
-                shipment_id = shipment_info['id']
-                category = shipment_info.get('category', '')
-                created_at = shipment_info.get('created_at', '')
-                retry_count = shipment_info.get('_retry_count', 0)
+        session = requests.Session()
+        session.verify = True
+        session.trust_env = False
+        session.proxies = {'http': '', 'https': ''}
+
+        if self._token_manager and self._token_manager.uses_certificate():
+            cert_config = self._token_manager.get_cert_config()
+            if cert_config:
+                session.cert = cert_config
+
+        try:
+            while not self._cancelled and not self._shutdown_event.is_set():
+                active_workers = self._rate_limiter.get_active_workers()
+                if worker_id >= active_workers:
+                    time.sleep(0.5)
+                    continue
                 
-                # Debug: Type prüfen
-                logger.info(f"Worker {worker_id}: Shipment {shipment_id}, created_at type: {type(created_at)}, value: {repr(created_at)}")
-            except Exception as e:
-                logger.error(f"Worker {worker_id}: Fehler beim Extrahieren der Shipment-Daten: {e}")
-                self._download_queue.task_done()
-                continue
-            
-            try:
-                documents, raw_xml_path = self._download_shipment(
-                    shipment_id, category, created_at
-                )
+                self._rate_limiter.wait_if_needed()
                 
-                self._rate_limiter.on_success(shipment_id)
+                try:
+                    shipment_info = self._download_queue.get(timeout=0.5)
+                except queue.Empty:
+                    break
                 
-                # Upload direkt im Worker-Thread (per-Thread API-Client)
-                upload_errors, event_created = self._upload_shipment_docs(
-                    shipment_id, documents, raw_xml_path, category
-                )
+                logger.info(f"Worker {worker_id}: Got shipment from queue: {shipment_info.keys()}")
                 
-                with self._stats_lock:
-                    self._stats['success'] += 1
-                    self._stats['docs'] += len(documents)
-                    if event_created:
-                        self._stats['events'] += 1
-                    self._processed_count += 1
-                    current = self._processed_count
-                    total = self._stats['total']
-                    docs = self._stats['docs']
-                    failed = self._stats['failed']
-                
-                active = self._rate_limiter.get_active_workers()
-                self.progress_updated.emit(current, total, docs, failed, active)
-                self.shipment_uploaded.emit(shipment_id, len(documents), upload_errors)
-                
-                if len(documents) == 0 and event_created:
-                    self.log_message.emit(f"  [OK] Lieferung {shipment_id}: 0 Dateien \u2013 1 Meldung")
-                else:
-                    self.log_message.emit(f"  [OK] Lieferung {shipment_id}: {len(documents)} Dokument(e)")
-                
-            except Exception as e:
-                error_str = str(e)
-                status_code = self._extract_status_code(e)
-                
-                # Rate Limit prüfen
-                if status_code and self._rate_limiter.is_rate_limit_status(status_code):
-                    should_retry = self._rate_limiter.on_rate_limit(status_code, shipment_id)
-                else:
-                    should_retry = self._rate_limiter.on_error(shipment_id, error_str, status_code)
-                
-                if should_retry and retry_count < self.DEFAULT_MAX_RETRIES:
-                    # Zurück in Queue für Retry
-                    shipment_info['_retry_count'] = retry_count + 1
-                    self._download_queue.put(shipment_info)
+                try:
+                    shipment_id = shipment_info['id']
+                    category = shipment_info.get('category', '')
+                    created_at = shipment_info.get('created_at', '')
+                    retry_count = shipment_info.get('_retry_count', 0)
                     
-                    with self._stats_lock:
-                        self._stats['retries'] += 1
-                    
-                    self.log_message.emit(
-                        f"  [RETRY] Lieferung {shipment_id}: {error_str[:80]} "
-                        f"(Versuch {retry_count + 1}/{self.DEFAULT_MAX_RETRIES})"
+                    logger.info(f"Worker {worker_id}: Shipment {shipment_id}, created_at type: {type(created_at)}, value: {repr(created_at)}")
+                except Exception as e:
+                    logger.error(f"Worker {worker_id}: Fehler beim Extrahieren der Shipment-Daten: {e}")
+                    self._download_queue.task_done()
+                    continue
+                
+                try:
+                    documents, raw_xml_path = self._download_shipment(
+                        shipment_id, category, created_at, session=session
                     )
-                else:
-                    # Endgültig fehlgeschlagen
+                    
+                    self._rate_limiter.on_success(shipment_id)
+                    
+                    upload_errors, event_created = self._upload_shipment_docs(
+                        shipment_id, documents, raw_xml_path, category
+                    )
+                    
                     with self._stats_lock:
-                        self._stats['failed'] += 1
-                        self._stats['failed_ids'].append(shipment_id)
+                        self._stats['success'] += 1
+                        self._stats['docs'] += len(documents)
+                        if event_created:
+                            self._stats['events'] += 1
                         self._processed_count += 1
                         current = self._processed_count
                         total = self._stats['total']
@@ -968,10 +1018,51 @@ class ParallelDownloadManager(QThread):
                     
                     active = self._rate_limiter.get_active_workers()
                     self.progress_updated.emit(current, total, docs, failed, active)
-                    self.log_message.emit(f"  [FEHLER] Lieferung {shipment_id}: {error_str[:100]}")
-            
-            finally:
-                self._download_queue.task_done()
+                    self.shipment_uploaded.emit(shipment_id, len(documents), upload_errors)
+                    
+                    if len(documents) == 0 and event_created:
+                        self.log_message.emit(f"  [OK] Lieferung {shipment_id}: 0 Dateien \u2013 1 Meldung")
+                    else:
+                        self.log_message.emit(f"  [OK] Lieferung {shipment_id}: {len(documents)} Dokument(e)")
+                    
+                except Exception as e:
+                    error_str = str(e)
+                    status_code = self._extract_status_code(e)
+                    
+                    if status_code and self._rate_limiter.is_rate_limit_status(status_code):
+                        should_retry = self._rate_limiter.on_rate_limit(status_code, shipment_id)
+                    else:
+                        should_retry = self._rate_limiter.on_error(shipment_id, error_str, status_code)
+                    
+                    if should_retry and retry_count < self.DEFAULT_MAX_RETRIES:
+                        shipment_info['_retry_count'] = retry_count + 1
+                        self._download_queue.put(shipment_info)
+                        
+                        with self._stats_lock:
+                            self._stats['retries'] += 1
+                        
+                        self.log_message.emit(
+                            f"  [RETRY] Lieferung {shipment_id}: {error_str[:80]} "
+                            f"(Versuch {retry_count + 1}/{self.DEFAULT_MAX_RETRIES})"
+                        )
+                    else:
+                        with self._stats_lock:
+                            self._stats['failed'] += 1
+                            self._stats['failed_ids'].append(shipment_id)
+                            self._processed_count += 1
+                            current = self._processed_count
+                            total = self._stats['total']
+                            docs = self._stats['docs']
+                            failed = self._stats['failed']
+                        
+                        active = self._rate_limiter.get_active_workers()
+                        self.progress_updated.emit(current, total, docs, failed, active)
+                        self.log_message.emit(f"  [FEHLER] Lieferung {shipment_id}: {error_str[:100]}")
+                
+                finally:
+                    self._download_queue.task_done()
+        finally:
+            session.close()
     
     def _get_thread_api(self):
         """Gibt eine thread-lokale DocumentsAPI-Instanz zurueck."""
@@ -1319,7 +1410,7 @@ class ParallelDownloadManager(QThread):
         except Exception as e:
             logger.debug(f"BiPRO-Event erstellen fehlgeschlagen: {e}")
     
-    def _download_shipment(self, shipment_id, category, created_at):
+    def _download_shipment(self, shipment_id, category, created_at, session=None):
         """
         Lädt eine einzelne Lieferung herunter.
         
@@ -1327,6 +1418,7 @@ class ParallelDownloadManager(QThread):
             shipment_id: ID der Lieferung
             category: BiPRO-Kategorie
             created_at: Erstellungsdatum
+            session: Optionaler requests.Session zur Wiederverwendung
             
         Returns:
             Tuple (documents_list, raw_xml_path)
@@ -1371,18 +1463,19 @@ class ParallelDownloadManager(QThread):
             'SOAPAction': ''  # Leer für VEMA und Degenia
         }
         
-        # Eigene Session für diesen Request (thread-safe)
-        session = requests.Session()
-        session.verify = True
-        session.trust_env = False
-        session.proxies = {'http': '', 'https': ''}
-        
-        # BUG-0015 Fix: Zertifikat via get_cert_config() statt get_session()
-        # (vermeidet Session-Sharing zwischen Threads)
-        if self._token_manager.uses_certificate():
-            cert_config = self._token_manager.get_cert_config()
-            if cert_config:
-                session.cert = cert_config
+        temp_session = None
+        if session is None:
+            temp_session = requests.Session()
+            temp_session.verify = True
+            temp_session.trust_env = False
+            temp_session.proxies = {'http': '', 'https': ''}
+
+            if self._token_manager and self._token_manager.uses_certificate():
+                cert_config = self._token_manager.get_cert_config()
+                if cert_config:
+                    temp_session.cert = cert_config
+
+            session = temp_session
         
         try:
             response = session.post(
@@ -1508,7 +1601,8 @@ class ParallelDownloadManager(QThread):
             return saved_docs, raw_xml_path
             
         finally:
-            session.close()
+            if temp_session:
+                temp_session.close()
     
     def _parse_xml_response(self, xml_text: str) -> tuple:
         """Parst Standard XML Response (Base64-encoded)."""

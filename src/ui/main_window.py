@@ -949,7 +949,7 @@ class GDVMainWindow(QMainWindow):
         
         # BiPRO-Fenster erstellen
         self._bipro_window = QMainWindow(self)
-        self._bipro_window.setWindowTitle("BiPRO Datenabruf")
+        self._bipro_window.setWindowTitle("Datenabruf")
         self._bipro_window.setMinimumSize(1000, 700)
         
         bipro_view = BiPROView(self._api_client, self._bipro_window)
