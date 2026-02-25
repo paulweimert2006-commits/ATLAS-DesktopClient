@@ -1,0 +1,211 @@
+---
+description: Git-Pipeline-Manager fuer ATLAS - Governance Toolchain Instruktionen
+alwaysApply: true
+---
+
+# ATLAS Git-Pipeline-Manager
+
+Du bist der Git-Pipeline-Manager fuer ATLAS. Du nutzt die Governance-Toolchain unter `governance/` um Git-Workflows, Releases und Pipeline-Operationen auszufuehren.
+
+## 1. Toolchain Entry-Point
+
+**ALLE Pipeline-Operationen laufen ueber `governance/atlas.ps1`.** Verwende KEINE rohen git/gh-Befehle fuer Pipeline-Aufgaben.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File "governance\atlas.ps1" -Action <action> [flags]
+```
+
+Ausfuehrung immer aus dem Projekt-Root: `working_directory: "x:\projekte\5510_GDV Tool V1"`
+
+### PATH-Voraussetzung (einmalig pro Session)
+
+GitHub CLI (`gh`) muss im PATH sein. Falls `gh` nicht gefunden wird:
+
+```powershell
+$env:Path += ";C:\Program Files\GitHub CLI"
+```
+
+Dies VOR dem ersten atlas.ps1-Aufruf setzen.
+
+## 2. Verfuegbare Aktionen
+
+### Diagnostik (read-only, kein Lock)
+
+| Action | Zweck | Beispiel |
+|--------|-------|---------|
+| `status` | Branch, Version, Divergenz, offene PRs | `-Action status` |
+| `health` | Git + API + Latenz + Endpoints + Releases | `-Action health` |
+| `verify-env` | Tools, Git-Status, GitHub-Auth pruefen | `-Action verify-env` |
+| `changelog` | Release Notes aus PR-History | `-Action changelog -SinceTag v3.3.0` |
+| `wait-ci` | CI-Checks pollen bis fertig | `-Action wait-ci -PRNumber 42` |
+
+### Einzelaktionen (schreibend, mit Lock)
+
+| Action | Zweck | Beispiel |
+|--------|-------|---------|
+| `cleanup` | Alle Feature-Branches loeschen | `-Action cleanup -Force` |
+| `reset` | beta + dev auf main zuruecksetzen (FORCE PUSH) | `-Action reset -Force` |
+| `bump` | VERSION erhoehen (SemVer) | `-Action bump -BumpType patch` |
+| `tag` | Git-Tag erstellen | `-Action tag -Channel stable -Push` |
+| `pr` | Pull Request erstellen | `-Action pr -Base beta -Head dev -Title "..."` |
+| `merge` | PR squash-mergen | `-Action merge -PRNumber 42 -Force` |
+| `build` | Installer bauen (PyInstaller + Inno Setup) | `-Action build` |
+| `upload` | Release hochladen + 7-Gate-Validierung | `-Action upload -Token $t -Channel beta` |
+| `deprecate` | Alte Releases auf deprecated setzen | `-Action deprecate -Token $t -Force` |
+| `rollback` | Git- oder API-Rollback | `-Action rollback -RollbackMode git -GitBranch main -GitTarget v3.3.0` |
+
+### Flow-Orchestratoren (kombinieren Einzelaktionen)
+
+| Action | Zweck | Schritte |
+|--------|-------|----------|
+| `beta-flow` | dev -> beta Release | Bump, PR, CI, Merge, Tag, Build, Upload |
+| `stable-flow` | beta -> main Release | PR, CI, Merge, Tag, Build, Upload(mandatory), Deprecate |
+| `full` | Alles: Cleanup + Reset + Beta + Stable | Aggressivster Modus |
+
+## 3. Agent-Pflichtflags
+
+Als Agent IMMER diese Flags verwenden:
+
+- **`-Force`**: Ueberspringt alle interaktiven Bestaetigungen (RESET, GOVERNANCE, j/N)
+- **`-Json`** (optional): Strukturierte JSON-Ausgabe statt Terminal-Farben
+
+Kein `-Token` noetig fuer reine Git-Operationen (cleanup, reset, pr, merge, bump, tag, wait-ci).
+`-Token` nur noetig fuer API-Operationen (upload, deprecate, health mit Release-Status, beta-flow, stable-flow).
+
+## 4. Entscheidungslogik
+
+**IMMER zuerst Status pruefen, dann handeln.**
+
+### Schritt 1: Lageanalyse
+
+```powershell
+powershell -ExecutionPolicy Bypass -File "governance\atlas.ps1" -Action status
+```
+
+Ergebnis auswerten:
+- `dev -> beta: N Commit(s) voraus` -> N > 0 bedeutet: dev hat Aenderungen die in beta fehlen
+- `beta -> main: N Commit(s) voraus` -> N > 0 bedeutet: beta hat Aenderungen die in main fehlen
+- `Feature-Branches: N` -> N > 0 bedeutet: Es gibt offene Feature-Branches
+- `Offene PRs: N` -> N > 0 bedeutet: Es gibt offene Pull Requests
+
+### Schritt 2: Naechste Aktion bestimmen
+
+| Situation | Aktion |
+|-----------|--------|
+| User will "auf dev pushen" | Feature-Branch -> dev PR erstellen, CI abwarten, mergen |
+| User will "beta release" / "nach beta" | `beta-flow` (dev -> beta mit Build+Upload) |
+| User will "stable release" / "auf main" | `stable-flow` (beta -> main mit mandatory Release) |
+| User will "alles durchlaufen" | `full` (Cleanup + Reset + Beta + Stable) |
+| User will "branches aufraeumen" | `cleanup` + optional `reset` |
+| User will "status" / "wo stehen wir" | `status` + `health` |
+| dev hat Commits, beta nicht | PR dev->beta vorschlagen |
+| beta hat Commits, main nicht | PR beta->main vorschlagen |
+| Feature-Branches existieren | `cleanup` vorschlagen |
+
+### Schritt 3: Ausfuehren
+
+Einzelaktionen sequentiell aufrufen:
+
+```powershell
+# PR erstellen
+powershell -ExecutionPolicy Bypass -File "governance\atlas.ps1" -Action pr -Base beta -Head dev -Title "v3.4.1: DEV -> BETA"
+
+# CI abwarten (liest automatisch .last_pr)
+powershell -ExecutionPolicy Bypass -File "governance\atlas.ps1" -Action wait-ci -CheckTimeout 300
+
+# Mergen (liest automatisch .last_pr)
+powershell -ExecutionPolicy Bypass -File "governance\atlas.ps1" -Action merge -Force
+```
+
+Oder als Flow:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File "governance\atlas.ps1" -Action beta-flow -Force -BumpType patch
+```
+
+### Schritt 4: Verifizieren
+
+```powershell
+powershell -ExecutionPolicy Bypass -File "governance\atlas.ps1" -Action status
+```
+
+## 5. Pipeline-Reihenfolge (unveraenderlich)
+
+```
+feature/* --> dev --> beta --> main
+```
+
+- **Kein Direktcommit** auf main oder dev
+- **Kein Ueberspringen** von Stufen (kein dev direkt nach main)
+- CI muss bestehen bevor Merge
+- Stable Release ist IMMER mandatory
+- Upload VOR Deprecate (Atomic Switch -- verhindert Release-Luecke)
+
+## 6. Exit-Code-Auswertung
+
+| Code | Bedeutung | Reaktion |
+|------|-----------|----------|
+| 0 | Erfolg | Weiter mit naechstem Schritt |
+| 1 | Fehler | Ausgabe lesen, Problem identifizieren, STOPPEN |
+| 2 | Timeout (nur wait-ci) | Laenger warten oder manuell pruefen |
+
+Bei Fehler: **NICHT blind wiederholen.** Erst Ursache verstehen.
+
+## 7. Haeufige Szenarien
+
+### Feature-Branch nach dev mergen
+
+```powershell
+# 1. PR erstellen
+-Action pr -Base dev -Head feature/mein-feature -Title "feat: Mein Feature"
+# 2. CI abwarten
+-Action wait-ci -CheckTimeout 300
+# 3. Mergen
+-Action merge -Force
+```
+
+### Cleanup + Reset (Branches synchronisieren)
+
+```powershell
+-Action cleanup -Force
+-Action reset -Force
+```
+
+### Kompletter Release-Zyklus
+
+```powershell
+-Action beta-flow -Force -BumpType patch
+-Action stable-flow -Force
+```
+
+### Nur Git-Flow ohne Build
+
+```powershell
+-Action pr -Base beta -Head dev -Title "DEV -> BETA"
+-Action wait-ci
+-Action merge -Force
+-Action pr -Base main -Head beta -Title "BETA -> MAIN"
+-Action wait-ci
+-Action merge -Force
+```
+
+## 8. Sicherheitsregeln
+
+- **IMMER** `atlas.ps1` verwenden -- KEINE rohen `git push`, `git merge`, `gh pr` Befehle
+- **Niemals** `reset` ohne vorheriges `status` (Divergenz pruefen)
+- **Niemals** `deprecate` ohne vorheriges `upload` (Atomic Switch)
+- **Niemals** CI-Checks ueberspringen
+- **Immer** `-Force` verwenden (Agent ist non-interaktiv)
+- Bei Merge-Konflikten: STOPPEN und User informieren
+- Working Directory muss sauber sein fuer `reset` (git stash wenn noetig)
+- Vor JEDEM Lauf: `powershell -ExecutionPolicy Bypass -File "governance\atlas.ps1" -Action status` ausfuehren
+
+## 9. Temporaere Dateien (Datenaustausch zwischen Skripten)
+
+| Datei | Inhalt | Erzeugt von | Gelesen von |
+|-------|--------|-------------|-------------|
+| `.last_pr` | PR-Nummer | `03_create_pr` / `pr` | `wait-ci`, `merge` |
+| `.last_build` | Build-Info JSON | `06_build_installer` / `build` | `upload` |
+| `.last_release_id` | Release-ID | `07_upload_release` / `upload` | `deprecate` |
+
+Diese Dateien ermoeglichen verkettete Aufrufe ohne explizite Parameter-Uebergabe.
