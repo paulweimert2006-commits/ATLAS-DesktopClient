@@ -1,0 +1,3 @@
+## 2026-02-25 - [Workflow-Zentrierung & Aktions-Hierarchie]
+**Learning:** In komplexen "Techniker-Tools" reduziert ein einzelner, dominanter Primär-Button (Primary CTA) die kognitive Last massiv. Nutzer bevorzugen eine klare "Jetzt starten"-Aktion gegenüber einer fragmentierten Auswahl an Einzelaktionen. Das Schließen des Workflow-Loops durch eine direkte Navigationsmöglichkeit (z.B. "Zum Archiv"-Link in der Erfolgsmeldung) steigert die wahrgenommene Geschwindigkeit des Systems.
+**Action:** Bei zukünftigen Verbesserungen immer prüfen, ob die wichtigste Aktion visuell dominant ist und ob der Nutzer nach Abschluss einer Operation einen klaren "nächsten Schritt" (Next Step Action) angeboten bekommt.

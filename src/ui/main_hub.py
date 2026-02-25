@@ -735,6 +735,8 @@ class MainHub(QMainWindow):
             self._bipro_view = BiPROView(self.api_client)
             self._bipro_view._toast_manager = self._toast_manager
             self._bipro_view.documents_uploaded.connect(self._on_documents_uploaded)
+            # Palette: Navigation zum Archiv nach Abruf
+            self._bipro_view.request_archive_view.connect(self._show_archive)
             # Permission Guards setzen
             self._apply_bipro_permissions()
             

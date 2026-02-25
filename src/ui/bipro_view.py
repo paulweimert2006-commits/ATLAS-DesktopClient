@@ -1587,6 +1587,8 @@ class BiPROView(QWidget):
     
     # Signal wenn Dokumente ins Archiv übertragen wurden
     documents_uploaded = Signal()
+    # Signal wenn Navigation zum Archiv gewünscht (z.B. nach Abruf)
+    request_archive_view = Signal()
     
     def __init__(self, api_client: APIClient, parent=None):
         super().__init__(parent)
@@ -1693,6 +1695,14 @@ class BiPROView(QWidget):
         """Callback wenn das Progress-Overlay geschlossen wird."""
         # Dokumenten-Liste aktualisieren
         self.documents_uploaded.emit()
+
+        # Palette: Erfolgs-Toast mit Navigation zum Archiv
+        if hasattr(self, '_toast_manager') and self._toast_manager:
+            self._toast_manager.show_success(
+                "Abruf abgeschlossen",
+                action_text="Zum Archiv",
+                action_callback=self.request_archive_view.emit
+            )
     
     def _setup_ui(self):
         """UI aufbauen (ACENCIA Design)."""
@@ -1768,32 +1778,27 @@ class BiPROView(QWidget):
         # Toolbar
         toolbar = QHBoxLayout()
         
-        # "Mails abholen" Button (IMAP-Import, braucht keine VU-Auswahl)
+        # --- Palette: HAUPTAKTION (Dominant & F5 Shortcut) ---
+        from i18n.de import BIPRO_FETCH_ALL, BIPRO_FETCH_ALL_TOOLTIP
+        self.fetch_all_vus_btn = QPushButton(BIPRO_FETCH_ALL)
+        self.fetch_all_vus_btn.setStyleSheet(get_button_primary_style())
+        self.fetch_all_vus_btn.setToolTip(BIPRO_FETCH_ALL_TOOLTIP)
+        self.fetch_all_vus_btn.setShortcut("F5")
+        self.fetch_all_vus_btn.clicked.connect(self._fetch_all_vus)
+        toolbar.addWidget(self.fetch_all_vus_btn)
+
+        # Separator
+        separator_line = QFrame()
+        separator_line.setFrameShape(QFrame.Shape.VLine)
+        separator_line.setStyleSheet(f"color: {BORDER_DEFAULT};")
+        toolbar.addWidget(separator_line)
+
+        # "Mails abholen" Button (IMAP-Import)
         from i18n.de import BIPRO_MAIL_FETCH, BIPRO_MAIL_FETCH_TOOLTIP
         self.mail_fetch_btn = QPushButton(f"  {BIPRO_MAIL_FETCH}")
         self.mail_fetch_btn.setFixedHeight(30)
         self.mail_fetch_btn.setToolTip(BIPRO_MAIL_FETCH_TOOLTIP)
-        self.mail_fetch_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #4CAF50;
-                color: white;
-                border: none;
-                border-radius: 4px;
-                padding: 4px 14px;
-                font-size: 13px;
-                font-weight: 600;
-            }
-            QPushButton:hover {
-                background-color: #43A047;
-            }
-            QPushButton:pressed {
-                background-color: #388E3C;
-            }
-            QPushButton:disabled {
-                background-color: #A5D6A7;
-                color: #E8F5E9;
-            }
-        """)
+        self.mail_fetch_btn.setStyleSheet(get_button_secondary_style()) # Palette: Weniger dominant
         self.mail_fetch_btn.clicked.connect(self._fetch_mails)
         toolbar.addWidget(self.mail_fetch_btn)
         
@@ -1806,20 +1811,6 @@ class BiPROView(QWidget):
         self.download_all_btn.setEnabled(False)
         self.download_all_btn.clicked.connect(self._download_all)
         toolbar.addWidget(self.download_all_btn)
-        
-        # Separator
-        separator_line = QFrame()
-        separator_line.setFrameShape(QFrame.Shape.VLine)
-        separator_line.setStyleSheet(f"color: {BORDER_DEFAULT};")
-        toolbar.addWidget(separator_line)
-        
-        # "Alle VUs abholen" Button (braucht keine VU-Auswahl)
-        from i18n.de import BIPRO_FETCH_ALL, BIPRO_FETCH_ALL_TOOLTIP
-        self.fetch_all_vus_btn = QPushButton(BIPRO_FETCH_ALL)
-        self.fetch_all_vus_btn.setStyleSheet(get_button_primary_style())
-        self.fetch_all_vus_btn.setToolTip(BIPRO_FETCH_ALL_TOOLTIP)
-        self.fetch_all_vus_btn.clicked.connect(self._fetch_all_vus)
-        toolbar.addWidget(self.fetch_all_vus_btn)
         
         # Quittieren-Button (manuell, nicht automatisch)
         self.acknowledge_btn = QPushButton("Ausgewaehlte quittieren")
