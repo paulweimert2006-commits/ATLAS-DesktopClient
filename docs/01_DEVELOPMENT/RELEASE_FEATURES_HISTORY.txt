@@ -1,3 +1,39 @@
+v2.2.5 (24.02.2026) - Performance & Stabilitaet
+- Performance: Update-Check beim App-Start ist jetzt asynchron (kein UI-Freeze mehr bei langsamer Verbindung)
+- Performance: Outlook Drag&Drop-Extraktion laeuft im Hintergrund-Thread (kein UI-Freeze bei vielen E-Mails)
+- Performance: PDF-Thumbnails werden im Hintergrund gerendert (kein UI-Freeze bei grossen PDFs)
+- Performance: Cache-Refresh delegiert an async Worker (refresh_all_sync blockiert UI nicht mehr)
+- Performance: BiPRO-Quittierung parallelisiert (max 4 gleichzeitig bei >3 Lieferungen)
+- Performance: KI-Semaphore von 5 auf 8 parallele Aufrufe erhoeht (passt zu DocumentProcessor-Workerpool)
+- Bugfix: SmartScan bricht bei >10 Dateien nicht mehr ab (leere API-Antworten werden korrekt erkannt)
+- Bugfix: SmartScan Retry-Logik bei Chunk-Fehlern (max 2 Wiederholungen pro Chunk)
+- Bugfix: SmartScan Client-Timeout auf 330s erhoeht (>= Server-Timeout von 300s)
+- Bugfix: KI-Classify Timeout von 30s auf 150s erhoeht (passt zu Server-Proxy-Timeout von 120s)
+v2.2.4 (24.02.2026)
+- KI-Klassifikation: Courtage-Erkennung erweitert (Buchnote, Provisionskonto, VU-Kontoauszuege, DI-Provision, Stornoreserve)
+- KI-Klassifikation: VU-Sparten-Kuerzel (MKF, RR, PHV, HR, WG, UV etc.) werden im Prompt erkannt
+- KI-Klassifikation: Mahnung/Rueckstandsliste wird nach Sparte des zugrundeliegenden Vertrags zugeordnet (nicht mehr "sonstige")
+- KI-Klassifikation: Unfallversicherung-Erkennung verstaerkt (Beitragsinformation + Invaliditaet + Progression = sach, nicht kranken)
+- KI-Klassifikation: Keyword-Hints erweitert (9 neue Courtage-Keywords, Mahnung+Sparten-Code-Erkennung)
+- KI-Klassifikation: Dateinamen-basierte Courtage-Vorsortierung fuer "Vermittlerabrechnung" im Dateinamen
+- OCR: Tesseract PSM-Modus von --psm 6 auf --psm 3 (fully automatic page segmentation) fuer bessere Erkennung gemischter Layouts
+- OCR: DPI von 150 auf 200 erhoeht fuer bessere Scan-Qualitaet
+v2.2.2 (24.02.2026)
+- Bugfix: Dokumentenarchiv zeigt leere Tabelle - LIMIT 1000 in documents.php war zu niedrig (jetzt 10000, per Parameter steuerbar)
+- Bugfix: Stats-Sidebar springt auf 0 - _compute_stats_from_cache() basierte auf limitierten Daten, jetzt immer Server-Stats
+- Bugfix: Cache-Schutz gegen leere API-Antworten (ueberschreibt keinen guten Cache mehr)
+- Bugfix: UI-Haenger durch blockierende API-Calls auf Main Thread (SmartScan-Status, Stats-Reload)
+- Bugfix: Thread-Safety - Auto-Refresh nutzt eigene requests.Session statt geteilte (Race-Condition)
+- Paralleler DownloadManager -Crash- bugfix
+- Zero-Interaction Pflicht-Updates: Download + Installation starten vollautomatisch, neue Version startet von allein (kein Button-Klick noetig)
+- Hintergrund-Updater: Prueft bei jedem PC-Start auf Updates und installiert sie still im Hintergrund (Scheduled Task + Registry-Autostart)
+- BiPRO-Events: Strukturierte Metadaten aus 0-Dokument-Lieferungen (Vertragsdaten-XML, Statusmeldungen, GDV-Ankuendigungen) mit eigener Kachel in der Mitteilungszentrale
+- Provisionsmanagement-Refactoring v3.4.0: Workers (24 QThread-Worker), Models (12 QAbstractTableModel), Dialogs (MatchContractDialog + DiffDialog) aus Panel-Dateien extrahiert
+- TL-Rate und TL-Basis in Provisionsmodellen (pm_commission_models) fuer automatische Uebernahme beim Zuweisen
+- PDF-Validierung: Reason-Codes (PDFValidationStatus) fuer technische Validierungsstatus bei BiPRO-Downloads
+- BiPRO-Events-Polling: Summary-Endpoint fuer leichtgewichtiges Polling (unread_count) in NotificationPollWorker integriert
+- DB-Migration 030: bipro_events Tabelle
+- DB-Migration 031: tl_rate + tl_basis Felder in pm_commission_models
 - Provisionsmanagement (v3.0.0)
   - Eigenstaendiger Vollbild-Hub mit 8 Panels
   - Dashboard mit 4 KPI-Karten, DonutChart, Berater-Ranking
