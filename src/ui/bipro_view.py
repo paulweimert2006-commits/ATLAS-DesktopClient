@@ -1768,7 +1768,22 @@ class BiPROView(QWidget):
         # Toolbar
         toolbar = QHBoxLayout()
         
-        # "Mails abholen" Button (IMAP-Import, braucht keine VU-Auswahl)
+        # "Jetzt Dokumente abrufen" Button (Unified Action - Primär)
+        from i18n.de import BIPRO_FETCH_ALL, BIPRO_FETCH_ALL_TOOLTIP
+        self.fetch_all_vus_btn = QPushButton(f"🚀 {BIPRO_FETCH_ALL}")
+        self.fetch_all_vus_btn.setFixedHeight(36)
+        self.fetch_all_vus_btn.setStyleSheet(get_button_primary_style())
+        self.fetch_all_vus_btn.setToolTip(BIPRO_FETCH_ALL_TOOLTIP)
+        self.fetch_all_vus_btn.clicked.connect(self._fetch_all_vus)
+        toolbar.addWidget(self.fetch_all_vus_btn)
+
+        # Separator
+        separator_line = QFrame()
+        separator_line.setFrameShape(QFrame.Shape.VLine)
+        separator_line.setStyleSheet(f"color: {BORDER_DEFAULT};")
+        toolbar.addWidget(separator_line)
+
+        # "Mails abholen" Button (Sekundär)
         from i18n.de import BIPRO_MAIL_FETCH, BIPRO_MAIL_FETCH_TOOLTIP
         self.mail_fetch_btn = QPushButton(f"  {BIPRO_MAIL_FETCH}")
         self.mail_fetch_btn.setFixedHeight(30)
@@ -1806,20 +1821,6 @@ class BiPROView(QWidget):
         self.download_all_btn.setEnabled(False)
         self.download_all_btn.clicked.connect(self._download_all)
         toolbar.addWidget(self.download_all_btn)
-        
-        # Separator
-        separator_line = QFrame()
-        separator_line.setFrameShape(QFrame.Shape.VLine)
-        separator_line.setStyleSheet(f"color: {BORDER_DEFAULT};")
-        toolbar.addWidget(separator_line)
-        
-        # "Alle VUs abholen" Button (braucht keine VU-Auswahl)
-        from i18n.de import BIPRO_FETCH_ALL, BIPRO_FETCH_ALL_TOOLTIP
-        self.fetch_all_vus_btn = QPushButton(BIPRO_FETCH_ALL)
-        self.fetch_all_vus_btn.setStyleSheet(get_button_primary_style())
-        self.fetch_all_vus_btn.setToolTip(BIPRO_FETCH_ALL_TOOLTIP)
-        self.fetch_all_vus_btn.clicked.connect(self._fetch_all_vus)
-        toolbar.addWidget(self.fetch_all_vus_btn)
         
         # Quittieren-Button (manuell, nicht automatisch)
         self.acknowledge_btn = QPushButton("Ausgewaehlte quittieren")
@@ -2292,6 +2293,9 @@ class BiPROView(QWidget):
         # Pruefen ob bereits ein Abruf laeuft
         if self._all_vus_mode:
             return
+
+        # Unified Fetch: Auch Mails abholen
+        self._fetch_mails()
         
         # Alle aktiven Verbindungen sammeln
         active_connections = [c for c in self._connections if c.is_active]

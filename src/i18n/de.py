@@ -132,8 +132,8 @@ BIPRO_MAIL_FETCH_PHASE_POLL = "Postfach abrufen..."
 BIPRO_MAIL_FETCH_PHASE_IMPORT = "Anhaenge importieren"
 
 # === Alle VUs abholen ===
-BIPRO_FETCH_ALL = "Alle VUs abholen"
-BIPRO_FETCH_ALL_TOOLTIP = "Holt Lieferungen von allen aktiven VU-Verbindungen nacheinander ab"
+BIPRO_FETCH_ALL = "Jetzt Dokumente abrufen"
+BIPRO_FETCH_ALL_TOOLTIP = "Startet den vollständigen Abruf von allen Versicherern und E-Mail-Konten"
 BIPRO_FETCH_ALL_NO_ACTIVE = "Keine aktiven VU-Verbindungen vorhanden."
 BIPRO_FETCH_ALL_START = "=== Starte Abruf fuer alle VUs ({count} aktive Verbindungen) ==="
 BIPRO_FETCH_ALL_VU_START = "--- [{current}/{total}] {vu_name} ---"
