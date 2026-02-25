@@ -85,11 +85,11 @@ if ($LASTEXITCODE -eq 0) {
 
 Write-Step "Feature-Branches pruefen..."
 
-$extraBranches = git branch -r 2>&1 |
+$extraBranches = @(git branch -r 2>&1 |
     ForEach-Object { $_.Trim() } |
     Where-Object { $_ -notmatch "HEAD" } |
     ForEach-Object { $_ -replace "^origin/", "" } |
-    Where-Object { $_ -notin @("main", "beta", "dev") }
+    Where-Object { $_ -notin @("main", "beta", "dev") })
 
 if ($extraBranches.Count -gt 0) {
     Write-Warn "$($extraBranches.Count) Feature-Branch(es) aktiv:"
