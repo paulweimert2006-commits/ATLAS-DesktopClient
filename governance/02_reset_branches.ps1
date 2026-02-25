@@ -23,7 +23,7 @@ Write-Host "========================================" -ForegroundColor Cyan
 Assert-GitClean
 
 Write-Step "Remote-Status abrufen..."
-git fetch --all --prune 2>&1 | Out-Null
+Invoke-GitSilent fetch --all --prune
 
 Write-Step "Divergenz-Analyse"
 

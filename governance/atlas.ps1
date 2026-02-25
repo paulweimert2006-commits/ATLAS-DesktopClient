@@ -144,7 +144,7 @@ switch ($Action) {
     "status" {
         $currentBranch = git branch --show-current 2>&1
         $version = Get-AtlasVersion
-        git fetch --all --prune 2>&1 | Out-Null
+        Invoke-GitSilent fetch --all --prune
 
         $devAhead = git rev-list --count "origin/beta..origin/dev" 2>&1
         $betaAhead = git rev-list --count "origin/main..origin/beta" 2>&1

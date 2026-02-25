@@ -50,7 +50,7 @@ elseif ($SinceDate -ne "") {
     Write-Ok "Seit Datum: $sinceArg"
 }
 else {
-    git fetch --tags 2>&1 | Out-Null
+    Invoke-GitSilent fetch --tags
     $lastTag = git tag --sort=-version:refname | Select-Object -First 1
     if ($lastTag) {
         $tagDate = git log -1 --format="%aI" $lastTag.Trim() 2>&1

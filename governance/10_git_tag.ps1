@@ -46,7 +46,7 @@ if ($Channel -eq "stable") {
 elseif ($Channel -eq "beta") {
     $prefix = "v$baseVersion-beta."
 
-    git fetch --tags 2>&1 | Out-Null
+    Invoke-GitSilent fetch --tags
 
     $existingTags = git tag --list "$prefix*" 2>&1
     $highestN = 0

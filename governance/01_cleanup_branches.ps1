@@ -22,7 +22,7 @@ Write-Host "========================================" -ForegroundColor Cyan
 # --- Remote-Branches ---
 
 Write-Step "Remote-Branches synchronisieren..."
-git fetch --all --prune 2>&1 | Out-Null
+Invoke-GitSilent fetch --all --prune
 if ($LASTEXITCODE -ne 0) {
     Write-Err "git fetch fehlgeschlagen"
     exit 1

@@ -51,7 +51,7 @@ if ($Mode -in @("git", "both")) {
     Write-Host ""
 
     Write-Step "Aktuelle Situation..."
-    git fetch --all --tags 2>&1 | Out-Null
+    Invoke-GitSilent fetch --all --tags
 
     $currentHead = git log "origin/$GitBranch" -1 --oneline 2>&1
     Write-Info "Aktuell ($GitBranch): $currentHead"

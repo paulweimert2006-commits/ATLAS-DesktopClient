@@ -49,7 +49,7 @@ $currentBranch = git branch --show-current 2>&1
 Write-Info "Aktueller Branch: $currentBranch"
 $checks["current_branch"] = @{ value = $currentBranch.Trim() }
 
-git fetch --all --prune 2>&1 | Out-Null
+Invoke-GitSilent fetch --all --prune
 
 foreach ($b in @("main", "beta", "dev")) {
     $exists = git branch -r --list "origin/$b" 2>&1

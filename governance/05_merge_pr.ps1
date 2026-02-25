@@ -76,6 +76,6 @@ if ($LASTEXITCODE -ne 0) {
 Write-Ok "PR #$PRNumber erfolgreich gemerged ($Strategy)"
 
 Write-Step "Lokales Repository aktualisieren..."
-git fetch --all --prune 2>&1 | Out-Null
+Invoke-GitSilent fetch --all --prune
 git pull 2>&1 | Out-Null
 Write-Ok "Lokales Repository aktualisiert"

@@ -50,7 +50,7 @@ if ($LASTEXITCODE -eq 0 -and $existingPr -ne "[]") {
 
 Write-Step "Pruefen ob Unterschiede zwischen $Head und $Base bestehen..."
 
-git fetch origin $Base $Head 2>&1 | Out-Null
+Invoke-GitSilent fetch origin $Base $Head
 $diffCount = git rev-list --count "origin/$Base..origin/$Head" 2>&1
 if ($LASTEXITCODE -ne 0 -or [int]$diffCount -eq 0) {
     Write-Warn "$Head hat keine neuen Commits gegenueber $Base. Kein PR noetig."

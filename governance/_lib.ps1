@@ -242,6 +242,15 @@ function Confirm-Action {
 # Git-Hilfsfunktionen
 # ---------------------------------------------------------------------------
 
+function Invoke-GitSilent {
+    param([Parameter(ValueFromRemainingArguments)]$GitArgs)
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    & git @GitArgs 2>&1 | Out-Null
+    $ErrorActionPreference = $prev
+    return $LASTEXITCODE
+}
+
 function Assert-GitClean {
     $status = git status --porcelain 2>&1
     if ($LASTEXITCODE -ne 0) {
