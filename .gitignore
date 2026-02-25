@@ -144,6 +144,14 @@ Projekt Ziel/
 # Design-Mockups (nur Referenzbilder, gehoeren nicht in Versionskontrolle)
 Visuelle Überarbeitung - Orientierung fuer GF - PROVI bereich/
 
+# Governance-Skripte temporaere Zustandsdateien
+governance/.last_pr
+governance/.last_build
+governance/.last_release_id
+governance/.governance_state.json
+governance/.governance.lock
+governance/.gate_reports/
+
 # =============================================================================
 # Wichtig: NICHT ignorieren
 # =============================================================================
