@@ -239,13 +239,13 @@ class AdminView(QWidget):
         self._btn_smartscan_history  = add_nav("›", texts.ADMIN_TAB_SMARTSCAN_HISTORY, 12)
         self._btn_email_inbox        = add_nav("›", texts.ADMIN_TAB_EMAIL_INBOX, 13)
         
-        # === SYSTEM ===
-        add_section(texts.ADMIN_SECTION_SYSTEM)
-        self._btn_server_health      = add_nav("›", texts.ADMIN_TAB_SERVER_HEALTH, 15)
-        
         # === KOMMUNIKATION ===
         add_section("KOMMUNIKATION")
         self._btn_messages           = add_nav("›", texts.ADMIN_MSG_TAB, 14)
+        
+        # === SYSTEM ===
+        add_section(texts.ADMIN_SECTION_SYSTEM)
+        self._btn_server_health      = add_nav("›", texts.ADMIN_TAB_SERVER_HEALTH, 15)
         
         sb_layout.addStretch()
         root.addWidget(admin_sidebar)
