@@ -1,7 +1,7 @@
 """
 ACENCIA ATLAS - Admin-Shell (Sidebar + Panel-Wechsel mit Lazy Loading)
 
-Vollbild-Layout mit eigener Sidebar-Navigation (15 Bereiche):
+Vollbild-Layout mit eigener Sidebar-Navigation (16 Bereiche):
 
 VERWALTUNG:
 0. Nutzerverwaltung (CRUD)
@@ -27,6 +27,9 @@ E-MAIL:
 
 KOMMUNIKATION:
 14. Mitteilungen (System + Admin-Mitteilungen verwalten)
+
+SYSTEM:
+15. Server-Gesundheit (Health-Check mit ~35 Einzel-Checks + Trend-Vergleich)
 
 Extrahiert aus admin_view.py (Schritt 4 Refactoring).
 """
@@ -60,7 +63,7 @@ from ui.styles.tokens import (
 
 logger = logging.getLogger(__name__)
 
-NUM_PANELS = 15
+NUM_PANELS = 16
 
 
 class AdminNavButton(QPushButton):
@@ -100,7 +103,7 @@ class AdminNavButton(QPushButton):
 class AdminView(QWidget):
     """
     Administrations-Ansicht mit eigener Sidebar-Navigation.
-    15 Bereiche in 5 Sektionen, Panels werden per Lazy Loading instanziiert.
+    16 Bereiche in 6 Sektionen, Panels werden per Lazy Loading instanziiert.
     """
     
     back_requested = Signal()
@@ -236,6 +239,10 @@ class AdminView(QWidget):
         self._btn_smartscan_history  = add_nav("›", texts.ADMIN_TAB_SMARTSCAN_HISTORY, 12)
         self._btn_email_inbox        = add_nav("›", texts.ADMIN_TAB_EMAIL_INBOX, 13)
         
+        # === SYSTEM ===
+        add_section(texts.ADMIN_SECTION_SYSTEM)
+        self._btn_server_health      = add_nav("›", texts.ADMIN_TAB_SERVER_HEALTH, 15)
+        
         # === KOMMUNIKATION ===
         add_section("KOMMUNIKATION")
         self._btn_messages           = add_nav("›", texts.ADMIN_MSG_TAB, 14)
@@ -368,6 +375,11 @@ class AdminView(QWidget):
         elif index == 14:
             from ui.admin.panels.messages import MessagesPanel
             return MessagesPanel(api_client=ac, toast_manager=tm)
+        elif index == 15:
+            from ui.admin.panels.server_health import ServerHealthPanel
+            return ServerHealthPanel(
+                api_client=ac, toast_manager=tm, admin_api=self._admin_api
+            )
         
         return None
     
