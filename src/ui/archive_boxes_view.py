@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
     QStackedWidget
 )
 from PySide6.QtCore import (
-    Qt, Signal, QThread, QMimeData, QTimer, QSize,
+    Qt, Signal, QMimeData, QTimer, QSize,
     QAbstractTableModel, QModelIndex, QSortFilterProxyModel
 )
 from shiboken6 import isValid
@@ -68,24 +68,7 @@ from ui.archive_view import (
 )
 
 # Worker-Klassen aus eigenem Modul
-from ui.archive.workers import (
-    CacheDocumentLoadWorker,
-    ProcessingWorker,
-    MissingAiDataWorker,
-    MultiUploadWorker,
-    PreviewDownloadWorker,
-    MultiDownloadWorker,
-    BoxDownloadWorker,
-    CreditsWorker,
-    CostStatsWorker,
-    DelayedCostWorker,
-    BoxStatsWorker,
-    DocumentMoveWorker,
-    DocumentColorWorker,
-    DocumentHistoryWorker,
-    SearchWorker,
-    SmartScanWorker,
-)
+from ui.archive.workers import CacheDocumentLoadWorker
 
 
 # ═══════════════════════════════════════════════════════════
@@ -123,7 +106,7 @@ class ArchiveBoxesView(QWidget):
         
         self.api_client = api_client
         self.auth_api = auth_api
-        # docs_api wird ueber self._presenter.docs_api bereitgestellt
+        # API-Zugriff nur ueber Presenter (Clean Architecture)
         
         # Presenter (Clean Architecture)
         from presenters.archive.archive_presenter import ArchivePresenter
@@ -184,8 +167,6 @@ class ArchiveBoxesView(QWidget):
         self._preview_progress = None
         self._preview_cancelled = False
         
-        # Liste aller aktiven Worker fuer Cleanup
-        self._active_workers: List[QThread] = []
         
         # Flag ob erste Ladung erfolgt ist
         self._initial_load_done = False
@@ -266,20 +247,6 @@ class ArchiveBoxesView(QWidget):
             logger.warning(f"SmartScan-Status konnte nicht geladen werden: {e}")
             self._smartscan_enabled = False
     
-    def _register_worker(self, worker: QThread):
-        """Registriert einen Worker fuer sauberes Cleanup."""
-        self._active_workers.append(worker)
-        # Wenn Worker fertig, aus Liste entfernen und aufräumen
-        worker.finished.connect(lambda: self._unregister_worker(worker))
-    
-    def _unregister_worker(self, worker: QThread):
-        """Entfernt einen Worker aus der aktiven Liste."""
-        if worker in self._active_workers:
-            self._active_workers.remove(worker)
-        if getattr(self, '_preview_worker', None) is worker:
-            self._preview_worker = None
-        # Sicher löschen
-        worker.deleteLater()
     
     def _is_worker_running(self, attr_name: str) -> bool:
         """Prueft sicher ob ein Worker noch laeuft (C++-Objekt kann bereits geloescht sein)."""
@@ -295,22 +262,7 @@ class ArchiveBoxesView(QWidget):
 
     def get_blocking_operations(self) -> list:
         """Gibt Liste von laufenden Operationen zurueck, die das Schliessen verhindern."""
-        from i18n import de as texts
-        blocking = []
-
-        # KI-Verarbeitung laeuft
-        if self._is_worker_running('_processing_worker'):
-            blocking.append(texts.CLOSE_BLOCKED_PROCESSING)
-
-        # Verzoegerter Kosten-Check laeuft
-        if self._is_worker_running('_delayed_cost_worker'):
-            blocking.append(texts.CLOSE_BLOCKED_COST_CHECK)
-
-        # SmartScan-Versand laeuft
-        if self._is_worker_running('_smartscan_worker'):
-            blocking.append(texts.CLOSE_BLOCKED_SMARTSCAN)
-
-        return blocking
+        return self._presenter.get_blocking_operations()
 
     def closeEvent(self, event):
         """Wird aufgerufen wenn das Widget geschlossen wird."""
@@ -318,26 +270,11 @@ class ArchiveBoxesView(QWidget):
         if self._history_debounce_timer is not None:
             self._history_debounce_timer.stop()
         
-        # Alle laufenden Worker stoppen
-        for worker in self._active_workers[:]:  # Kopie der Liste
-            if worker.isRunning():
-                logger.info(f"Warte auf Worker: {worker.__class__.__name__}")
-                # Versuche abzubrechen falls möglich
-                if hasattr(worker, 'cancel'):
-                    worker.cancel()
-                # Kurz warten
-                if not worker.wait(2000):  # 2 Sekunden Timeout
-                    logger.warning(f"Worker {worker.__class__.__name__} antwortet nicht, terminiere...")
-                    worker.terminate()
-                    worker.wait(1000)
-        
-        self._active_workers.clear()
-        
         # ATLAS Index Widget bereinigen
         if hasattr(self, '_atlas_index_widget'):
             self._atlas_index_widget.cleanup()
         
-        # Presenter bereinigen
+        # Presenter bereinigt alle Worker
         if hasattr(self, '_presenter'):
             self._presenter.cleanup()
         
@@ -885,11 +822,7 @@ class ArchiveBoxesView(QWidget):
         oder andere serverseitig hochgeladene Dateien noch keinen
         document_ai_data-Eintrag haben und holt die Text-Extraktion nach.
         """
-        worker = MissingAiDataWorker(self._presenter.docs_api)
-        worker.finished.connect(self._on_missing_ai_data_finished)
-        self._active_workers.append(worker)
-        worker.start()
-        logger.debug("MissingAiDataWorker gestartet")
+        self._presenter.check_missing_ai_data(self._on_missing_ai_data_finished)
     
     def _on_missing_ai_data_finished(self, count: int):
         """Callback wenn Hintergrund-Text-Extraktion fertig ist."""
@@ -905,10 +838,7 @@ class ArchiveBoxesView(QWidget):
         if self._cost_stats_worker and self._cost_stats_worker.isRunning():
             return
         
-        self._cost_stats_worker = CostStatsWorker(self.api_client)
-        self._cost_stats_worker.finished.connect(self._on_avg_cost_loaded)
-        self._register_worker(self._cost_stats_worker)
-        self._cost_stats_worker.start()
+        self._presenter.load_avg_cost_stats(self._on_avg_cost_loaded)
     
     def _on_avg_cost_loaded(self, avg_cost: float):
         """Callback wenn durchschnittliche Kosten geladen wurden."""
@@ -950,10 +880,7 @@ class ArchiveBoxesView(QWidget):
     
     def _refresh_credits(self):
         """Laedt das OpenRouter-Guthaben im Hintergrund."""
-        self._credits_worker = CreditsWorker(self.api_client)
-        self._credits_worker.finished.connect(self._on_credits_loaded)
-        self._register_worker(self._credits_worker)
-        self._credits_worker.start()
+        self._presenter.load_credits(self._on_credits_loaded)
     
     def _on_credits_loaded(self, credits: Optional[dict]):
         """Callback wenn Credits geladen wurden (ACENCIA Design)."""
@@ -1012,11 +939,7 @@ class ArchiveBoxesView(QWidget):
         """
         if force_refresh:
             # Vom Server laden (via Worker fuer UI-Responsivitaet)
-            self._stats_worker = BoxStatsWorker(self._presenter.docs_api)
-            self._stats_worker.finished.connect(self._on_stats_loaded)
-            self._stats_worker.error.connect(self._on_stats_error)
-            self._register_worker(self._stats_worker)
-            self._stats_worker.start()
+            self._presenter.load_stats(self._on_stats_loaded, self._on_stats_error)
         else:
             # Aus Cache
             stats = self._cache.get_stats(force_refresh=False)
@@ -1101,7 +1024,7 @@ class ArchiveBoxesView(QWidget):
         )
         self._load_worker.finished.connect(self._on_documents_loaded)
         self._load_worker.error.connect(self._on_load_error)
-        self._register_worker(self._load_worker)
+        self._presenter.register_worker(self._load_worker)
         self._load_worker.start()
     
     def _on_documents_loaded(self, documents: List[Document]):
@@ -1680,7 +1603,7 @@ class ArchiveBoxesView(QWidget):
             return
         from ui.archive_view import DuplicateCompareDialog
         dialog = DuplicateCompareDialog(
-            doc, counterpart, self._presenter.docs_api,
+            doc, counterpart, self._presenter.get_docs_api_for_dialog(),
             preview_cache_dir=getattr(self, '_preview_cache_dir', None),
             parent=self)
         dialog.documents_changed.connect(self._refresh_all)
@@ -1803,23 +1726,9 @@ class ArchiveBoxesView(QWidget):
         # Loading-Indikator anzeigen
         self._history_panel.show_loading(doc.original_filename)
         
-        # Worker starten - alten Worker sauber stoppen
-        if self._history_worker is not None:
-            try:
-                self._history_worker.finished.disconnect()
-                self._history_worker.error.disconnect()
-                if self._history_worker.isRunning():
-                    self._history_worker.quit()
-                    self._history_worker.wait(2000)  # Max 2 Sekunden warten
-            except (RuntimeError, TypeError):
-                pass
-            self._history_worker = None
-        
-        self._history_worker = DocumentHistoryWorker(self.api_client, doc.id)
-        self._history_worker.finished.connect(self._on_history_loaded)
-        self._history_worker.error.connect(self._on_history_error)
-        self._register_worker(self._history_worker)
-        self._history_worker.start()
+        self._presenter.load_document_history(
+            doc.id, self._on_history_loaded, self._on_history_error,
+        )
     
     def _on_history_loaded(self, doc_id: int, entries: list):
         """Callback wenn die Historie geladen wurde."""
@@ -1896,11 +1805,11 @@ class ArchiveBoxesView(QWidget):
         # Dokument-Referenzen speichern fuer Callback
         self._color_change_documents = documents
         
-        self._color_worker = DocumentColorWorker(self._presenter.docs_api, doc_ids, color)
-        self._color_worker.finished.connect(self._on_color_finished)
-        self._color_worker.error.connect(self._on_color_error)
-        self._register_worker(self._color_worker)
-        self._color_worker.start()
+        self._presenter.set_document_color(
+            doc_ids, color,
+            finished_callback=self._on_color_finished,
+            error_callback=self._on_color_error,
+        )
     
     def _on_color_finished(self, count: int, color: Optional[str]):
         """Callback nach Farbmarkierung - aktualisiert lokale Daten und Tabelle."""
@@ -1965,14 +1874,12 @@ class ArchiveBoxesView(QWidget):
         processing_status = 'manual_excluded' if from_eingang else None
         
         # Sofort verschieben (kein Bestätigungsdialog)
-        self._move_worker = DocumentMoveWorker(
-            self._presenter.docs_api, doc_ids, target_box,
-            processing_status=processing_status
+        self._presenter.move_documents(
+            doc_ids, target_box,
+            processing_status=processing_status,
+            finished_callback=lambda count: self._on_move_finished(count, target_name, len(documents)),
+            error_callback=self._on_move_error,
         )
-        self._move_worker.finished.connect(lambda count: self._on_move_finished(count, target_name, len(documents)))
-        self._move_worker.error.connect(self._on_move_error)
-        self._register_worker(self._move_worker)
-        self._move_worker.start()
     
     def _on_move_finished(self, count: int, target_name: str, total: int):
         """Callback nach Verschieben - zeigt Toast statt MessageBox."""
@@ -2021,17 +1928,15 @@ class ArchiveBoxesView(QWidget):
         # Archivierungs-Undo pruefen
         if hasattr(self, '_last_archive_data') and self._last_archive_data:
             data = self._last_archive_data
-            self._last_archive_data = None  # Nur einmal Undo moeglich
+            self._last_archive_data = None
             
-            doc_ids = data['doc_ids']
-            affected_boxes = data['boxes']
+            documents = data['documents']
             action = data['action']
             
-            # Umkehren: archive -> unarchive, unarchive -> archive
             if action == 'archive':
-                self._presenter.unarchive_documents(doc_ids)
+                self._presenter.unarchive_documents(documents)
             else:
-                self._presenter.archive_documents(doc_ids)
+                self._presenter.archive_documents(documents)
             
             # Cache invalidieren
             self._cache.invalidate_documents()
@@ -2136,15 +2041,13 @@ class ArchiveBoxesView(QWidget):
         progress.show()
         self._preview_progress = progress
         
-        self._preview_worker = PreviewDownloadWorker(
-            self._presenter.docs_api, doc.id, self._preview_cache_dir,
+        self._preview_worker = self._presenter.start_preview_download(
+            doc.id, self._preview_cache_dir,
             filename=doc.original_filename,
-            cache_dir=self._preview_cache_dir
+            cache_dir=self._preview_cache_dir,
+            finished_callback=self._on_preview_download_finished,
+            error_callback=self._on_preview_download_error,
         )
-        self._preview_worker.download_finished.connect(self._on_preview_download_finished)
-        self._preview_worker.download_error.connect(self._on_preview_download_error)
-        self._register_worker(self._preview_worker)
-        self._preview_worker.start()
 
     def _on_preview_download_cancelled(self):
         """Callback wenn Vorschau-Download abgebrochen wurde."""
@@ -2177,7 +2080,7 @@ class ArchiveBoxesView(QWidget):
                     f"Vorschau: {self._preview_doc.original_filename}",
                     self,
                     doc_id=doc.id if doc else None,
-                    docs_api=self._presenter.docs_api,
+                    docs_api=self._presenter.get_docs_api_for_dialog(),
                     editable=True
                 )
                 # PDF-Save-Flag: Refresh erst NACH viewer.exec() ausfuehren
@@ -2276,17 +2179,13 @@ class ArchiveBoxesView(QWidget):
         
         self._upload_results = {'erfolge': [], 'fehler': [], 'duplikate': 0}
         
-        self._multi_upload_worker = MultiUploadWorker(
-            self._presenter.docs_api, 
-            file_paths, 
-            'manual_upload'
+        self._multi_upload_worker = self._presenter.start_multi_upload(
+            file_paths, 'manual_upload',
+            progress_callback=self._on_multi_upload_progress,
+            file_finished_callback=self._on_file_uploaded,
+            file_error_callback=self._on_file_upload_error,
+            all_finished_callback=self._on_multi_upload_finished,
         )
-        self._multi_upload_worker.progress.connect(self._on_multi_upload_progress)
-        self._multi_upload_worker.file_finished.connect(self._on_file_uploaded)
-        self._multi_upload_worker.file_error.connect(self._on_file_upload_error)
-        self._multi_upload_worker.all_finished.connect(self._on_multi_upload_finished)
-        self._register_worker(self._multi_upload_worker)
-        self._multi_upload_worker.start()
     
     def _on_multi_upload_progress(self, current: int, total: int, filename: str):
         """Aktualisiert Progress-Dialog."""
@@ -2339,9 +2238,8 @@ class ArchiveBoxesView(QWidget):
         if dl_result.success:
             if dl_result.auto_archived:
                 self._last_archive_data = {
-                    'doc_ids': [doc.id],
-                    'boxes': {doc.box_type},
-                    'action': 'archive'
+                    'documents': [doc],
+                    'action': 'archive',
                 }
                 self._cache.invalidate_documents()
                 self._refresh_stats()
@@ -2390,17 +2288,13 @@ class ArchiveBoxesView(QWidget):
         self._download_documents_map = {doc.id: doc for doc in selected_docs}
         
         # Worker starten
-        self._download_worker = MultiDownloadWorker(
-            self._presenter.docs_api,
-            selected_docs,
-            target_dir
+        self._download_worker = self._presenter.start_multi_download(
+            selected_docs, target_dir,
+            progress_callback=self._on_download_progress,
+            file_finished_callback=self._on_file_downloaded,
+            file_error_callback=self._on_file_download_error,
+            all_finished_callback=self._on_multi_download_finished,
         )
-        self._download_worker.progress.connect(self._on_download_progress)
-        self._download_worker.file_finished.connect(self._on_file_downloaded)
-        self._download_worker.file_error.connect(self._on_file_download_error)
-        self._download_worker.all_finished.connect(self._on_multi_download_finished)
-        self._register_worker(self._download_worker)
-        self._download_worker.start()
     
     def _on_download_cancelled(self):
         """Wird aufgerufen wenn der Download abgebrochen wird."""
@@ -2434,27 +2328,23 @@ class ArchiveBoxesView(QWidget):
         docs_map = getattr(self, '_download_documents_map', {})
         affected_boxes = set()
         
+        archivable_docs = []
         for doc_id in erfolgreiche_doc_ids:
             doc = docs_map.get(doc_id)
             if doc and doc.box_type in ARCHIVABLE_BOXES and not doc.is_archived:
-                archived_doc_ids.append(doc_id)
-                affected_boxes.add(doc.box_type)
+                archivable_docs.append(doc)
         
-        # Bulk-Archivierung (1 API-Call statt N)
-        if archived_doc_ids:
-            archived_count = self._presenter.archive_documents(archived_doc_ids)
+        if archivable_docs:
+            result = self._presenter.archive_documents(archivable_docs)
+            archived_count = result.changed_count
         
-        # Cache invalidieren
         if archived_count > 0:
             self._cache.invalidate_documents()
         
-        # Stats und Anzeige aktualisieren wenn archiviert wurde
         if archived_count > 0:
-            # Daten fuer Rueckgaengig speichern
             self._last_archive_data = {
-                'doc_ids': archived_doc_ids,
-                'boxes': affected_boxes,
-                'action': 'archive'
+                'documents': archivable_docs,
+                'action': 'archive',
             }
             self._refresh_stats()
             self._refresh_documents(force_refresh=True)
@@ -2548,18 +2438,13 @@ class ArchiveBoxesView(QWidget):
         self._box_download_box_type = box_type
         
         # Worker starten
-        self._box_download_worker = BoxDownloadWorker(
-            self._presenter.docs_api,
-            box_type,
-            target_path,
-            mode
+        self._box_download_worker = self._presenter.start_box_download(
+            box_type, target_path, mode,
+            progress_callback=self._on_box_download_progress,
+            finished_callback=self._on_box_download_finished,
+            status_callback=self._on_box_download_status,
+            error_callback=self._on_box_download_error,
         )
-        self._box_download_worker.progress.connect(self._on_box_download_progress)
-        self._box_download_worker.status.connect(self._on_box_download_status)
-        self._box_download_worker.finished.connect(self._on_box_download_finished)
-        self._box_download_worker.error.connect(self._on_box_download_error)
-        self._register_worker(self._box_download_worker)
-        self._box_download_worker.start()
     
     def _on_box_download_cancelled(self):
         """Wird aufgerufen wenn der Box-Download abgebrochen wird."""
@@ -2601,21 +2486,12 @@ class ArchiveBoxesView(QWidget):
         archived_doc_ids = []
         
         if box_type in ARCHIVABLE_BOXES and erfolgreiche_doc_ids:
-            # Bulk-Archivierung (1 API-Call statt N)
-            archived_count = self._presenter.archive_documents(erfolgreiche_doc_ids)
-            if archived_count > 0:
-                archived_doc_ids = erfolgreiche_doc_ids[:archived_count]
+            archived_count = self._presenter.archive_by_ids(erfolgreiche_doc_ids)
         
-        # Cache invalidieren und Stats aktualisieren
         if archived_count > 0:
             self._cache.invalidate_documents()
             
-            # Daten fuer Rueckgaengig speichern
-            self._last_archive_data = {
-                'doc_ids': archived_doc_ids,
-                'boxes': {box_type},
-                'action': 'archive'
-            }
+            self._last_archive_data = None
             
             self._refresh_stats()
             self._refresh_documents(force_refresh=True)
@@ -2708,33 +2584,23 @@ class ArchiveBoxesView(QWidget):
         if not documents:
             return
         
-        doc_ids = [d.id for d in documents]
-        affected_boxes = set(d.box_type for d in documents)
+        result = self._presenter.archive_documents(documents)
         
-        # Archivieren (Bulk: 1 API-Call statt N)
-        archived_count = self._presenter.archive_documents(doc_ids)
-        
-        if archived_count > 0:
-            # Daten fuer Rueckgaengig speichern
+        if result.changed_count > 0:
             self._last_archive_data = {
-                'doc_ids': doc_ids,
-                'boxes': affected_boxes,
-                'action': 'archive'
+                'documents': documents,
+                'action': 'archive',
             }
             
-            # Cache invalidieren
             self._cache.invalidate_documents()
-            
-            # Stats und Anzeige aktualisieren
             self._refresh_stats()
             self._refresh_documents(force_refresh=True)
             
-            # Toast mit Rueckgaengig-Option
-            if archived_count == 1:
+            if result.changed_count == 1:
                 self._toast_manager.show_success(ARCHIVE_SUCCESS_SINGLE, action_text=MOVE_UNDO, action_callback=self._on_toast_undo_clicked)
             else:
                 self._toast_manager.show_success(
-                    ARCHIVE_SUCCESS_MULTI.format(count=archived_count),
+                    ARCHIVE_SUCCESS_MULTI.format(count=result.changed_count),
                     action_text=MOVE_UNDO, action_callback=self._on_toast_undo_clicked
                 )
     
@@ -2745,33 +2611,23 @@ class ArchiveBoxesView(QWidget):
         if not documents:
             return
         
-        doc_ids = [d.id for d in documents]
-        affected_boxes = set(d.box_type for d in documents)
+        result = self._presenter.unarchive_documents(documents)
         
-        # Entarchivieren (Bulk: 1 API-Call statt N)
-        unarchived_count = self._presenter.unarchive_documents(doc_ids)
-        
-        if unarchived_count > 0:
-            # Daten fuer Rueckgaengig speichern
+        if result.changed_count > 0:
             self._last_archive_data = {
-                'doc_ids': doc_ids,
-                'boxes': affected_boxes,
-                'action': 'unarchive'
+                'documents': documents,
+                'action': 'unarchive',
             }
             
-            # Cache invalidieren
             self._cache.invalidate_documents()
-            
-            # Stats und Anzeige aktualisieren
             self._refresh_stats()
             self._refresh_documents(force_refresh=True)
             
-            # Toast mit Rueckgaengig-Option
-            if unarchived_count == 1:
+            if result.changed_count == 1:
                 self._toast_manager.show_success(UNARCHIVE_SUCCESS_SINGLE, action_text=MOVE_UNDO, action_callback=self._on_toast_undo_clicked)
             else:
                 self._toast_manager.show_success(
-                    UNARCHIVE_SUCCESS_MULTI.format(count=unarchived_count),
+                    UNARCHIVE_SUCCESS_MULTI.format(count=result.changed_count),
                     action_text=MOVE_UNDO, action_callback=self._on_toast_undo_clicked
                 )
     
@@ -2785,7 +2641,8 @@ class ArchiveBoxesView(QWidget):
         )
         
         if reply == QMessageBox.StandardButton.Yes:
-            if self._presenter.delete_document(doc.id):
+            result = self._presenter.delete_document(doc)
+            if result.deleted_count > 0:
                 self._refresh_all()
             else:
                 self._toast_manager.show_error("Loeschen fehlgeschlagen.")
@@ -2812,9 +2669,8 @@ class ArchiveBoxesView(QWidget):
         self._cache.pause_auto_refresh()
         
         try:
-            doc_ids = [doc.id for doc in selected_docs]
-            deleted = self._presenter.delete_documents(doc_ids)
-            logger.info(f"Bulk-Delete: {deleted}/{len(doc_ids)} Dokument(e) geloescht")
+            result = self._presenter.delete_documents(selected_docs)
+            logger.info(f"Bulk-Delete: {result.deleted_count}/{result.total_requested} Dokument(e) geloescht")
             
             # Daten neu laden
             self._refresh_all()
@@ -2944,21 +2800,16 @@ class ArchiveBoxesView(QWidget):
         self._ai_progress.canceled.connect(self._cancel_ai_rename)
         self._ai_progress.show()
         
-        self._ai_rename_worker = AIRenameWorker(
-            self.api_client,
-            self._presenter.docs_api,
-            documents
+        self._ai_rename_worker = self._presenter.start_ai_rename(
+            documents,
+            progress_callback=self._on_ai_progress,
+            finished_callback=self._on_ai_finished,
+            error_callback=self._on_ai_error,
         )
-        self._ai_rename_worker.progress.connect(self._on_ai_progress)
-        self._ai_rename_worker.finished.connect(self._on_ai_finished)
-        self._ai_rename_worker.error.connect(self._on_ai_error)
-        self._register_worker(self._ai_rename_worker)
-        self._ai_rename_worker.start()
     
     def _cancel_ai_rename(self):
         """Bricht KI-Benennung ab."""
-        if self._ai_rename_worker:
-            self._ai_rename_worker.cancel()
+        self._presenter.cancel_ai_rename()
     
     def _on_ai_progress(self, current: int, total: int, filename: str):
         """Callback fuer KI-Fortschritt."""
@@ -3015,17 +2866,15 @@ class ArchiveBoxesView(QWidget):
         # Processing-Overlay starten (kein Bestaetigungsdialog mehr!)
         self._processing_overlay.start_processing(self._stats.eingang)
         
-        self._processing_worker = ProcessingWorker(self.api_client)
-        self._processing_worker.progress.connect(self._on_processing_progress)
-        self._processing_worker.finished.connect(self._on_processing_finished)
-        self._processing_worker.error.connect(self._on_processing_error)
-        self._register_worker(self._processing_worker)
-        self._processing_worker.start()
+        self._processing_worker = self._presenter.start_processing(
+            progress_callback=self._on_processing_progress,
+            finished_callback=self._on_processing_finished,
+            error_callback=self._on_processing_error,
+        )
     
     def _cancel_processing(self):
         """Bricht Verarbeitung ab."""
-        if self._processing_worker:
-            self._processing_worker.cancel()
+        self._presenter.cancel_processing()
         if hasattr(self, '_processing_overlay'):
             self._processing_overlay.hide()
     
@@ -3097,16 +2946,12 @@ class ArchiveBoxesView(QWidget):
         
         logger.info(f"Starte verzoegerten Kosten-Check in {delay_seconds}s (Provider: {batch_result.provider})")
         
-        self._delayed_cost_worker = DelayedCostWorker(
-            api_client=self.api_client,
-            batch_result=batch_result,
-            history_entry_id=history_entry_id,
-            delay_seconds=delay_seconds
+        self._delayed_cost_worker = self._presenter.start_delayed_cost_check(
+            batch_result, history_entry_id,
+            delay_seconds=delay_seconds,
+            countdown_callback=self._on_cost_countdown,
+            finished_callback=self._on_delayed_cost_finished,
         )
-        self._delayed_cost_worker.countdown.connect(self._on_cost_countdown)
-        self._delayed_cost_worker.finished.connect(self._on_delayed_cost_finished)
-        self._register_worker(self._delayed_cost_worker)
-        self._delayed_cost_worker.start()
     
     def _on_cost_countdown(self, remaining: int):
         """Aktualisiert den Credits-Label mit Countdown."""
@@ -3228,25 +3073,18 @@ class ArchiveBoxesView(QWidget):
         doc_ids = [d.id for d in docs]
         
         # Worker starten
-        self._smartscan_worker = SmartScanWorker(
-            self.api_client, mode=mode, document_ids=doc_ids,
+        self._smartscan_worker = self._presenter.start_smartscan(
+            mode, doc_ids,
             box_type=source_box,
-            archive_after=archive, recolor_after=recolor,
-            recolor_color=recolor_color
+            archive_after=archive,
+            recolor_after=recolor,
+            recolor_color=recolor_color,
+            progress_callback=self._on_smartscan_progress,
+            completed_callback=self._on_smartscan_finished,
+            error_callback=self._on_smartscan_error,
         )
-        self._smartscan_worker.progress.connect(self._on_smartscan_progress)
-        self._smartscan_worker.completed.connect(self._on_smartscan_finished)
-        self._smartscan_worker.error.connect(self._on_smartscan_error)
-        # QThread.finished fuer sauberes Cleanup (wenn run() zurueckkehrt)
-        self._smartscan_worker.finished.connect(self._cleanup_smartscan_worker)
         
-        if hasattr(self, '_active_workers'):
-            self._active_workers.append(self._smartscan_worker)
-        
-        # Loading-Overlay anzeigen (einfache Statusanzeige fuer SmartScan)
         self._show_loading(texts.SMARTSCAN_SENDING)
-        
-        self._smartscan_worker.start()
     
     def _on_smartscan_progress(self, current: int, total: int, status: str):
         """Fortschritt des SmartScan-Versands."""
@@ -3254,16 +3092,7 @@ class ArchiveBoxesView(QWidget):
             self._loading_overlay.set_status(status)
     
     def _cleanup_smartscan_worker(self):
-        """Raeumt den SmartScan-Worker sauber auf (nicht-blockierend)."""
-        worker = getattr(self, '_smartscan_worker', None)
-        if worker is None:
-            return
-        try:
-            if worker in self._active_workers:
-                self._active_workers.remove(worker)
-            worker.deleteLater()
-        except RuntimeError:
-            pass
+        """Raeumt die View-seitige SmartScan-Referenz auf."""
         self._smartscan_worker = None
     
     def _on_smartscan_finished(self, job_id: int, result: dict):

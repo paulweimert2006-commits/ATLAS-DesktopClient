@@ -38,6 +38,8 @@ class IDocumentRepository(Protocol):
         box_type: Optional[str] = None,
         search_content: bool = True,
         search_filename: bool = True,
+        include_raw: bool = False,
+        substring: bool = False,
     ) -> List[SearchResult]: ...
 
     def get_box_stats(self) -> BoxStats: ...
@@ -58,7 +60,7 @@ class IDocumentRepository(Protocol):
 
     def move_documents(
         self, doc_ids: List[int], target_box: str, *,
-        reason: Optional[str] = None,
+        processing_status: Optional[str] = None,
     ) -> int: ...
 
     def rename_document(

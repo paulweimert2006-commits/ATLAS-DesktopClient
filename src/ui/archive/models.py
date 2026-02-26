@@ -17,7 +17,7 @@ from PySide6.QtGui import QFont, QColor, QBrush, QPainter
 
 from api.documents import Document, BOX_DISPLAY_NAMES, BOX_COLORS
 from ui.styles.tokens import SUCCESS, ERROR, INFO, DOCUMENT_DISPLAY_COLORS
-from ui.archive_view import format_date_german
+from utils.date_utils import format_date_german
 
 
 class DocumentTableModel(QAbstractTableModel):

@@ -119,8 +119,11 @@ class ArchivePresenter:
     def repository(self) -> DocumentRepository:
         return self._repo
 
-    @property
-    def docs_api(self) -> DocumentsAPI:
+    def get_docs_api_for_dialog(self) -> DocumentsAPI:
+        """Stellt DocumentsAPI fuer Dialoge bereit (DuplicateCompare, PDFViewer).
+
+        NICHT fuer allgemeine Nutzung — Presenter-Methoden verwenden.
+        """
         return self._docs_api
 
     @property
@@ -238,7 +241,7 @@ class ArchivePresenter:
         """Startet Hintergrund-Worker fuer fehlende Text-Extraktion."""
         worker = MissingAiDataWorker(self._docs_api)
         worker.finished.connect(callback)
-        self._active_workers.append(worker)
+        self.register_worker(worker)
         worker.start()
         logger.debug("MissingAiDataWorker gestartet")
 
@@ -290,21 +293,29 @@ class ArchivePresenter:
         self.register_worker(self._color_worker)
         self._color_worker.start()
 
-    def archive_documents(self, doc_ids: List[int]) -> int:
-        """Archiviert Dokumente synchron (Bulk-API)."""
-        return self._docs_api.archive_documents(doc_ids)
+    def archive_documents(self, documents: List[Document]) -> ArchiveResult:
+        """Archiviert Dokumente via UseCase (prueft Domain-Regeln)."""
+        return self._uc_archive.archive(documents)
 
-    def unarchive_documents(self, doc_ids: List[int]) -> int:
-        """Entarchiviert Dokumente synchron (Bulk-API)."""
-        return self._docs_api.unarchive_documents(doc_ids)
+    def archive_by_ids(self, doc_ids: List[int]) -> int:
+        """Archiviert Dokumente nur per ID (fuer Worker-Callbacks ohne Document-Objekte).
 
-    def delete_document(self, doc_id: int) -> bool:
-        """Loescht ein einzelnes Dokument."""
-        return self._docs_api.delete(doc_id)
+        Keine Domain-Validierung — nur verwenden wenn der Aufrufer bereits
+        geprueft hat, dass die Dokumente archivierbar sind.
+        """
+        return self._repo.archive_documents(doc_ids)
 
-    def delete_documents(self, doc_ids: List[int]) -> int:
-        """Loescht mehrere Dokumente (Bulk-API)."""
-        return self._docs_api.delete_documents(doc_ids)
+    def unarchive_documents(self, documents: List[Document]) -> ArchiveResult:
+        """Entarchiviert Dokumente via UseCase."""
+        return self._uc_archive.unarchive(documents)
+
+    def delete_document(self, doc: Document) -> DeleteResult:
+        """Loescht ein einzelnes Dokument via UseCase."""
+        return self._uc_delete.execute_single(doc)
+
+    def delete_documents(self, documents: List[Document]) -> DeleteResult:
+        """Loescht mehrere Dokumente via UseCase (Bulk)."""
+        return self._uc_delete.execute_bulk(documents)
 
     def rename_document(self, doc: Document, new_name_without_ext: str) -> RenameResult:
         """Benennt ein Dokument um via UseCase."""
@@ -315,8 +326,11 @@ class ArchivePresenter:
         return self._repo.get_document(doc_id)
 
     def move_documents_sync(self, doc_ids: List[int], target_box: str) -> int:
-        """Verschiebt Dokumente synchron (fuer Undo-Operationen)."""
-        return self._docs_api.move_documents(doc_ids, target_box)
+        """Verschiebt Dokumente synchron (fuer Undo-Operationen).
+
+        Nutzt Repository direkt, da Undo nur IDs hat (keine Document-Objekte).
+        """
+        return self._repo.move_documents(doc_ids, target_box)
 
     def download_and_archive(
         self, doc: Document, target_dir: str,
@@ -329,26 +343,26 @@ class ArchivePresenter:
         count = 0
         eingang_docs = [d for d in documents if d.box_type == 'eingang']
         if eingang_docs:
-            eingang_ids = [d.id for d in eingang_docs]
-            moved = self._docs_api.move_documents(
-                eingang_ids, 'sonstige',
+            result = self._uc_move.execute(
+                eingang_docs, 'sonstige',
                 processing_status='manual_excluded',
             )
-            count += moved
+            count += result.moved_count
 
         other_docs = [d for d in documents if d.box_type != 'eingang']
         for doc in other_docs:
-            if self._docs_api.update(doc.id, processing_status='manual_excluded'):
+            if self._repo.update(doc.id, processing_status='manual_excluded'):
                 count += 1
 
         return count
 
     def include_for_processing(self, documents: List[Document]) -> int:
         """Gibt Dokumente fuer Verarbeitung frei. Gibt Anzahl zurueck."""
-        doc_ids = [d.id for d in documents]
-        return self._docs_api.move_documents(
-            doc_ids, 'eingang', processing_status='pending',
+        result = self._uc_move.execute(
+            documents, 'eingang',
+            processing_status='pending',
         )
+        return result.moved_count
 
     # ═══════════════════════════════════════════════════════════
     # Upload / Download

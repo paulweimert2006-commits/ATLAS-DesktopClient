@@ -28,7 +28,7 @@ try:
 except ImportError:
     pass
 
-from ui.archive_view import format_date_german
+from utils.date_utils import format_date_german
 
 
 class SmartScanDialog(QDialog):

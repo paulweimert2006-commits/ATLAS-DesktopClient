@@ -17,7 +17,7 @@ from PySide6.QtGui import QFont
 
 from api.client import APIClient
 from api.documents import SearchResult, BOX_DISPLAY_NAMES, BOX_COLORS
-from ui.archive_view import format_date_german
+from utils.date_utils import format_date_german
 from ui.archive.workers import SearchWorker
 from ui.styles.tokens import (
     PRIMARY_900, PRIMARY_500, ACCENT_500,

@@ -31,7 +31,7 @@ class SmartScanAdapter:
 
     def send_documents(
         self, doc_ids: List[int], *,
-        mode: str = 'scan',
+        mode: str = 'selected',
         archive_after: bool = False,
         recolor: bool = False,
         recolor_color: Optional[str] = None,
@@ -40,13 +40,12 @@ class SmartScanAdapter:
         try:
             from api.smartscan import SmartScanAPI
             smartscan_api = SmartScanAPI(self._client)
-            return smartscan_api.send_documents(
-                doc_ids=doc_ids,
+            result = smartscan_api.send(
                 mode=mode,
-                archive_after=archive_after,
-                recolor=recolor,
-                recolor_color=recolor_color,
+                document_ids=doc_ids,
             )
+            job_id = result.get('job_id') if result else None
+            return job_id, result
         except Exception as e:
             logger.error(f"SmartScan-Versand fehlgeschlagen: {e}")
             return None, None

@@ -233,9 +233,17 @@ class ArchiveView(QWidget):
         self._load_worker = None
         self._upload_worker = None
         self._ai_rename_worker = None
+        self._toast_manager = None
         
         self._setup_ui()
         self.refresh_documents()
+    
+    def _toast(self, method: str, message: str) -> None:
+        """Sichere Toast-Ausgabe (kein Crash falls kein ToastManager gesetzt)."""
+        if self._toast_manager:
+            getattr(self._toast_manager, method)(message)
+        else:
+            logger.warning(f"Toast ({method}): {message}")
     
     def _setup_ui(self):
         """UI aufbauen."""
@@ -381,7 +389,7 @@ class ArchiveView(QWidget):
         """Callback bei Ladefehler."""
         self.table.setEnabled(True)
         self.status_label.setText(f"Fehler: {error}")
-        self._toast_manager.show_error(f"Dokumente konnten nicht geladen werden:\n{error}")
+        self._toast("show_error", f"Dokumente konnten nicht geladen werden:\n{error}")
     
     def _populate_table(self):
         """Tabelle mit Dokumenten füllen."""
@@ -551,11 +559,11 @@ class ArchiveView(QWidget):
         selected_docs = self._get_selected_documents()
         
         if not selected_docs:
-            self._toast_manager.show_info("Bitte ein Dokument auswählen.")
+            self._toast("show_info", "Bitte ein Dokument auswählen.")
             return
         
         if len(selected_docs) > 1:
-            self._toast_manager.show_info("Bitte nur ein Dokument für die Vorschau auswählen.")
+            self._toast("show_info", "Bitte nur ein Dokument für die Vorschau auswählen.")
             return
         
         doc = selected_docs[0]
@@ -565,7 +573,8 @@ class ArchiveView(QWidget):
         elif doc.is_gdv:
             self._open_in_gdv_editor(doc)
         else:
-            self._toast_manager.show_info(
+            self._toast(
+                "show_info",
                 f"Für '{doc.original_filename}' ist keine Vorschau verfügbar. "
                 "Vorschau ist nur für PDF-Dateien und GDV-Dateien möglich."
             )
@@ -590,10 +599,10 @@ class ArchiveView(QWidget):
                 viewer = PDFViewerDialog(result, f"Vorschau: {doc.original_filename}", self)
                 viewer.exec()
             else:
-                self._toast_manager.show_error("PDF konnte nicht geladen werden.")
+                self._toast("show_error", "PDF konnte nicht geladen werden.")
         except Exception as e:
             progress.close()
-            self._toast_manager.show_error(f"Vorschau fehlgeschlagen:\n{e}")
+            self._toast("show_error", f"Vorschau fehlgeschlagen:\n{e}")
     
     def _upload_document(self):
         """Dokument hochladen."""
@@ -625,15 +634,15 @@ class ArchiveView(QWidget):
         progress.close()
         
         if doc:
-            self._toast_manager.show_success(f"Dokument '{doc.original_filename}' erfolgreich hochgeladen.")
+            self._toast("show_success", f"Dokument '{doc.original_filename}' erfolgreich hochgeladen.")
             self.refresh_documents()
         else:
-            self._toast_manager.show_error("Upload fehlgeschlagen.")
+            self._toast("show_error", "Upload fehlgeschlagen.")
     
     def _on_upload_error(self, error: str, progress: QProgressDialog):
         """Callback bei Upload-Fehler."""
         progress.close()
-        self._toast_manager.show_error(f"Upload fehlgeschlagen:\n{error}")
+        self._toast("show_error", f"Upload fehlgeschlagen:\n{error}")
     
     def _download_document(self, doc: Document):
         """Dokument herunterladen."""
@@ -649,9 +658,9 @@ class ArchiveView(QWidget):
         result = self.docs_api.download(doc.id, target_dir, filename_override=doc.original_filename)
         
         if result:
-            self._toast_manager.show_success(f"Dokument gespeichert:\n{result}")
+            self._toast("show_success", f"Dokument gespeichert:\n{result}")
         else:
-            self._toast_manager.show_error("Download fehlgeschlagen.")
+            self._toast("show_error", "Download fehlgeschlagen.")
     
     def _open_in_gdv_editor(self, doc: Document):
         """GDV-Dokument im Editor öffnen."""
@@ -672,7 +681,7 @@ class ArchiveView(QWidget):
                 self.refresh_documents()
             else:
                 # Nur bei Fehler eine Meldung anzeigen
-                self._toast_manager.show_error("Löschen fehlgeschlagen.")
+                self._toast("show_error", "Löschen fehlgeschlagen.")
     
     def _delete_selected(self):
         """Mehrere ausgewählte Dokumente löschen."""
@@ -746,7 +755,8 @@ class ArchiveView(QWidget):
         selected_docs = self._get_selected_documents()
         
         if not selected_docs:
-            self._toast_manager.show_info(
+            self._toast(
+                "show_info",
                 "Bitte mindestens ein Dokument auswählen. "
                 "Tipp: Mit Strg+Klick oder Shift+Klick mehrere auswählen."
             )
@@ -792,11 +802,13 @@ class ArchiveView(QWidget):
         
         # Zusammenfassung
         if failed_count == 0:
-            self._toast_manager.show_success(
+            self._toast(
+                "show_success",
                 f"{success_count} Dokument(e) erfolgreich heruntergeladen. Speicherort: {target_dir}"
             )
         else:
-            self._toast_manager.show_warning(
+            self._toast(
+                "show_warning",
                 f"Download: {success_count} erfolgreich, {failed_count} fehlgeschlagen. Speicherort: {target_dir}"
             )
     
@@ -816,7 +828,8 @@ class ArchiveView(QWidget):
             all_unrenamed = [d for d in self._documents if d.is_pdf and not d.ai_renamed]
             
             if not all_unrenamed:
-                self._toast_manager.show_info(
+                self._toast(
+                    "show_info",
                     "Keine PDFs ohne KI-Benennung gefunden. Alle PDFs wurden bereits verarbeitet."
                 )
                 return
@@ -917,11 +930,13 @@ class ArchiveView(QWidget):
         detail_text = "\n".join(details)
         
         if failed_count == 0:
-            self._toast_manager.show_success(
+            self._toast(
+                "show_success",
                 f"KI-Benennung: Alle {success_count} Dokument(e) erfolgreich umbenannt."
             )
         else:
-            self._toast_manager.show_warning(
+            self._toast(
+                "show_warning",
                 f"KI-Benennung: {success_count} erfolgreich, {failed_count} fehlgeschlagen."
             )
         
@@ -933,9 +948,7 @@ class ArchiveView(QWidget):
         if hasattr(self, '_ai_progress') and self._ai_progress:
             self._ai_progress.close()
         
-        self._toast_manager.show_error(
-            f"KI-Benennung Fehler: {error}"
-        )
+        self._toast("show_error", f"KI-Benennung Fehler: {error}")
 
 
 # =============================================================================

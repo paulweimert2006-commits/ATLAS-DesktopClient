@@ -66,8 +66,12 @@ class ProcessDocument:
             max_workers=max_workers,
         )
 
-    def execute_single(self, doc_id: int) -> Optional[dict]:
-        """Verarbeitet ein einzelnes Dokument (fuer Re-Processing)."""
+    def execute_single(self, doc_id: int):
+        """Verarbeitet ein einzelnes Dokument (fuer Re-Processing).
+
+        Returns:
+            ProcessingResult aus services.document_processor.
+        """
         from services.document_processor import DocumentProcessor
         processor = DocumentProcessor(self._api_client)
         return processor.process_single_document(doc_id)
