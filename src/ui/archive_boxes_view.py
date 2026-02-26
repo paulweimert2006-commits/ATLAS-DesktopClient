@@ -371,7 +371,7 @@ class ArchiveBoxesView(QWidget):
         self._content_stack.addWidget(self._inner_splitter)  # Page 0: Normale Archiv-Tabelle
         
         # ATLAS Index Widget (Page 1: Volltextsuche)
-        self._atlas_index_widget = AtlasIndexWidget(self.api_client)
+        self._atlas_index_widget = AtlasIndexWidget(self._presenter.repository)
         self._atlas_index_widget.preview_requested.connect(self._on_atlas_preview)
         self._atlas_index_widget.download_requested.connect(self._on_atlas_download)
         self._atlas_index_widget.show_in_box_requested.connect(self._on_atlas_show_in_box)

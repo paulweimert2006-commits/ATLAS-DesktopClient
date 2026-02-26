@@ -584,7 +584,7 @@ class ArchivePresenter:
     ) -> SearchWorker:
         """Startet Such-Worker."""
         worker = SearchWorker(
-            self._api_client, query, limit=limit,
+            self._repo, query, limit=limit,
             include_raw=include_raw, substring=substring,
         )
         if finished_callback:

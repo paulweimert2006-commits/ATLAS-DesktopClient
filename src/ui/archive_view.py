@@ -121,6 +121,8 @@ class ArchiveView(QWidget):
         
         self.api_client = api_client
         self.docs_api = DocumentsAPI(api_client)
+        from infrastructure.archive.document_repository import DocumentRepository
+        self._repo = DocumentRepository(api_client)
         
         self._documents: List[Document] = []
         self._load_worker = None
@@ -778,7 +780,7 @@ class ArchiveView(QWidget):
         # Worker starten
         self._ai_rename_worker = AIRenameWorker(
             self.api_client,
-            self.docs_api,
+            self._repo,
             documents
         )
         self._ai_rename_worker.progress.connect(self._on_ai_rename_progress)

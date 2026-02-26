@@ -15,7 +15,6 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QFont
 
-from api.client import APIClient
 from api.documents import SearchResult, BOX_DISPLAY_NAMES, BOX_COLORS
 from utils.date_utils import format_date_german
 from ui.archive.workers import SearchWorker
@@ -239,9 +238,9 @@ class AtlasIndexWidget(QWidget):
     show_in_box_requested = Signal(object)   # Document -> Zur Box wechseln
     download_requested = Signal(object)      # Document -> Download
     
-    def __init__(self, api_client: APIClient, parent=None):
+    def __init__(self, repository, parent=None):
         super().__init__(parent)
-        self.api_client = api_client
+        self._repo = repository
         self._search_worker: Optional[SearchWorker] = None
         self._debounce_timer = QTimer(self)
         self._debounce_timer.setSingleShot(True)
@@ -438,7 +437,7 @@ class AtlasIndexWidget(QWidget):
         self._status_label.setText(ATLAS_INDEX_SEARCHING)
         
         self._search_worker = SearchWorker(
-            self.api_client, query,
+            self._repo, query,
             include_raw=self._include_raw_cb.isChecked(),
             substring=self._substring_cb.isChecked()
         )
