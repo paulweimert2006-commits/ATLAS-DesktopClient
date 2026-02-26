@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
     QHeaderView, QPushButton, QLabel, QTextEdit, QProgressDialog, QFileDialog,
     QMessageBox, QDialog, QFormLayout, QLineEdit, QComboBox,
     QDialogButtonBox, QCheckBox, QFrame, QProgressBar,
-    QScrollArea, QGridLayout,
+    QScrollArea, QGridLayout, QMenu,
 )
 from PySide6.QtCore import Qt, Signal, QThread, QTimer, QSettings
 from PySide6.QtGui import QFont, QColor, QPainter, QShortcut, QKeySequence
@@ -1737,8 +1737,8 @@ class BiPROView(QWidget):
         """UI aufbauen -- Standard-View (einfach) + Admin-View (technisch)."""
         from i18n.de import (
             BIPRO_HEADER, BIPRO_VIEW_TOGGLE_STANDARD, BIPRO_VIEW_TOGGLE_ADMIN,
-            BIPRO_FETCH_ALL, BIPRO_FETCH_ALL_TOOLTIP, BIPRO_FETCH_ALL_LAST_INFO,
-            BIPRO_MAIL_FETCH_TOOLTIP,
+            BIPRO_FETCH_ALL, BIPRO_FETCH_ALL_TOOLTIP, BIPRO_MORE_OPTIONS_TOOLTIP,
+            BIPRO_FETCH_ALL_LAST_INFO, BIPRO_MAIL_FETCH_TOOLTIP,
             BIPRO_FETCH_ONLY_MAIL, BIPRO_FETCH_ONLY_VU,
             BIPRO_SHOW_DETAILS, BIPRO_HIDE_DETAILS, BIPRO_GO_TO_ARCHIVE,
             BIPRO_ACK_BUTTON, BIPRO_ACK_LAST_INFO,
@@ -1816,23 +1816,20 @@ class BiPROView(QWidget):
         self.fetch_all_vus_btn.clicked.connect(self._unified_fetch)
         action_bar.addWidget(self.fetch_all_vus_btn)
 
-        sep = QFrame()
-        sep.setFrameShape(QFrame.Shape.VLine)
-        sep.setStyleSheet(f"color: {BORDER_DEFAULT};")
-        action_bar.addWidget(sep)
+        self._more_btn = QPushButton("•••")
+        self._more_btn.setFixedHeight(44)
+        self._more_btn.setFixedWidth(54)
+        self._more_btn.setStyleSheet(get_button_secondary_style())
+        self._more_btn.setToolTip(BIPRO_MORE_OPTIONS_TOOLTIP)
 
-        self.mail_fetch_btn = QPushButton(BIPRO_FETCH_ONLY_MAIL)
-        self.mail_fetch_btn.setFixedHeight(30)
-        self.mail_fetch_btn.setStyleSheet(get_button_secondary_style())
-        self.mail_fetch_btn.setToolTip(BIPRO_MAIL_FETCH_TOOLTIP)
-        self.mail_fetch_btn.clicked.connect(self._fetch_mails)
-        action_bar.addWidget(self.mail_fetch_btn)
+        more_menu = QMenu(self)
+        self.mail_fetch_btn = more_menu.addAction(BIPRO_FETCH_ONLY_MAIL)
+        self.mail_fetch_btn.triggered.connect(self._fetch_mails)
+        self.fetch_single_vu_btn = more_menu.addAction(BIPRO_FETCH_ONLY_VU)
+        self.fetch_single_vu_btn.triggered.connect(self._fetch_selected_vu)
 
-        self.fetch_single_vu_btn = QPushButton(BIPRO_FETCH_ONLY_VU)
-        self.fetch_single_vu_btn.setFixedHeight(30)
-        self.fetch_single_vu_btn.setStyleSheet(get_button_secondary_style())
-        self.fetch_single_vu_btn.clicked.connect(self._fetch_selected_vu)
-        action_bar.addWidget(self.fetch_single_vu_btn)
+        self._more_btn.setMenu(more_menu)
+        action_bar.addWidget(self._more_btn)
 
         action_bar.addStretch()
 
@@ -2594,7 +2591,7 @@ class BiPROView(QWidget):
         settings.setValue("bipro/last_fetch_docs", total_docs)
         
         self._status_card.setVisible(True)
-        self._status_title_label.setText(BIPRO_STATUS_LAST_FETCH.format(timestamp=now_str))
+        self._status_title_label.setText("✅ " + BIPRO_STATUS_LAST_FETCH.format(timestamp=now_str))
         self._status_docs_label.setText(BIPRO_STATUS_FETCH_SUCCESS.format(count=total_docs))
         self._status_progress_bar.setVisible(False)
         self._status_detail_label.setVisible(False)

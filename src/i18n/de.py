@@ -136,8 +136,9 @@ BIPRO_MAIL_FETCH_PHASE_POLL = "Postfach abrufen..."
 BIPRO_MAIL_FETCH_PHASE_IMPORT = "Anhaenge importieren"
 
 # === Alle VUs abholen (Unified Fetch) ===
-BIPRO_FETCH_ALL = "Alle neuen Dokumente abrufen"
+BIPRO_FETCH_ALL = "🔄 Jetzt Dokumente abrufen"
 BIPRO_FETCH_ALL_TOOLTIP = "Ruft Dokumente von allen Versicherern und E-Mail-Konten ab"
+BIPRO_MORE_OPTIONS_TOOLTIP = "Weitere Abruf-Optionen"
 BIPRO_FETCH_ALL_LAST_INFO = "Zuletzt: {timestamp} von {user}"
 BIPRO_FETCH_ALL_NO_ACTIVE = "Keine aktiven VU-Verbindungen vorhanden."
 BIPRO_FETCH_ALL_START = "=== Starte Abruf fuer alle VUs ({count} aktive Verbindungen) ==="
@@ -162,11 +163,11 @@ BIPRO_STATUS_FETCH_SUCCESS = "{count} Dokumente erfolgreich importiert"
 BIPRO_SHOW_DETAILS = "Details anzeigen"
 BIPRO_HIDE_DETAILS = "Details ausblenden"
 BIPRO_GO_TO_ARCHIVE = "Zum Archiv"
-BIPRO_FETCH_ONLY_MAIL = "Nur Mails"
-BIPRO_FETCH_ONLY_VU = "Nur ausgewaehlte VU"
+BIPRO_FETCH_ONLY_MAIL = "📧 Nur Mails abholen"
+BIPRO_FETCH_ONLY_VU = "🏢 Nur ausgewaehlte VU abrufen"
 
 # === Quittieren ===
-BIPRO_ACK_BUTTON = "Quittieren"
+BIPRO_ACK_BUTTON = "🗑 Quittieren"
 BIPRO_ACK_LAST_INFO = "Letzte Quittierung: {timestamp} von {user}"
 BIPRO_ACK_ALL_WARNING = (
     "ACHTUNG: Sie sind dabei, alle {count} gelisteten Lieferung(en) zu quittieren.\n\n"
