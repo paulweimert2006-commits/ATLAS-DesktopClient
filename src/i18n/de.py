@@ -2286,3 +2286,51 @@ HEALTH_NO_BASELINE = "Keine Vergleichsdaten"
 HEALTH_HISTORY_TITLE = "Verlauf"
 HEALTH_HISTORY_EMPTY = "Keine vergangenen Laeufe"
 HEALTH_HISTORY_RUN = "{date} - {status} ({duration}ms)"
+
+# ═══════════════════════════════════════════════════════
+# Clean Architecture – Provisions-Redesign
+# ═══════════════════════════════════════════════════════
+
+PROVISION_FILTER_ONLY_RELEVANT = "Nur relevante"
+PROVISION_FILTER_SHOW_ALL = "Alle anzeigen"
+PROVISION_FILTER_RELEVANT_TIP = "Blendet irrelevante Datensaetze aus (z.B. Allianz < 20%, VB dy-Saetze)"
+PROVISION_FILTER_RELEVANT_COUNT = "{relevant} relevant / {irrelevant} ausgeblendet"
+
+PROVISION_POS_COL_BUCHUNGSART = "Buchungsart"
+PROVISION_TIP_COL_BUCHUNGSART = "Roher Buchungsart-Wert aus der VU-Liste"
+
+PROVISION_BADGE_ALLIANZ = "Allianz"
+PROVISION_BADGE_SWISSLIFE = "SwissLife"
+PROVISION_BADGE_VB = "VB"
+PROVISION_BADGE_XEMPUS = "Xempus"
+
+PROVISION_RAW_VIEWER_TITLE = "Rohdaten – {filename}"
+PROVISION_RAW_VIEWER_SHEET = "Sheet: {sheet}"
+PROVISION_RAW_VIEWER_ROW = "Zeile {row}"
+PROVISION_RAW_VIEWER_JUMP = "Zur Originalzeile springen"
+PROVISION_RAW_VIEWER_NO_FILE = "Originaldatei nicht gefunden"
+PROVISION_RAW_VIEWER_NO_ROW = "Keine Quellzeile vorhanden"
+PROVISION_RAW_VIEWER_OPEN_EXCEL = "In Excel oeffnen"
+PROVISION_RAW_VIEWER_SEARCH = "Suchen..."
+PROVISION_RAW_VIEWER_LOADING = "Lade Rohdaten..."
+PROVISION_RAW_VIEWER_ERROR = "Fehler beim Laden: {error}"
+PROVISION_RAW_VIEWER_FILE_SELECT = "Excel-Datei auswaehlen"
+PROVISION_RAW_VIEWER_FILE_FILTER = "Excel-Dateien (*.xlsx *.xls)"
+
+PROVISION_IRRELEVANT_TAG = "Irrelevant"
+PROVISION_IRRELEVANT_REASON_ALLIANZ = "Courtagesatz < 20%"
+PROVISION_IRRELEVANT_REASON_SWISSLIFE = "Keine AP-Buchungsart (BARM/APG)"
+PROVISION_IRRELEVANT_REASON_VB_DY = "Buchungsart 'dy'"
+PROVISION_IRRELEVANT_REASON_VB_KOND = "Konditionssatz nicht 15/35/50"
+
+PROVISION_SOURCE_JUMP_TIP = "Zur Originalzeile in der Quelldatei springen"
+PROVISION_DETAIL_BUCHUNGSART = "Buchungsart (roh)"
+PROVISION_DETAIL_KONDITIONSSATZ = "Konditionssatz"
+PROVISION_DETAIL_COURTAGE_RATE = "Courtagesatz"
+PROVISION_DETAIL_IS_RELEVANT = "Relevant"
+PROVISION_DETAIL_SOURCE_ROW = "Quellzeile"
+
+PROVISION_RELEVANCE_TOGGLE = "Nur relevante"
+PROVISION_RELEVANCE_TOGGLE_TIP = "Irrelevante Datensaetze ausblenden (Allianz <20%, SwissLife ohne BARM/APG, VB dy/Kond.)"
+PROVISION_RELEVANCE_SHOWING_ALL = "Alle Datensaetze ({total})"
+PROVISION_RELEVANCE_SHOWING_RELEVANT = "Relevante: {relevant} von {total}"

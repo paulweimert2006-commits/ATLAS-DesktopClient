@@ -2,14 +2,16 @@
 """
 QThread-Worker fuer das Provisionsmanagement.
 
-Alle Worker sind reine API-Wrapper ohne UI-Abhaengigkeiten.
-Extrahiert aus den Panel-Dateien fuer bessere Wartbarkeit.
+KOMPATIBILITAETS-MODUL: Neue Worker sind in
+infrastructure/threading/provision_workers.py.
+Bestehende Imports funktionieren weiterhin.
 """
 
 from PySide6.QtCore import QThread, Signal
 from typing import List, Dict, Optional
 
 from api.provision import ProvisionAPI
+from domain.provision.entities import ImportResult
 from i18n import de as texts
 import logging
 
@@ -150,7 +152,7 @@ class VuImportWorker(QThread):
 
     def run(self):
         try:
-            from api.provision import ImportResult
+            from domain.provision.entities import ImportResult
             chunk_size = 2000
             total = len(self._rows)
             chunks = [self._rows[i:i+chunk_size] for i in range(0, total, chunk_size)]

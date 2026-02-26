@@ -19,7 +19,8 @@ import calendar
 import csv
 import os
 
-from api.provision import ProvisionAPI, BeraterAbrechnung
+from api.provision import ProvisionAPI
+from domain.provision.entities import BeraterAbrechnung
 from ui.styles.tokens import (
     PRIMARY_100, PRIMARY_500, PRIMARY_900, ACCENT_500,
     BG_PRIMARY, BG_SECONDARY, BORDER_DEFAULT,
@@ -42,17 +43,43 @@ logger = logging.getLogger(__name__)
 
 
 class AuszahlungenPanel(QWidget):
-    """Auszahlungen & Reports mit Statement-Detail und CSV-Export."""
+    """Auszahlungen & Reports mit Statement-Detail und CSV-Export.
+
+    Implementiert IPayoutsView fuer den PayoutsPresenter.
+    """
 
     navigate_to_panel = Signal(int)
 
-    def __init__(self, api: ProvisionAPI):
+    def __init__(self, api: ProvisionAPI = None):
         super().__init__()
         self._api = api
+        self._presenter = None
         self._worker = None
         self._toast_manager = None
         self._setup_ui()
-        QTimer.singleShot(100, self._load_data)
+        if api:
+            QTimer.singleShot(100, self._load_data)
+
+    def set_presenter(self, presenter) -> None:
+        """Verbindet dieses Panel mit dem PayoutsPresenter."""
+        self._presenter = presenter
+        presenter.set_view(self)
+
+    # ── IPayoutsView ──
+
+    def show_abrechnungen(self, abrechnungen: list) -> None:
+        """View-Interface: Abrechnungen anzeigen."""
+        self._model.set_data(abrechnungen)
+
+    def show_loading(self, loading: bool) -> None:
+        """View-Interface: Ladezustand."""
+        overlay = getattr(self, '_loading_overlay', None)
+        if overlay:
+            overlay.setVisible(loading)
+
+    def show_error(self, message: str) -> None:
+        """View-Interface: Fehler anzeigen."""
+        logger.error(f"Auszahlungen-Fehler: {message}")
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -246,6 +273,11 @@ class AuszahlungenPanel(QWidget):
         self._status.setText("")
         self._loading_overlay.setGeometry(self.rect())
         self._loading_overlay.setVisible(True)
+
+        if self._presenter:
+            self._presenter.load_abrechnungen(monat)
+            return
+
         if self._worker and self._worker.isRunning():
             return
         self._worker = AuszahlungenLoadWorker(self._api, monat)
