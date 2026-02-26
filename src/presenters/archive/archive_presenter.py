@@ -269,9 +269,14 @@ class ArchivePresenter:
     # ═══════════════════════════════════════════════════════════
 
     def load_document_history(self, doc_id: int, finished_callback, error_callback) -> None:
-        if self._history_worker and self._history_worker.isRunning():
-            self._history_worker.quit()
-            self._history_worker.wait(1000)
+        if self._history_worker:
+            try:
+                if self._history_worker.isRunning():
+                    self._history_worker.quit()
+                    self._history_worker.wait(1000)
+            except RuntimeError:
+                pass
+            self._history_worker = None
         self._history_worker = DocumentHistoryWorker(self._api_client, doc_id)
         self._history_worker.finished.connect(finished_callback)
         self._history_worker.error.connect(error_callback)

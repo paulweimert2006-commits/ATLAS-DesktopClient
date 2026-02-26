@@ -2314,11 +2314,9 @@ class ArchiveBoxesView(QWidget):
         if hasattr(self, '_download_progress') and self._download_progress:
             self._download_progress.close()
         
-        # Auto-Archivierung: Archivierbare Dokumente markieren
-        archived_count = 0
-        archived_doc_ids = []
+        # DownloadDocument-UseCase archiviert bereits einzeln pro Datei.
+        # Hier nur ermitteln wie viele archiviert wurden fuer Refresh + Toast.
         docs_map = getattr(self, '_download_documents_map', {})
-        affected_boxes = set()
         
         archivable_docs = []
         for doc_id in erfolgreiche_doc_ids:
@@ -2326,14 +2324,10 @@ class ArchiveBoxesView(QWidget):
             if doc and doc.box_type in ARCHIVABLE_BOXES and not doc.is_archived:
                 archivable_docs.append(doc)
         
-        if archivable_docs:
-            result = self._presenter.archive_documents(archivable_docs)
-            archived_count = result.changed_count
+        archived_count = len(archivable_docs)
         
         if archived_count > 0:
             self._cache.invalidate_documents()
-        
-        if archived_count > 0:
             self._last_archive_data = {
                 'documents': archivable_docs,
                 'action': 'archive',
@@ -2354,7 +2348,6 @@ class ArchiveBoxesView(QWidget):
             else:
                 self._toast_manager.show_success(f"{erfolge} Dokument(e) heruntergeladen")
         else:
-            # Bei Fehlern nur Toast mit Zusammenfassung
             self._toast_manager.show_warning(f"{erfolge} heruntergeladen, {fehler} fehlgeschlagen")
         
         # Aufraeumen
