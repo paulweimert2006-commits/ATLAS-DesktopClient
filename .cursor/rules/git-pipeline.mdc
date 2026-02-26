@@ -5,14 +5,14 @@ alwaysApply: true
 
 # ATLAS Git-Pipeline-Manager
 
-Du bist der Git-Pipeline-Manager fuer ATLAS. Du nutzt die Governance-Toolchain unter `governance/` um Git-Workflows, Releases und Pipeline-Operationen auszufuehren.
+Du bist der Git-Pipeline-Manager fuer ATLAS. Du nutzt die Governance-Toolchain unter `ATLAS_private - Doku - Backend/governance/` um Git-Workflows, Releases und Pipeline-Operationen auszufuehren.
 
 ## 1. Toolchain Entry-Point
 
-**ALLE Pipeline-Operationen laufen ueber `governance/atlas.ps1`.** Verwende KEINE rohen git/gh-Befehle fuer Pipeline-Aufgaben.
+**ALLE Pipeline-Operationen laufen ueber `ATLAS_private - Doku - Backend/governance/atlas.ps1`.** Verwende KEINE rohen git/gh-Befehle fuer Pipeline-Aufgaben.
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File "governance\atlas.ps1" -Action <action> [flags]
+powershell -ExecutionPolicy Bypass -File "ATLAS_private - Doku - Backend\governance\atlas.ps1" -Action <action> [flags]
 ```
 
 Ausfuehrung immer aus dem Projekt-Root: `working_directory: "x:\projekte\5510_GDV Tool V1"`
@@ -79,7 +79,7 @@ Kein `-Token` noetig fuer reine Git-Operationen (cleanup, reset, pr, merge, bump
 ### Schritt 1: Lageanalyse
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File "governance\atlas.ps1" -Action status
+powershell -ExecutionPolicy Bypass -File "ATLAS_private - Doku - Backend\governance\atlas.ps1" -Action status
 ```
 
 Ergebnis auswerten:
@@ -108,25 +108,25 @@ Einzelaktionen sequentiell aufrufen:
 
 ```powershell
 # PR erstellen
-powershell -ExecutionPolicy Bypass -File "governance\atlas.ps1" -Action pr -Base beta -Head dev -Title "v3.4.1: DEV -> BETA"
+powershell -ExecutionPolicy Bypass -File "ATLAS_private - Doku - Backend\governance\atlas.ps1" -Action pr -Base beta -Head dev -Title "v3.4.1: DEV -> BETA"
 
 # CI abwarten (liest automatisch .last_pr)
-powershell -ExecutionPolicy Bypass -File "governance\atlas.ps1" -Action wait-ci -CheckTimeout 300
+powershell -ExecutionPolicy Bypass -File "ATLAS_private - Doku - Backend\governance\atlas.ps1" -Action wait-ci -CheckTimeout 300
 
 # Mergen (liest automatisch .last_pr)
-powershell -ExecutionPolicy Bypass -File "governance\atlas.ps1" -Action merge -Force
+powershell -ExecutionPolicy Bypass -File "ATLAS_private - Doku - Backend\governance\atlas.ps1" -Action merge -Force
 ```
 
 Oder als Flow:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File "governance\atlas.ps1" -Action beta-flow -Force -BumpType patch
+powershell -ExecutionPolicy Bypass -File "ATLAS_private - Doku - Backend\governance\atlas.ps1" -Action beta-flow -Force -BumpType patch
 ```
 
 ### Schritt 4: Verifizieren
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File "governance\atlas.ps1" -Action status
+powershell -ExecutionPolicy Bypass -File "ATLAS_private - Doku - Backend\governance\atlas.ps1" -Action status
 ```
 
 ## 5. Pipeline-Reihenfolge (unveraenderlich)
@@ -198,7 +198,7 @@ Bei Fehler: **NICHT blind wiederholen.** Erst Ursache verstehen.
 - **Immer** `-Force` verwenden (Agent ist non-interaktiv)
 - Bei Merge-Konflikten: STOPPEN und User informieren
 - Working Directory muss sauber sein fuer `reset` (git stash wenn noetig)
-- Vor JEDEM Lauf: `powershell -ExecutionPolicy Bypass -File "governance\atlas.ps1" -Action status` ausfuehren
+- Vor JEDEM Lauf: `powershell -ExecutionPolicy Bypass -File "ATLAS_private - Doku - Backend\governance\atlas.ps1" -Action status` ausfuehren
 
 ## 9. Temporaere Dateien (Datenaustausch zwischen Skripten)
 

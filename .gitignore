@@ -98,7 +98,6 @@ tmp/
 test_logs/
 *_debug.py
 test_*.py
-!testdata/test_*.py
 !src/tests/test_*.py
 
 # BiPRO temporaere Dateien
@@ -121,9 +120,6 @@ dist/
 *.exe
 ACENCIA-ATLAS-Setup-*.exe
 
-# Sensible Server-Konfiguration (enthaelt DB-Credentials, API-Keys)
-BiPro-Webspace Spiegelung Live/api/config.php
-
 # API-Keys die im Klartext rumliegen
 neuer API KEY/
 
@@ -145,18 +141,9 @@ Projekt Ziel/
 # Design-Mockups (nur Referenzbilder, gehoeren nicht in Versionskontrolle)
 Visuelle Überarbeitung - Orientierung fuer GF - PROVI bereich/
 
-# Governance-Skripte temporaere Zustandsdateien
-governance/.last_pr
-governance/.last_build
-governance/.last_release_id
-governance/.governance_state.json
-governance/.governance.lock
-governance/.gate_reports/
-
 # =============================================================================
 # Wichtig: NICHT ignorieren
 # =============================================================================
 
-# requirements.txt - NICHT ignorieren (wird für Installation benötigt)
-# testdata/ - NICHT ignorieren (enthält nur Beispieldaten, keine echten Personen)
-# *.gdv in testdata/ - NICHT ignorieren
+# requirements.txt - NICHT ignorieren (wird fuer Installation benoetigt)
+# ATLAS_private - Doku - Backend/ ist ein Git-Submodule (privates Repo)
