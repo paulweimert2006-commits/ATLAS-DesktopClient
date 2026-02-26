@@ -546,29 +546,29 @@ class ProvisionspositionenPanel(QWidget):
     def _resize_columns(self):
         header = self._table.horizontalHeader()
         col_widths = {
-            PositionsModel.COL_DATUM: 90,
-            PositionsModel.COL_VU: 100,
-            PositionsModel.COL_VSNR: 130,
-            PositionsModel.COL_KUNDE: 160,
-            PositionsModel.COL_BETRAG: 95,
-            PositionsModel.COL_BUCHUNGSART: 80,
-            PositionsModel.COL_XEMPUS_BERATER: 130,
-            PositionsModel.COL_BERATER: 120,
-            PositionsModel.COL_STATUS: 120,
-            PositionsModel.COL_BERATER_ANTEIL: 90,
-            PositionsModel.COL_SOURCE: 70,
-            PositionsModel.COL_MENU: 40,
+            PositionsModel.COL_DATUM: 85,
+            PositionsModel.COL_VU: 80,
+            PositionsModel.COL_VSNR: 120,
+            PositionsModel.COL_BETRAG: 90,
+            PositionsModel.COL_BUCHUNGSART: 70,
+            PositionsModel.COL_XEMPUS_BERATER: 120,
+            PositionsModel.COL_BERATER: 110,
+            PositionsModel.COL_STATUS: 110,
+            PositionsModel.COL_BERATER_ANTEIL: 80,
+            PositionsModel.COL_SOURCE: 60,
+            PositionsModel.COL_MENU: 36,
         }
+        stretch_col = PositionsModel.COL_KUNDE
         for i in range(self._model.columnCount()):
-            if i == PositionsModel.COL_KUNDE:
+            if i == stretch_col:
                 header.setSectionResizeMode(i, QHeaderView.Stretch)
-                self._table.setColumnWidth(i, col_widths.get(i, 80))
+            elif i == PositionsModel.COL_MENU:
+                header.setSectionResizeMode(i, QHeaderView.Fixed)
+                self._table.setColumnWidth(i, 36)
             elif i in col_widths:
-                header.setSectionResizeMode(i, QHeaderView.Interactive)
-                self._table.setColumnWidth(i, col_widths[i])
+                header.setSectionResizeMode(i, QHeaderView.ResizeToContents)
             else:
-                header.setSectionResizeMode(i, QHeaderView.Interactive)
-                self._table.setColumnWidth(i, 80)
+                header.setSectionResizeMode(i, QHeaderView.ResizeToContents)
 
     def _on_selection_changed(self, selected, deselected):
         indexes = self._table.selectionModel().selectedRows()
@@ -591,7 +591,7 @@ class ProvisionspositionenPanel(QWidget):
         self._det_vu.setText(comm.versicherer or comm.vu_name or "")
         self._det_vsnr.setText(comm.vsnr or "")
         self._det_betrag.setText(format_eur(comm.betrag))
-        self._det_art.setText(ART_LABELS.get(comm.art, comm.art))
+        self._det_art.setText(comm.buchungsart_raw or ART_LABELS.get(comm.art, comm.art))
         d = comm.auszahlungsdatum or ""
         if len(d) >= 10:
             try:

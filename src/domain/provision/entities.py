@@ -204,6 +204,7 @@ class Commission:
     import_batch_id: Optional[int] = None
     import_source_type: Optional[str] = None
     import_vu_name: Optional[str] = None
+    import_sheet_name: Optional[str] = None
     is_relevant: bool = True
     source_row: Optional[int] = None
     buchungsart_raw: Optional[str] = None
@@ -214,6 +215,8 @@ class Commission:
     def source_label(self) -> str:
         if self.import_source_type == 'xempus':
             return "Xempus"
+        if self.import_sheet_name:
+            return self.import_sheet_name
         if self.import_vu_name:
             return self.import_vu_name
         return "\u2014"
@@ -244,6 +247,7 @@ class Commission:
             import_batch_id=int(d['import_batch_id']) if d.get('import_batch_id') else None,
             import_source_type=d.get('import_source_type'),
             import_vu_name=d.get('import_vu_name'),
+            import_sheet_name=d.get('import_sheet_name'),
             is_relevant=bool(int(d.get('is_relevant', 1))),
             source_row=int(d['source_row']) if d.get('source_row') else None,
             buchungsart_raw=d.get('buchungsart_raw'),
