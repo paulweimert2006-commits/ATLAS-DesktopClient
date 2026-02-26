@@ -2509,13 +2509,13 @@ class BiPROView(QWidget):
 
         conn, creds, ship_id = self._ack_all_queue.pop(0)
         worker = AcknowledgeShipmentWorker(
-            creds, conn.vu_name, ship_id,
+            creds, [ship_id],
             sts_url=conn.get_effective_sts_url(),
             transfer_url=conn.get_effective_transfer_url(),
             consumer_id=conn.consumer_id or "",
         )
-        worker.finished.connect(lambda sid: self._on_ack_all_item_done(conn.vu_name, True))
-        worker.error.connect(lambda err: self._on_ack_all_item_done("", False))
+        worker.finished.connect(lambda ok, fail: self._on_ack_all_item_done(
+            conn.vu_name if not fail else "", len(fail) == 0))
         self._register_worker(worker)
         worker.start()
         self._acknowledge_worker = worker
