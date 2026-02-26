@@ -137,9 +137,14 @@ class ProvisionRepository:
             logger.error(f"Fehler beim Laden der Berater-Details {berater_id}: {e}")
         return None
 
-    def get_clearance_counts(self) -> Dict:
+    def get_clearance_counts(self, von: str = None, bis: str = None) -> Dict:
         try:
-            resp = self._client.get('/pm/clearance')
+            params = {}
+            if von:
+                params['von'] = von
+            if bis:
+                params['bis'] = bis
+            resp = self._client.get('/pm/clearance', params=params)
             if resp.get('success'):
                 return resp.get('data', {})
         except APIError as e:

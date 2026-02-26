@@ -20,5 +20,5 @@ class LoadDashboard:
         bis: str = None,
     ) -> Tuple[Optional[DashboardSummary], Dict]:
         summary = self._repo.get_dashboard_summary(von=von, bis=bis)
-        clearance = self._repo.get_clearance_counts()
+        clearance = self._repo.get_clearance_counts(von=von, bis=bis)
         return summary, clearance

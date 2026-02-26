@@ -38,7 +38,7 @@ class DashboardLoadWorker(QThread):
             logger.debug(f"Dashboard-Load: von={self._von}, bis={self._bis}")
             summary = self._api.get_dashboard_summary(
                 von=self._von, bis=self._bis)
-            clearance = self._api.get_clearance_counts()
+            clearance = self._api.get_clearance_counts(von=self._von, bis=self._bis)
             self.finished.emit(summary, clearance)
         except Exception as e:
             self.error.emit(str(e))

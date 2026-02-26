@@ -548,7 +548,7 @@ class VerteilschluesselPanel(QWidget):
                 'teamleiter_id': tl_combo.currentData(),
                 'gueltig_ab': gueltig_ab.date().toString("yyyy-MM-dd"),
             }
-            self._save_worker = SaveEmployeeWorker(self._api, emp.id, data)
+            self._save_worker = SaveEmployeeWorker(self._backend, emp.id, data)
             self._save_worker.finished.connect(self._on_save_finished)
             self._save_worker.error.connect(self._on_save_error)
             self._save_worker.start()
@@ -658,7 +658,7 @@ class VerteilschluesselPanel(QWidget):
                 'description': desc_edit.text().strip() or None,
                 'gueltig_ab': gueltig_ab.date().toString("yyyy-MM-dd"),
             }
-            self._save_worker = SaveModelWorker(self._api, model.id, data)
+            self._save_worker = SaveModelWorker(self._backend, model.id, data)
             self._save_worker.finished.connect(self._on_save_finished)
             self._save_worker.error.connect(self._on_save_error)
             self._save_worker.start()

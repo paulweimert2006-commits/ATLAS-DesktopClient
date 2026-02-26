@@ -712,8 +712,7 @@ class ProvisionspositionenPanel(QWidget):
 
         berater_combo = QComboBox()
         berater_combo.addItem("\u2014", None)
-        if not self._employees_cache:
-            self._employees_cache = self._backend.get_employees()
+        self._employees_cache = self._backend.get_employees()
         for emp in self._employees_cache:
             if emp.is_active and emp.role in ('consulter', 'teamleiter'):
                 berater_combo.addItem(emp.name, emp.id)
