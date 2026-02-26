@@ -236,16 +236,8 @@ class ArchiveBoxesView(QWidget):
         return self._presenter
     
     def _load_smartscan_status(self):
-        """Laedt den SmartScan-Enabled-Status vom Server (fuer Kontextmenue-Sichtbarkeit)."""
-        try:
-            from api.smartscan import SmartScanAPI
-            smartscan_api = SmartScanAPI(self.api_client)
-            settings = smartscan_api.get_settings()
-            # enabled kann String "0"/"1" oder int 0/1 sein - immer ueber int() konvertieren
-            self._smartscan_enabled = bool(settings and int(settings.get('enabled', 0) or 0))
-        except Exception as e:
-            logger.warning(f"SmartScan-Status konnte nicht geladen werden: {e}")
-            self._smartscan_enabled = False
+        """Laedt den SmartScan-Enabled-Status ueber den Presenter."""
+        self._smartscan_enabled = self._presenter.load_smartscan_status()
     
     
     def _is_worker_running(self, attr_name: str) -> bool:
@@ -2908,13 +2900,10 @@ class ArchiveBoxesView(QWidget):
         if hasattr(self, '_processing_overlay'):
             self._processing_overlay.show_completion(batch_result, auto_close_seconds=10)
         
-        # Batch-Abschluss in DB loggen (ohne Kosten)
         history_entry_id = None
         if batch_result.total_documents > 0:
             try:
-                from services.document_processor import DocumentProcessor
-                processor = DocumentProcessor(self.api_client)
-                history_entry_id = processor.log_batch_complete(batch_result)
+                history_entry_id = self._presenter.log_batch_complete(batch_result)
             except Exception as e:
                 logger.warning(f"Batch-Logging fehlgeschlagen: {e}")
         
@@ -3037,14 +3026,7 @@ class ArchiveBoxesView(QWidget):
             self._toast_manager.show_warning(texts.PERM_DENIED_SMARTSCAN)
             return
         
-        # Einstellungen laden
-        try:
-            from api.smartscan import SmartScanAPI
-            smartscan_api = SmartScanAPI(self.api_client)
-            settings = smartscan_api.get_settings()
-        except Exception as e:
-            logger.error(f"SmartScan-Einstellungen konnten nicht geladen werden: {e}")
-            settings = {}
+        settings = self._presenter.get_smartscan_settings()
         
         if not settings or not int(settings.get('enabled', 0) or 0):
             self._toast_manager.show_info(texts.SMARTSCAN_DISABLED)

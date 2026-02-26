@@ -49,6 +49,8 @@ from usecases.archive.archive_document import ArchiveDocuments
 from usecases.archive.rename_document import RenameDocument
 from usecases.archive.delete_document import DeleteDocument
 from usecases.archive.set_document_color import SetDocumentColor
+from usecases.archive.exclude_from_processing import ExcludeFromProcessing
+from usecases.archive.include_for_processing import IncludeForProcessing
 
 from domain.archive import archive_rules
 from domain.archive.entities import (
@@ -88,6 +90,8 @@ class ArchivePresenter:
         self._uc_rename = RenameDocument(self._repo)
         self._uc_delete = DeleteDocument(self._repo)
         self._uc_color = SetDocumentColor(self._repo)
+        self._uc_exclude = ExcludeFromProcessing(self._repo)
+        self._uc_include = IncludeForProcessing(self._repo)
 
         # View-Referenz (wird spaeter per set_view gesetzt)
         self._view = None
@@ -142,6 +146,16 @@ class ArchivePresenter:
 
     def set_view(self, view) -> None:
         self._view = view
+
+    def get_smartscan_settings(self) -> dict:
+        """Laedt SmartScan-Einstellungen ueber den Adapter."""
+        return self._smartscan.get_settings()
+
+    def log_batch_complete(self, batch_result) -> 'Optional[int]':
+        """Loggt Batch-Verarbeitungsabschluss in der DB. Gibt History-Entry-ID zurueck."""
+        from services.document_processor import DocumentProcessor
+        processor = DocumentProcessor(self._api_client)
+        return processor.log_batch_complete(batch_result)
 
     # ═══════════════════════════════════════════════════════════
     # Worker Management
@@ -339,30 +353,12 @@ class ArchivePresenter:
         return self._uc_download.execute(doc, target_dir)
 
     def exclude_from_processing(self, documents: List[Document]) -> int:
-        """Schliesst Dokumente von der Verarbeitung aus. Gibt Anzahl zurueck."""
-        count = 0
-        eingang_docs = [d for d in documents if d.box_type == 'eingang']
-        if eingang_docs:
-            result = self._uc_move.execute(
-                eingang_docs, 'sonstige',
-                processing_status='manual_excluded',
-            )
-            count += result.moved_count
-
-        other_docs = [d for d in documents if d.box_type != 'eingang']
-        for doc in other_docs:
-            if self._repo.update(doc.id, processing_status='manual_excluded'):
-                count += 1
-
-        return count
+        """Schliesst Dokumente von der Verarbeitung aus via UseCase."""
+        return self._uc_exclude.execute(documents)
 
     def include_for_processing(self, documents: List[Document]) -> int:
-        """Gibt Dokumente fuer Verarbeitung frei. Gibt Anzahl zurueck."""
-        result = self._uc_move.execute(
-            documents, 'eingang',
-            processing_status='pending',
-        )
-        return result.moved_count
+        """Gibt Dokumente fuer Verarbeitung frei via UseCase."""
+        return self._uc_include.execute(documents)
 
     # ═══════════════════════════════════════════════════════════
     # Upload / Download
@@ -472,7 +468,7 @@ class ArchivePresenter:
         error_callback=None,
     ):
         """Startet KI-Benennung Worker."""
-        from ui.archive_view import AIRenameWorker
+        from infrastructure.threading.archive_workers import AIRenameWorker
         self._ai_rename_worker = AIRenameWorker(
             self._api_client, self._docs_api, documents,
         )

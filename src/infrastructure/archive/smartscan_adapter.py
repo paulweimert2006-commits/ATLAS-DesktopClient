@@ -29,6 +29,16 @@ class SmartScanAdapter:
             logger.warning(f"SmartScan-Status konnte nicht geladen werden: {e}")
             return False
 
+    def get_settings(self) -> dict:
+        """Laedt die SmartScan-Einstellungen vom Server."""
+        try:
+            from api.smartscan import SmartScanAPI
+            smartscan_api = SmartScanAPI(self._client)
+            return smartscan_api.get_settings() or {}
+        except Exception as e:
+            logger.error(f"SmartScan-Einstellungen konnten nicht geladen werden: {e}")
+            return {}
+
     def send_documents(
         self, doc_ids: List[int], *,
         mode: str = 'selected',
