@@ -61,9 +61,12 @@ def _is_allianz_relevant(courtage_rate: Optional[float]) -> bool:
 
 
 def _is_swisslife_relevant(buchungsart_raw: Optional[str]) -> bool:
-    """SwissLife: Buchungsart muss BARM oder APG sein."""
-    if not buchungsart_raw:
-        return True
+    """SwissLife: Buchungsart muss BARM oder APG sein.
+
+    Fehlende/leere Buchungsart = irrelevant (Gleichverhalten mit PHP-Backend).
+    """
+    if not buchungsart_raw or not buchungsart_raw.strip():
+        return False
     return buchungsart_raw.strip().upper() in SWISSLIFE_AP_ARTEN
 
 
