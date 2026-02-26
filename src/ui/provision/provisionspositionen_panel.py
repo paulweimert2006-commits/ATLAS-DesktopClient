@@ -88,7 +88,7 @@ class ProvisionspositionenPanel(QWidget):
 
     def show_loading(self, loading: bool) -> None:
         """View-Interface: Ladezustand."""
-        overlay = getattr(self, '_loading', None)
+        overlay = getattr(self, '_loading_overlay', None)
         if overlay:
             overlay.setVisible(loading)
 
