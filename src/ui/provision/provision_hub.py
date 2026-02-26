@@ -266,37 +266,31 @@ class ProvisionHub(QWidget):
         try:
             if index == self.PANEL_OVERVIEW:
                 from ui.provision.dashboard_panel import DashboardPanel
-                panel = DashboardPanel(self._provision_api)
-                if hasattr(panel, 'set_presenter'):
-                    panel.set_presenter(self._presenters['dashboard'])
+                panel = DashboardPanel()
+                panel.set_presenter(self._presenters['dashboard'])
             elif index == self.PANEL_IMPORT:
                 from ui.provision.abrechnungslaeufe_panel import AbrechnungslaeufPanel
-                panel = AbrechnungslaeufPanel(self._provision_api)
-                if hasattr(panel, 'set_presenter'):
-                    panel.set_presenter(self._presenters['import'])
+                panel = AbrechnungslaeufPanel()
+                panel.set_presenter(self._presenters['import'])
             elif index == self.PANEL_VU:
                 from ui.provision.provisionspositionen_panel import ProvisionspositionenPanel
-                panel = ProvisionspositionenPanel(self._provision_api)
-                if hasattr(panel, 'set_presenter'):
-                    panel.set_presenter(self._presenters['positions'])
+                panel = ProvisionspositionenPanel()
+                panel.set_presenter(self._presenters['positions'])
             elif index == self.PANEL_XEMPUS:
                 from ui.provision.xempus_insight_panel import XempusInsightPanel
                 panel = XempusInsightPanel(self._provision_api)
             elif index == self.PANEL_CLEARANCE:
                 from ui.provision.zuordnung_panel import ZuordnungPanel
-                panel = ZuordnungPanel(self._provision_api)
-                if hasattr(panel, 'set_presenter'):
-                    panel.set_presenter(self._presenters['clearance'])
+                panel = ZuordnungPanel()
+                panel.set_presenter(self._presenters['clearance'])
             elif index == self.PANEL_DISTRIBUTION:
                 from ui.provision.verteilschluessel_panel import VerteilschluesselPanel
-                panel = VerteilschluesselPanel(self._provision_api)
-                if hasattr(panel, 'set_presenter'):
-                    panel.set_presenter(self._presenters['distribution'])
+                panel = VerteilschluesselPanel()
+                panel.set_presenter(self._presenters['distribution'])
             elif index == self.PANEL_PAYOUTS:
                 from ui.provision.auszahlungen_panel import AuszahlungenPanel
-                panel = AuszahlungenPanel(self._provision_api)
-                if hasattr(panel, 'set_presenter'):
-                    panel.set_presenter(self._presenters['payouts'])
+                panel = AuszahlungenPanel()
+                panel.set_presenter(self._presenters['payouts'])
             elif index == self.PANEL_SETTINGS:
                 from ui.provision.settings_panel import SettingsPanel
                 panel = SettingsPanel(self._provision_api)

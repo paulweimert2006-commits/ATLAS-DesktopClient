@@ -14,9 +14,8 @@ from PySide6.QtCore import (
 )
 from typing import List, Dict, Optional
 
-from api.provision import (
-    ProvisionAPI, Commission, VermittlerMapping, Employee,
-)
+from api.provision import ProvisionAPI
+from domain.provision.entities import Commission, VermittlerMapping, Employee
 from ui.styles.tokens import (
     PRIMARY_500, PRIMARY_900, ACCENT_500,
     ERROR, FONT_SIZE_BODY, FONT_SIZE_CAPTION,
@@ -36,18 +35,51 @@ logger = logging.getLogger(__name__)
 
 
 class ZuordnungPanel(QWidget):
-    """Zuordnung & Klaerfaelle: Offene Positionen und Vermittler-Mappings."""
+    """Zuordnung & Klaerfaelle: Offene Positionen und Vermittler-Mappings.
+
+    Implementiert IClearanceView fuer den ClearancePresenter.
+    """
 
     navigate_to_panel = Signal(int)
 
-    def __init__(self, api: ProvisionAPI):
+    def __init__(self, api: ProvisionAPI = None):
         super().__init__()
         self._api = api
+        self._presenter = None
         self._worker = None
         self._toast_manager = None
         self._all_unmatched: list = []
         self._setup_ui()
-        QTimer.singleShot(100, self._load_data)
+        if api:
+            QTimer.singleShot(100, self._load_data)
+
+    def set_presenter(self, presenter) -> None:
+        """Verbindet dieses Panel mit dem ClearancePresenter."""
+        self._presenter = presenter
+        presenter.set_view(self)
+        self._presenter.load_clearance()
+
+    # ── IClearanceView ──
+
+    def show_commissions(self, commissions: list) -> None:
+        """View-Interface: Klaerfaelle anzeigen."""
+        self._all_unmatched = commissions
+        self._unmatched_model.set_data(commissions)
+        self._filter_clearance()
+
+    def show_mappings(self, mappings: list, unmapped: list = None) -> None:
+        """View-Interface: Vermittler-Mappings anzeigen."""
+        self._mappings_model.set_data(mappings)
+
+    def show_loading(self, loading: bool) -> None:
+        """View-Interface: Ladezustand."""
+        overlay = getattr(self, '_loading_overlay', None)
+        if overlay:
+            overlay.setVisible(loading)
+
+    def show_error(self, message: str) -> None:
+        """View-Interface: Fehler anzeigen."""
+        logger.error(f"Klaerfaelle-Fehler: {message}")
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -146,6 +178,11 @@ class ZuordnungPanel(QWidget):
         self._status.setText("")
         self._loading_overlay.setGeometry(self.rect())
         self._loading_overlay.setVisible(True)
+
+        if self._presenter:
+            self._presenter.load_clearance()
+            return
+
         if self._worker:
             if self._worker.isRunning():
                 return

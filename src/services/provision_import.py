@@ -374,6 +374,18 @@ def detect_vu_format(filepath: str) -> List[Tuple[str, float]]:
 
 from domain.provision.normalization import normalize_swisslife_vsnr  # noqa: F401, E402
 
+from domain.provision.vu_parser import (  # noqa: F401, E402 – Re-Export
+    compute_row_hash,
+    parse_amount,
+    parse_date,
+    col_index,
+    compute_file_hash as domain_compute_file_hash,
+)
+from domain.provision.relevance import (  # noqa: F401, E402 – Re-Export
+    is_commission_relevant,
+    classify_buchungsart,
+)
+
 
 # ═══════════════════════════════════════════════════════
 # XEMPUS-PARSER

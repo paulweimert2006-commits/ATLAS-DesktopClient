@@ -2329,3 +2329,8 @@ PROVISION_DETAIL_KONDITIONSSATZ = "Konditionssatz"
 PROVISION_DETAIL_COURTAGE_RATE = "Courtagesatz"
 PROVISION_DETAIL_IS_RELEVANT = "Relevant"
 PROVISION_DETAIL_SOURCE_ROW = "Quellzeile"
+
+PROVISION_RELEVANCE_TOGGLE = "Nur relevante"
+PROVISION_RELEVANCE_TOGGLE_TIP = "Irrelevante Datensaetze ausblenden (Allianz <20%, SwissLife ohne BARM/APG, VB dy/Kond.)"
+PROVISION_RELEVANCE_SHOWING_ALL = "Alle Datensaetze ({total})"
+PROVISION_RELEVANCE_SHOWING_RELEVANT = "Relevante: {relevant} von {total}"

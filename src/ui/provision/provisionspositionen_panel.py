@@ -8,7 +8,7 @@ Ersetzt: commissions_panel.py + contracts_panel.py
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTableView,
     QHeaderView, QSplitter, QFrame, QScrollArea, QMenu,
-    QComboBox, QLineEdit, QPushButton, QSizePolicy,
+    QComboBox, QLineEdit, QPushButton, QSizePolicy, QCheckBox,
     QDialog, QFormLayout, QDialogButtonBox, QDateEdit,
 )
 from PySide6.QtCore import (
@@ -19,7 +19,8 @@ from typing import List, Optional
 from datetime import datetime, date
 import calendar
 
-from api.provision import ProvisionAPI, Commission, Employee, ContractSearchResult
+from api.provision import ProvisionAPI
+from domain.provision.entities import Commission, Employee, ContractSearchResult, PaginationInfo
 from api.client import APIError
 from ui.styles.tokens import (
     PRIMARY_100, PRIMARY_500, PRIMARY_900, ACCENT_500,
@@ -46,13 +47,17 @@ logger = logging.getLogger(__name__)
 
 
 class ProvisionspositionenPanel(QWidget):
-    """Provisionspositionen mit FilterChips, Pill-Badges und Detail-Panel."""
+    """Provisionspositionen mit FilterChips, Pill-Badges und Detail-Panel.
+
+    Implementiert IPositionsView fuer den PositionsPresenter.
+    """
 
     navigate_to_panel = Signal(int)
 
-    def __init__(self, api: ProvisionAPI):
+    def __init__(self, api: ProvisionAPI = None):
         super().__init__()
         self._api = api
+        self._presenter = None
         self._worker = None
         self._all_data: List[Commission] = []
         self._filtered_data: List[Commission] = []
@@ -60,7 +65,40 @@ class ProvisionspositionenPanel(QWidget):
         self._current_detail_comm: Optional[Commission] = None
         self._employees_cache: List[Employee] = []
         self._setup_ui()
-        QTimer.singleShot(100, self._load_data)
+        if api:
+            QTimer.singleShot(100, self._load_data)
+
+    def set_presenter(self, presenter) -> None:
+        """Verbindet dieses Panel mit dem PositionsPresenter."""
+        self._presenter = presenter
+        presenter.set_view(self)
+
+    # ── IPositionsView ──
+
+    def show_commissions(self, commissions: List[Commission],
+                         pagination: Optional[PaginationInfo] = None) -> None:
+        """View-Interface: Provisionen anzeigen."""
+        self._all_data = commissions
+        self._update_chips()
+        self._apply_filter()
+
+    def show_loading(self, loading: bool) -> None:
+        """View-Interface: Ladezustand."""
+        overlay = getattr(self, '_loading', None)
+        if overlay:
+            overlay.setVisible(loading)
+
+    def show_error(self, message: str) -> None:
+        """View-Interface: Fehler anzeigen."""
+        logger.error(f"Positionen-Fehler: {message}")
+
+    def show_detail(self, commission: Commission) -> None:
+        """View-Interface: Detail-Panel aktualisieren."""
+        self._show_detail(commission)
+
+    def update_filter_counts(self, total: int, filtered: int) -> None:
+        """View-Interface: Filterzaehler aktualisieren."""
+        pass
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -137,6 +175,14 @@ class ProvisionspositionenPanel(QWidget):
         self._chips = FilterChipBar()
         self._chips.filter_changed.connect(self._apply_filter)
         filter_row.addWidget(self._chips)
+
+        self._relevance_cb = QCheckBox(texts.PROVISION_RELEVANCE_TOGGLE)
+        self._relevance_cb.setChecked(True)
+        self._relevance_cb.setToolTip(texts.PROVISION_RELEVANCE_TOGGLE_TIP)
+        self._relevance_cb.setStyleSheet(
+            f"color: {PRIMARY_500}; font-size: {FONT_SIZE_CAPTION}; font-family: {FONT_BODY};")
+        self._relevance_cb.stateChanged.connect(self._on_relevance_changed)
+        filter_row.addWidget(self._relevance_cb)
 
         self._search = QLineEdit()
         self._search.setPlaceholderText(texts.PROVISION_SEARCH)
@@ -380,10 +426,31 @@ class ProvisionspositionenPanel(QWidget):
     def _on_date_filter_changed(self, *args):
         self._load_data()
 
+    def _on_relevance_changed(self, state):
+        """Relevanz-Filter umgeschaltet: Daten neu laden."""
+        if self._presenter:
+            self._presenter.only_relevant = self._relevance_cb.isChecked()
+            self._presenter.refresh()
+        else:
+            self._load_data()
+
     def _load_data(self):
         self._status.setText("")
         self._loading_overlay.setGeometry(self.rect())
         self._loading_overlay.setVisible(True)
+
+        von, bis = self._get_date_range()
+        logger.debug(f"Positionen _load_data: von={von}, bis={bis}")
+
+        if self._presenter:
+            kwargs = dict(limit=5000)
+            if von:
+                kwargs['von'] = von
+            if bis:
+                kwargs['bis'] = bis
+            self._presenter.load_positions(**kwargs)
+            return
+
         if self._worker:
             if self._worker.isRunning():
                 return
@@ -392,8 +459,6 @@ class ProvisionspositionenPanel(QWidget):
                 self._worker.error.disconnect()
             except RuntimeError:
                 pass
-        von, bis = self._get_date_range()
-        logger.debug(f"Positionen _load_data: von={von}, bis={bis}")
         kwargs = dict(limit=5000)
         if von:
             kwargs['von'] = von
