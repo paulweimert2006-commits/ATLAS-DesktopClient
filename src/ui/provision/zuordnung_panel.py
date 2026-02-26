@@ -55,8 +55,6 @@ class ZuordnungPanel(QWidget):
     def _backend(self):
         """Presenter bevorzugen, API als Fallback."""
         return self._presenter or self._api
-        if api:
-            QTimer.singleShot(100, self._load_data)
 
     def set_presenter(self, presenter) -> None:
         """Verbindet dieses Panel mit dem ClearancePresenter."""

@@ -54,15 +54,15 @@ class AuszahlungenPanel(QWidget):
         super().__init__()
         self._api = api
         self._presenter = None
-
-    @property
-    def _backend(self):
-        return self._presenter or self._api
         self._worker = None
         self._toast_manager = None
         self._setup_ui()
         if api:
             QTimer.singleShot(100, self._load_data)
+
+    @property
+    def _backend(self):
+        return self._presenter or self._api
 
     def set_presenter(self, presenter) -> None:
         """Verbindet dieses Panel mit dem PayoutsPresenter."""
