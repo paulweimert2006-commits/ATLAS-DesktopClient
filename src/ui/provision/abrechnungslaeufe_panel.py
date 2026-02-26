@@ -77,8 +77,8 @@ class AbrechnungslaeufPanel(QWidget):
 
     def show_parse_progress(self, message: str) -> None:
         """View-Interface: Parse-Fortschritt anzeigen."""
-        if hasattr(self, '_log_output'):
-            self._log_output.append(message)
+        if hasattr(self, '_log'):
+            self._log.append(message)
 
     def show_loading(self, loading: bool) -> None:
         """View-Interface: Ladezustand."""
@@ -280,14 +280,24 @@ class AbrechnungslaeufPanel(QWidget):
             return
         self._import_btn.setEnabled(False)
         self._progress.setVisible(True)
-        self._import_worker = VuImportWorker(
-            self._api, self._parsed_rows, os.path.basename(self._selected_path),
-            self._parsed_sheet, self._parsed_vu, self._parsed_hash,
-        )
-        self._import_worker.progress.connect(lambda msg: self._log.append(msg))
-        self._import_worker.finished.connect(self._on_import_done)
-        self._import_worker.error.connect(self._on_import_error)
-        self._import_worker.start()
+
+        if self._presenter:
+            self._presenter.start_import(
+                rows=self._parsed_rows,
+                filename=os.path.basename(self._selected_path),
+                sheet_name=self._parsed_sheet,
+                vu_name=self._parsed_vu,
+                file_hash=self._parsed_hash,
+            )
+        elif self._api:
+            self._import_worker = VuImportWorker(
+                self._api, self._parsed_rows, os.path.basename(self._selected_path),
+                self._parsed_sheet, self._parsed_vu, self._parsed_hash,
+            )
+            self._import_worker.progress.connect(lambda msg: self._log.append(msg))
+            self._import_worker.finished.connect(self._on_import_done)
+            self._import_worker.error.connect(self._on_import_error)
+            self._import_worker.start()
 
     def _on_import_done(self, result: Optional[ImportResult]):
         self._progress.setVisible(False)
