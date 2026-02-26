@@ -1,4 +1,4 @@
-ACENCIA GmbH - Proprietary Software License
+ATLAS - Proprietary Software License
 
 Copyright (c) 2026 ACENCIA GmbH
 All rights reserved.
@@ -40,4 +40,4 @@ term of this license.
 For licensing inquiries, contact:
 ACENCIA GmbH
 Email: info@acencia.info
-Website: https://acencia.info
+
