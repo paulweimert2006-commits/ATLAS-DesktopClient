@@ -46,7 +46,8 @@ class DashboardPresenter:
         if self._view:
             self._view.show_loading(False)
             self._view.show_summary(summary)
-            self._view.show_clearance_counts(clearance)
+            if summary:
+                self._view.show_clearance_counts(clearance)
 
     def _on_load_error(self, error: str) -> None:
         logger.error(f"Dashboard-Fehler: {error}")

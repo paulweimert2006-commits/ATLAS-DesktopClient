@@ -215,6 +215,10 @@ class Commission:
     def source_label(self) -> str:
         if self.import_source_type == 'xempus':
             return "Xempus"
+        if self.import_source_type == 'vu_liste':
+            name = self.import_sheet_name or self.import_vu_name
+            if name:
+                return f"VU-Liste {name}"
         if self.import_sheet_name:
             return self.import_sheet_name
         if self.import_vu_name:

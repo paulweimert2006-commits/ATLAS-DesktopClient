@@ -109,6 +109,9 @@ class VuParseFileWorker(QThread):
                 all_rows = []
                 vu_names = []
                 for pr in results:
+                    for row in pr.rows:
+                        row['_vu_name'] = pr.vu_name
+                        row['_sheet_name'] = pr.sheet_name
                     all_rows.extend(pr.rows)
                     if pr.rows:
                         vu_names.append(pr.vu_name)
@@ -153,34 +156,47 @@ class VuImportWorker(QThread):
     def run(self):
         try:
             from domain.provision.entities import ImportResult
-            chunk_size = 2000
-            total = len(self._rows)
-            chunks = [self._rows[i:i+chunk_size] for i in range(0, total, chunk_size)]
+            from collections import defaultdict
+
+            vu_groups = defaultdict(list)
+            for row in self._rows:
+                vu = row.pop('_vu_name', self._vu_name)
+                sheet = row.pop('_sheet_name', self._sheet_name)
+                vu_groups[(vu, sheet)].append(row)
+
             accumulated = ImportResult()
-            for idx, chunk in enumerate(chunks):
-                self.progress.emit(
-                    texts.PROVISION_IMPORT_PROGRESS_CHUNK.format(
-                        sheet=self._sheet_name or self._filename,
-                        current=idx + 1,
-                        total=len(chunks),
+            chunk_size = 2000
+
+            for (vu_name, sheet_name), vu_rows in vu_groups.items():
+                chunks = [vu_rows[i:i+chunk_size] for i in range(0, len(vu_rows), chunk_size)]
+                for idx, chunk in enumerate(chunks):
+                    self.progress.emit(
+                        texts.PROVISION_IMPORT_PROGRESS_CHUNK.format(
+                            sheet=sheet_name or vu_name or self._filename,
+                            current=idx + 1,
+                            total=len(chunks),
+                        )
                     )
-                )
-                result = self._api.import_vu_liste(
-                    rows=chunk,
-                    filename=self._filename,
-                    sheet_name=self._sheet_name,
-                    vu_name=self._vu_name,
-                    file_hash=self._file_hash,
-                    skip_match=(idx < len(chunks) - 1),
-                )
-                if result:
-                    accumulated.imported += result.imported
-                    accumulated.updated += result.updated
-                    accumulated.skipped += result.skipped
-                    accumulated.errors += result.errors
-                    accumulated.batch_id = result.batch_id
-                    if result.matching:
-                        accumulated.matching = result.matching
+                    is_last_chunk_of_last_vu = (
+                        (vu_name, sheet_name) == list(vu_groups.keys())[-1]
+                        and idx == len(chunks) - 1
+                    )
+                    result = self._api.import_vu_liste(
+                        rows=chunk,
+                        filename=self._filename,
+                        sheet_name=sheet_name or vu_name,
+                        vu_name=vu_name,
+                        file_hash=self._file_hash,
+                        skip_match=not is_last_chunk_of_last_vu,
+                    )
+                    if result:
+                        accumulated.imported += result.imported
+                        accumulated.updated += result.updated
+                        accumulated.skipped += result.skipped
+                        accumulated.errors += result.errors
+                        accumulated.batch_id = result.batch_id
+                        if result.matching:
+                            accumulated.matching = result.matching
             self.finished.emit(accumulated)
         except Exception as e:
             self.error.emit(str(e))
