@@ -62,6 +62,18 @@ class PayoutsPresenter:
         if self._view and hasattr(self._view, 'show_berater_positionen'):
             self._view.show_berater_positionen(berater_id, commissions)
 
+    def get_abrechnungen(self, monat: str):
+        return self._repo.get_abrechnungen(monat)
+
+    def get_commissions(self, **kwargs):
+        return self._repo.get_commissions(**kwargs)
+
+    def generate_abrechnung(self, monat: str):
+        return self._repo.generate_abrechnung(monat)
+
+    def update_abrechnung_status(self, abrechnung_id: int, status: str):
+        return self._repo.update_abrechnung_status(abrechnung_id, status)
+
     def refresh(self) -> None:
         pass
 

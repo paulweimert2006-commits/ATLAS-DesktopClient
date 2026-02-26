@@ -58,6 +58,10 @@ class ProvisionspositionenPanel(QWidget):
         super().__init__()
         self._api = api
         self._presenter = None
+
+    @property
+    def _backend(self):
+        return self._presenter or self._api
         self._worker = None
         self._all_data: List[Commission] = []
         self._filtered_data: List[Commission] = []
@@ -464,7 +468,7 @@ class ProvisionspositionenPanel(QWidget):
             kwargs['von'] = von
         if bis:
             kwargs['bis'] = bis
-        self._worker = PositionsLoadWorker(self._api, **kwargs)
+        self._worker = PositionsLoadWorker(self._backend, **kwargs)
         self._worker.finished.connect(self._on_loaded)
         self._worker.error.connect(self._on_error)
         self._worker.start()
@@ -604,7 +608,7 @@ class ProvisionspositionenPanel(QWidget):
     def _load_audit(self, comm: Commission):
         if hasattr(self, '_audit_worker') and self._audit_worker and self._audit_worker.isRunning():
             return
-        self._audit_worker = AuditLoadWorker(self._api, comm.id)
+        self._audit_worker = AuditLoadWorker(self._backend, comm.id)
         self._audit_worker.finished.connect(self._on_audit_loaded)
         self._audit_worker.error.connect(lambda msg: self._activity_feed.set_items([]))
         self._audit_worker.start()
@@ -636,7 +640,7 @@ class ProvisionspositionenPanel(QWidget):
     def _ignore_commission(self, comm: Commission):
         if hasattr(self, '_ignore_worker') and self._ignore_worker and self._ignore_worker.isRunning():
             return
-        self._ignore_worker = IgnoreWorker(self._api, comm.id)
+        self._ignore_worker = IgnoreWorker(self._backend, comm.id)
         self._ignore_worker.finished.connect(self._on_ignore_finished)
         self._ignore_worker.error.connect(lambda msg: logger.warning(f"Ignore fehlgeschlagen: {msg}"))
         self._ignore_worker.start()
@@ -657,7 +661,7 @@ class ProvisionspositionenPanel(QWidget):
 
     def _manual_match(self, comm: Commission):
         # MatchContractDialog importiert ueber dialogs.py (top-level)
-        dlg = MatchContractDialog(self._api, comm, parent=self)
+        dlg = MatchContractDialog(self._backend, comm, parent=self)
         if dlg.exec() == QDialog.Accepted:
             if self._toast_manager:
                 self._toast_manager.show_success(texts.PROVISION_TOAST_ASSIGN_SUCCESS)
@@ -691,7 +695,7 @@ class ProvisionspositionenPanel(QWidget):
         berater_combo = QComboBox()
         berater_combo.addItem("\u2014", None)
         if not self._employees_cache:
-            self._employees_cache = self._api.get_employees()
+            self._employees_cache = self._backend.get_employees()
         for emp in self._employees_cache:
             if emp.is_active and emp.role in ('consulter', 'teamleiter'):
                 berater_combo.addItem(emp.name, emp.id)
@@ -710,7 +714,7 @@ class ProvisionspositionenPanel(QWidget):
     def _start_mapping_worker(self, name: str, berater_id: int):
         if hasattr(self, '_mapping_worker') and self._mapping_worker and self._mapping_worker.isRunning():
             return
-        self._mapping_worker = MappingCreateWorker(self._api, name, berater_id)
+        self._mapping_worker = MappingCreateWorker(self._backend, name, berater_id)
         self._mapping_worker.finished.connect(self._on_mapping_finished)
         self._mapping_worker.error.connect(lambda msg: logger.warning(f"Mapping fehlgeschlagen: {msg}"))
         self._mapping_worker.start()

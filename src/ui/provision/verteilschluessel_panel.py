@@ -51,6 +51,10 @@ class VerteilschluesselPanel(QWidget):
         super().__init__()
         self._api = api
         self._presenter = None
+
+    @property
+    def _backend(self):
+        return self._presenter or self._api
         self._worker = None
         self._save_worker = None
         self._models: List[CommissionModel] = []
@@ -306,7 +310,7 @@ class VerteilschluesselPanel(QWidget):
         if dlg.exec() == QDialog.Accepted:
             name = name_edit.text().strip()
             if name:
-                self._api.create_model({
+                self._backend.create_model({
                     'name': name,
                     'commission_rate': rate_spin.value(),
                     'tl_rate': tl_rate_spin.value() if tl_rate_spin.value() > 0 else None,
@@ -406,7 +410,7 @@ class VerteilschluesselPanel(QWidget):
                     'tl_override_basis': tl_basis_combo.currentData(),
                     'teamleiter_id': tl_combo.currentData(),
                 }
-                self._api.create_employee(data)
+                self._backend.create_employee(data)
                 if self._toast_manager:
                     self._toast_manager.show_success(texts.PROVISION_TOAST_SAVED)
                 self._load_data()
@@ -551,7 +555,7 @@ class VerteilschluesselPanel(QWidget):
 
     def _deactivate_employee(self, emp: Employee):
         try:
-            self._api.delete_employee(emp.id, hard=False)
+            self._backend.delete_employee(emp.id, hard=False)
             if self._toast_manager:
                 self._toast_manager.show_success(texts.PROVISION_TOAST_DEACTIVATED)
             self._load_data()
@@ -560,7 +564,7 @@ class VerteilschluesselPanel(QWidget):
 
     def _activate_employee(self, emp: Employee):
         try:
-            success, _ = self._api.update_employee(emp.id, {'is_active': True})
+            success, _ = self._backend.update_employee(emp.id, {'is_active': True})
             if success and self._toast_manager:
                 self._toast_manager.show_success(texts.PROVISION_TOAST_ACTIVATED)
             self._load_data()
@@ -578,7 +582,7 @@ class VerteilschluesselPanel(QWidget):
         if answer != QMessageBox.Yes:
             return
         try:
-            self._api.delete_employee(emp.id, hard=True)
+            self._backend.delete_employee(emp.id, hard=True)
             if self._toast_manager:
                 self._toast_manager.show_success(texts.PROVISION_TOAST_DELETED)
             self._load_data()
@@ -680,7 +684,7 @@ class VerteilschluesselPanel(QWidget):
             self._toast_manager.show_error(error_msg)
 
     def _deactivate_model(self, model: CommissionModel):
-        if self._api.delete_model(model.id):
+        if self._backend.delete_model(model.id):
             if self._toast_manager:
                 self._toast_manager.show_success(texts.PROVISION_TOAST_DEACTIVATED)
             self._load_data()

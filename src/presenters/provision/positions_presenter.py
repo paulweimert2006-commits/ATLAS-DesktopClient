@@ -98,6 +98,28 @@ class PositionsPresenter:
         if success:
             self.refresh()
 
+    def get_commissions(self, **kwargs):
+        return self._repo.get_commissions(**kwargs)
+
+    def get_employees(self):
+        return self._repo.get_employees()
+
+    def create_mapping(self, name: str, berater_id: int):
+        return self._repo.create_mapping(name, berater_id)
+
+    def trigger_auto_match(self, batch_id: int = None):
+        return self._repo.trigger_auto_match(batch_id)
+
+    def get_audit_log(self, **kwargs):
+        return self._repo.get_audit_log(**kwargs)
+
+    def get_match_suggestions(self, commission_id: int, **kwargs):
+        return self._repo.get_match_suggestions(commission_id, **kwargs)
+
+    def assign_contract(self, commission_id: int, contract_id: int,
+                        force_override: bool = False):
+        return self._repo.assign_contract(commission_id, contract_id, force_override)
+
     def refresh(self) -> None:
         """Aktuelle Ansicht neu laden."""
         self.load_positions(**self._current_filters)

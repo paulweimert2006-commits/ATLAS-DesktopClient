@@ -81,6 +81,38 @@ class ClearancePresenter:
         if self._view and hasattr(self._view, 'show_match_suggestions'):
             self._view.show_match_suggestions(suggestions, commission)
 
+    def trigger_auto_match(self, batch_id: int = None):
+        return self._repo.trigger_auto_match(batch_id)
+
+    def get_commissions(self, **kwargs):
+        return self._repo.get_commissions(**kwargs)
+
+    def get_mappings(self, **kwargs):
+        return self._repo.get_mappings(**kwargs)
+
+    def get_employees(self):
+        return self._repo.get_employees()
+
+    def create_mapping(self, name: str, berater_id: int):
+        return self._repo.create_mapping(name, berater_id)
+
+    def delete_mapping(self, mapping_id: int) -> bool:
+        return self._repo.delete_mapping(mapping_id)
+
+    def match_commission(self, commission_id: int, contract_id: int,
+                         berater_id: int = None) -> bool:
+        return self._repo.match_commission(commission_id, contract_id, berater_id)
+
+    def ignore_commission(self, commission_id: int) -> bool:
+        return self._repo.ignore_commission(commission_id)
+
+    def get_match_suggestions(self, commission_id: int, **kwargs):
+        return self._repo.get_match_suggestions(commission_id, **kwargs)
+
+    def assign_contract(self, commission_id: int, contract_id: int,
+                        force_override: bool = False):
+        return self._repo.assign_contract(commission_id, contract_id, force_override)
+
     def refresh(self) -> None:
         self.load_clearance()
 

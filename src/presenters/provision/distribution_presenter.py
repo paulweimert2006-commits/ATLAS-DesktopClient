@@ -79,6 +79,21 @@ class DistributionPresenter:
         if self._view and hasattr(self._view, 'on_model_saved'):
             self._view.on_model_saved(success, summary)
 
+    def create_model(self, data: dict):
+        return self._repo.create_model(data)
+
+    def delete_model(self, model_id: int) -> bool:
+        return self._repo.delete_model(model_id)
+
+    def create_employee(self, data: dict):
+        return self._repo.create_employee(data)
+
+    def update_employee(self, emp_id: int, data: dict):
+        return self._repo.update_employee(emp_id, data)
+
+    def delete_employee(self, emp_id: int, hard: bool = False):
+        return self._repo.delete_employee(emp_id, hard=hard)
+
     def refresh(self) -> None:
         self.load_data()
 

@@ -50,6 +50,11 @@ class ZuordnungPanel(QWidget):
         self._toast_manager = None
         self._all_unmatched: list = []
         self._setup_ui()
+
+    @property
+    def _backend(self):
+        """Presenter bevorzugen, API als Fallback."""
+        return self._presenter or self._api
         if api:
             QTimer.singleShot(100, self._load_data)
 
@@ -191,7 +196,7 @@ class ZuordnungPanel(QWidget):
                 self._worker.error.disconnect()
             except RuntimeError:
                 pass
-        self._worker = ClearanceLoadWorker(self._api)
+        self._worker = ClearanceLoadWorker(self._backend)
         self._worker.finished.connect(self._on_loaded)
         self._worker.error.connect(self._on_error)
         self._worker.start()
@@ -234,7 +239,7 @@ class ZuordnungPanel(QWidget):
                                             if c.match_status in ('auto_matched', 'manual_matched') and not c.berater_id])
 
     def _trigger_auto_match(self):
-        stats = self._api.trigger_auto_match()
+        stats = self._backend.trigger_auto_match()
         if stats:
             matched = stats.get('matched', 0)
             still_open = stats.get('still_unmatched', 0)
@@ -255,7 +260,7 @@ class ZuordnungPanel(QWidget):
         form.addRow(texts.PROVISION_MAP_DLG_NAME, name_edit)
 
         berater_combo = QComboBox()
-        employees = self._api.get_employees()
+        employees = self._backend.get_employees()
         for emp in employees:
             if emp.is_active:
                 berater_combo.addItem(emp.name, emp.id)
@@ -270,7 +275,7 @@ class ZuordnungPanel(QWidget):
             name = name_edit.text().strip()
             berater_id = berater_combo.currentData()
             if name and berater_id:
-                self._api.create_mapping(name, berater_id)
+                self._backend.create_mapping(name, berater_id)
                 if self._toast_manager:
                     self._toast_manager.show_success(texts.PROVISION_TOAST_SAVED)
                 self._load_data()
@@ -298,7 +303,7 @@ class ZuordnungPanel(QWidget):
         form.addRow(texts.PROVISION_MAP_DLG_NAME, name_lbl)
 
         berater_combo = QComboBox()
-        employees = self._api.get_employees()
+        employees = self._backend.get_employees()
         for emp in employees:
             if emp.is_active:
                 berater_combo.addItem(emp.name, emp.id)
@@ -314,14 +319,14 @@ class ZuordnungPanel(QWidget):
         if dlg.exec() == QDialog.Accepted:
             new_berater_id = berater_combo.currentData()
             if new_berater_id and new_berater_id != mapping.berater_id:
-                self._api.delete_mapping(mapping.id)
-                self._api.create_mapping(mapping.vermittler_name, new_berater_id)
+                self._backend.delete_mapping(mapping.id)
+                self._backend.create_mapping(mapping.vermittler_name, new_berater_id)
                 if self._toast_manager:
                     self._toast_manager.show_success(texts.PROVISION_TOAST_SAVED)
                 self._load_data()
 
     def _delete_mapping(self, mapping: VermittlerMapping):
-        if self._api.delete_mapping(mapping.id):
+        if self._backend.delete_mapping(mapping.id):
             if self._toast_manager:
                 self._toast_manager.show_success(texts.PROVISION_TOAST_DELETED)
             self._load_data()
@@ -357,7 +362,7 @@ class ZuordnungPanel(QWidget):
 
     def _open_match_dialog(self, comm: Commission):
         """Oeffnet den MatchContractDialog fuer manuelle Vertragszuordnung."""
-        dlg = MatchContractDialog(self._api, comm, parent=self)
+        dlg = MatchContractDialog(self._backend, comm, parent=self)
         if dlg.exec() == QDialog.Accepted:
             if self._toast_manager:
                 self._toast_manager.show_success(texts.PROVISION_TOAST_ASSIGN_SUCCESS)
@@ -389,7 +394,7 @@ class ZuordnungPanel(QWidget):
 
         berater_combo = QComboBox()
         berater_combo.addItem("\u2014", None)
-        employees = self._api.get_employees()
+        employees = self._backend.get_employees()
         for emp in employees:
             if emp.is_active and emp.role in ('consulter', 'teamleiter'):
                 berater_combo.addItem(emp.name, emp.id)
@@ -413,7 +418,7 @@ class ZuordnungPanel(QWidget):
                 if also_vu_cb and also_vu_cb.isChecked() and vu_name != primary_name:
                     also_name = vu_name
                 self._mapping_worker = MappingSyncWorker(
-                    self._api, primary_name, berater_id, also_name)
+                    self._backend, primary_name, berater_id, also_name)
                 self._mapping_worker.finished.connect(self._on_mapping_sync_done)
                 self._mapping_worker.error.connect(self._on_mapping_sync_error)
                 self._loading_overlay.setVisible(True)

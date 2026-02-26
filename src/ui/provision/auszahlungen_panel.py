@@ -54,6 +54,10 @@ class AuszahlungenPanel(QWidget):
         super().__init__()
         self._api = api
         self._presenter = None
+
+    @property
+    def _backend(self):
+        return self._presenter or self._api
         self._worker = None
         self._toast_manager = None
         self._setup_ui()
@@ -280,7 +284,7 @@ class AuszahlungenPanel(QWidget):
 
         if self._worker and self._worker.isRunning():
             return
-        self._worker = AuszahlungenLoadWorker(self._api, monat)
+        self._worker = AuszahlungenLoadWorker(self._backend, monat)
         self._worker.finished.connect(self._on_loaded)
         self._worker.error.connect(self._on_error)
         self._worker.start()
@@ -365,7 +369,7 @@ class AuszahlungenPanel(QWidget):
 
         if hasattr(self, '_pos_worker') and self._pos_worker and self._pos_worker.isRunning():
             return
-        self._pos_worker = AuszahlungenPositionenWorker(self._api, item.berater_id, von, bis)
+        self._pos_worker = AuszahlungenPositionenWorker(self._backend, item.berater_id, von, bis)
         self._pos_worker.finished.connect(self._on_positions_loaded)
         self._pos_worker.error.connect(lambda msg: logger.warning(f"Positionen-Laden fehlgeschlagen: {msg}"))
         self._pos_worker.start()
@@ -417,14 +421,14 @@ class AuszahlungenPanel(QWidget):
             texts.PROVISION_PAY_CONFIRM.format(monat=monat),
         )
         if result == QMessageBox.Yes:
-            resp = self._api.generate_abrechnung(monat)
+            resp = self._backend.generate_abrechnung(monat)
             if resp:
                 if self._toast_manager:
                     self._toast_manager.show_success(texts.PROVISION_TOAST_GENERATE_DONE.format(monat=monat))
                 self._load_data()
 
     def _change_status(self, abrechnung_id: int, status: str):
-        if self._api.update_abrechnung_status(abrechnung_id, status):
+        if self._backend.update_abrechnung_status(abrechnung_id, status):
             if self._toast_manager:
                 label = STATUS_LABELS.get(status, status)
                 self._toast_manager.show_success(texts.PROVISION_TOAST_STATUS_CHANGED.format(status=label))
