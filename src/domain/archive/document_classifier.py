@@ -7,11 +7,11 @@ kein File-I/O, kein Threading, kein PySide6.
 
 from __future__ import annotations
 
+import os
 import re
 from typing import Optional, Tuple
 
 from config.processing_rules import (
-    BIPRO_COURTAGE_CODES,
     PROCESSING_RULES,
     is_bipro_courtage_code,
     is_bipro_gdv_code,
@@ -56,9 +56,7 @@ def rename_with_extension(filename: str, new_name: str) -> str:
     Returns:
         Neuer Dateiname mit ersetzter Endung
     """
-    base_name = filename
-    if '.' in base_name:
-        base_name = base_name.rsplit('.', 1)[0]
+    base_name, _ = os.path.splitext(filename)
     return base_name + new_name
 
 

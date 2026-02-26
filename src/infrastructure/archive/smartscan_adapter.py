@@ -53,6 +53,9 @@ class SmartScanAdapter:
             result = smartscan_api.send(
                 mode=mode,
                 document_ids=doc_ids,
+                archive_after_send=archive_after if archive_after else None,
+                recolor_after_send=recolor if recolor else None,
+                recolor_color=recolor_color,
             )
             job_id = result.get('job_id') if result else None
             return job_id, result

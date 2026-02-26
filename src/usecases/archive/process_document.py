@@ -13,10 +13,15 @@ DocumentProcessor vollstaendig aufgeloest ist, uebernimmt dieser UseCase
 die direkte Orchestrierung.
 """
 
+from __future__ import annotations
+
 import logging
-from typing import Optional, Callable
+from typing import Optional, Callable, TYPE_CHECKING
 
 from api.client import APIClient
+
+if TYPE_CHECKING:
+    from services.document_processor import BatchProcessingResult, ProcessingResult
 
 logger = logging.getLogger(__name__)
 
@@ -53,12 +58,8 @@ class ProcessDocument:
         self, *,
         progress_callback: Optional[Callable[[int, int, str], None]] = None,
         max_workers: int = 8,
-    ):
-        """Verarbeitet alle Dokumente in der Eingangsbox.
-
-        Returns:
-            BatchProcessingResult mit allen Ergebnissen und Kosten.
-        """
+    ) -> BatchProcessingResult:
+        """Verarbeitet alle Dokumente in der Eingangsbox."""
         from services.document_processor import DocumentProcessor
         processor = DocumentProcessor(self._api_client)
         return processor.process_inbox(
@@ -66,12 +67,8 @@ class ProcessDocument:
             max_workers=max_workers,
         )
 
-    def execute_single(self, doc_id: int):
-        """Verarbeitet ein einzelnes Dokument (fuer Re-Processing).
-
-        Returns:
-            ProcessingResult aus services.document_processor.
-        """
+    def execute_single(self, doc_id: int) -> ProcessingResult:
+        """Verarbeitet ein einzelnes Dokument (fuer Re-Processing)."""
         from services.document_processor import DocumentProcessor
         processor = DocumentProcessor(self._api_client)
         return processor.process_single_document(doc_id)

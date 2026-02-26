@@ -6,13 +6,14 @@ Domain und UseCases haengen nur von diesen Interfaces ab,
 nie von konkreten Implementierungen.
 """
 
-from typing import Protocol, Optional, List, Dict, Tuple, Any, runtime_checkable
+from __future__ import annotations
 
-from .entities import (
-    Document, BoxStats, SearchResult,
-    MoveResult, ColorResult, ArchiveResult,
-    RenameResult, DeleteResult, DuplicateInfo,
-)
+from typing import Protocol, Optional, List, Dict, Tuple, Any, runtime_checkable, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from services.zip_handler import ZipExtractResult
+
+from .entities import Document, BoxStats, SearchResult, DuplicateInfo
 
 
 # ═══════════════════════════════════════════════════════════
@@ -35,9 +36,6 @@ class IDocumentRepository(Protocol):
     def search_documents(
         self, query: str, *,
         limit: int = 200,
-        box_type: Optional[str] = None,
-        search_content: bool = True,
-        search_filename: bool = True,
         include_raw: bool = False,
         substring: bool = False,
     ) -> List[SearchResult]: ...
@@ -47,6 +45,7 @@ class IDocumentRepository(Protocol):
     def upload(
         self, file_path: str, *,
         source_type: str = 'manual_upload',
+        box_type: Optional[str] = None,
     ) -> Optional[Document]: ...
 
     def download(
@@ -121,7 +120,7 @@ class IZipExtractor(Protocol):
     def extract_zip_contents(
         self, zip_path: str, *,
         temp_dir: Optional[str] = None,
-    ) -> 'ZipExtractResult': ...
+    ) -> ZipExtractResult: ...
 
 
 @runtime_checkable
@@ -132,7 +131,7 @@ class ISmartScanAdapter(Protocol):
 
     def send_documents(
         self, doc_ids: List[int], *,
-        mode: str = 'scan',
+        mode: str = 'selected',
         archive_after: bool = False,
         recolor: bool = False,
         recolor_color: Optional[str] = None,

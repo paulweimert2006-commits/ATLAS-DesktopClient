@@ -2,8 +2,10 @@
 UseCase: Dokument hochladen.
 """
 
+import os
+
 from domain.archive.interfaces import IDocumentRepository
-from domain.archive.entities import Document, UploadResult
+from domain.archive.entities import UploadResult
 
 
 class UploadDocument:
@@ -15,8 +17,9 @@ class UploadDocument:
     def execute(
         self, file_path: str, *,
         source_type: str = 'manual_upload',
+        box_type: str = None,
     ) -> UploadResult:
-        doc = self._repo.upload(file_path, source_type=source_type)
+        doc = self._repo.upload(file_path, source_type=source_type, box_type=box_type)
         if doc:
             return UploadResult(
                 success=True,
@@ -27,6 +30,6 @@ class UploadDocument:
         from i18n.de import WORKER_UPLOAD_FAILED
         return UploadResult(
             success=False,
-            filename=file_path.rsplit('/', 1)[-1] if '/' in file_path else file_path.rsplit('\\', 1)[-1],
+            filename=os.path.basename(file_path),
             error=WORKER_UPLOAD_FAILED,
         )

@@ -6,14 +6,19 @@ Alle Worker-Starts, API-Orchestrierung und Business-Logik-Aufrufe
 laufen ueber diesen Presenter.
 """
 
+from __future__ import annotations
+
 import logging
-from typing import Optional, List, Dict, Tuple
-from datetime import datetime
+from typing import Optional, List, TYPE_CHECKING
 
 from PySide6.QtCore import QThread
 
+if TYPE_CHECKING:
+    from domain.archive.interfaces import IArchiveView
+    from infrastructure.threading.archive_workers import AIRenameWorker
+
 from api.client import APIClient
-from api.documents import DocumentsAPI, Document, BoxStats, BOX_TYPES
+from api.documents import DocumentsAPI, Document
 
 from infrastructure.archive.document_repository import DocumentRepository
 from infrastructure.archive.smartscan_adapter import SmartScanAdapter
@@ -54,8 +59,8 @@ from usecases.archive.include_for_processing import IncludeForProcessing
 
 from domain.archive import archive_rules
 from domain.archive.entities import (
-    MoveResult, ColorResult, ArchiveResult,
-    RenameResult, DeleteResult, DownloadResult,
+    ArchiveResult, RenameResult, DeleteResult, DownloadResult,
+    ProcessingToggleResult,
 )
 
 logger = logging.getLogger(__name__)
@@ -94,7 +99,7 @@ class ArchivePresenter:
         self._uc_include = IncludeForProcessing(self._repo)
 
         # View-Referenz (wird spaeter per set_view gesetzt)
-        self._view = None
+        self._view: Optional[IArchiveView] = None
 
         # Worker-Referenzen
         self._load_worker: Optional[CacheDocumentLoadWorker] = None
@@ -108,7 +113,7 @@ class ArchivePresenter:
         self._upload_worker: Optional[MultiUploadWorker] = None
         self._download_worker: Optional[MultiDownloadWorker] = None
         self._preview_worker: Optional[PreviewDownloadWorker] = None
-        self._ai_rename_worker = None
+        self._ai_rename_worker: Optional[AIRenameWorker] = None
         self._smartscan_worker: Optional[SmartScanWorker] = None
         self._delayed_cost_worker: Optional[DelayedCostWorker] = None
         self._box_download_worker: Optional[BoxDownloadWorker] = None
@@ -144,7 +149,7 @@ class ArchivePresenter:
             return self._auth_api.current_user.is_admin
         return False
 
-    def set_view(self, view) -> None:
+    def set_view(self, view: 'IArchiveView') -> None:
         self._view = view
 
     def get_smartscan_settings(self) -> dict:
@@ -309,7 +314,7 @@ class ArchivePresenter:
 
     def archive_documents(self, documents: List[Document]) -> ArchiveResult:
         """Archiviert Dokumente via UseCase (prueft Domain-Regeln)."""
-        return self._uc_archive.archive(documents)
+        return self._uc_archive.execute(documents, action='archive')
 
     def archive_by_ids(self, doc_ids: List[int]) -> int:
         """Archiviert Dokumente nur per ID (fuer Worker-Callbacks ohne Document-Objekte).
@@ -321,15 +326,15 @@ class ArchivePresenter:
 
     def unarchive_documents(self, documents: List[Document]) -> ArchiveResult:
         """Entarchiviert Dokumente via UseCase."""
-        return self._uc_archive.unarchive(documents)
+        return self._uc_archive.execute(documents, action='unarchive')
 
     def delete_document(self, doc: Document) -> DeleteResult:
         """Loescht ein einzelnes Dokument via UseCase."""
-        return self._uc_delete.execute_single(doc)
+        return self._uc_delete.execute(doc)
 
     def delete_documents(self, documents: List[Document]) -> DeleteResult:
         """Loescht mehrere Dokumente via UseCase (Bulk)."""
-        return self._uc_delete.execute_bulk(documents)
+        return self._uc_delete.execute(documents)
 
     def rename_document(self, doc: Document, new_name_without_ext: str) -> RenameResult:
         """Benennt ein Dokument um via UseCase."""
@@ -352,11 +357,11 @@ class ArchivePresenter:
         """Download mit automatischer Archivierung via UseCase."""
         return self._uc_download.execute(doc, target_dir)
 
-    def exclude_from_processing(self, documents: List[Document]) -> int:
+    def exclude_from_processing(self, documents: List[Document]) -> ProcessingToggleResult:
         """Schliesst Dokumente von der Verarbeitung aus via UseCase."""
         return self._uc_exclude.execute(documents)
 
-    def include_for_processing(self, documents: List[Document]) -> int:
+    def include_for_processing(self, documents: List[Document]) -> ProcessingToggleResult:
         """Gibt Dokumente fuer Verarbeitung frei via UseCase."""
         return self._uc_include.execute(documents)
 

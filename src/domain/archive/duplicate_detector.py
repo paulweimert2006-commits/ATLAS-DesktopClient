@@ -5,7 +5,7 @@ Reine Business-Logik: Nimmt Daten entgegen, gibt Entscheidungen zurueck.
 Kein Zugriff auf API, Dateisystem oder Qt.
 """
 
-from typing import Optional
+from typing import Optional, Tuple
 
 from .entities import Document, DuplicateInfo
 
@@ -51,7 +51,7 @@ def has_any_duplicate(document: Document) -> bool:
 
 def get_counterpart_info(
     document: Document,
-) -> Optional[tuple]:
+) -> Optional[Tuple[int, str, bool]]:
     """Gibt (counterpart_id, box_type, is_archived) des Gegenstuecks zurueck."""
     if is_file_duplicate(document) and document.previous_version_id:
         return (

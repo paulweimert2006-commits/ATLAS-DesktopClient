@@ -2531,9 +2531,9 @@ class ArchiveBoxesView(QWidget):
         if not documents:
             return
         
-        count = self._presenter.exclude_from_processing(documents)
+        result = self._presenter.exclude_from_processing(documents)
         
-        if count > 0:
+        if result.changed_count > 0:
             affected_boxes = set(d.box_type for d in documents)
             affected_boxes.add('sonstige')
             for box_type in affected_boxes:
@@ -2541,10 +2541,10 @@ class ArchiveBoxesView(QWidget):
             self._refresh_stats()
             self._refresh_documents(force_refresh=True)
             
-            if count == 1:
+            if result.changed_count == 1:
                 self._toast_manager.show_info(PROCESSING_EXCLUDED_TOAST)
             else:
-                self._toast_manager.show_info(PROCESSING_EXCLUDED_MULTI.format(count=count))
+                self._toast_manager.show_info(PROCESSING_EXCLUDED_MULTI.format(count=result.changed_count))
     
     def _include_for_processing(self, documents: List[Document]):
         """Gibt Dokumente erneut fuer die Verarbeitung frei (zurueck in Eingangsbox)."""
@@ -2553,9 +2553,9 @@ class ArchiveBoxesView(QWidget):
         if not documents:
             return
         
-        moved = self._presenter.include_for_processing(documents)
+        result = self._presenter.include_for_processing(documents)
         
-        if moved > 0:
+        if result.changed_count > 0:
             affected_boxes = set(d.box_type for d in documents)
             affected_boxes.add('eingang')
             for box_type in affected_boxes:
@@ -2564,10 +2564,10 @@ class ArchiveBoxesView(QWidget):
             self._refresh_stats()
             self._refresh_documents(force_refresh=True)
             
-            if moved == 1:
+            if result.changed_count == 1:
                 self._toast_manager.show_success(PROCESSING_INCLUDED_TOAST)
             else:
-                self._toast_manager.show_success(PROCESSING_INCLUDED_MULTI.format(count=moved))
+                self._toast_manager.show_success(PROCESSING_INCLUDED_MULTI.format(count=result.changed_count))
     
     def _archive_documents(self, documents: List[Document]):
         """Archiviert die ausgewaehlten Dokumente (Bulk-API)."""

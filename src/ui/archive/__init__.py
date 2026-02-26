@@ -20,3 +20,25 @@ Import-Pfade (neuer kanonischer Pfad):
 Backward-Kompatibilitaet:
     Alle Klassen sind weiterhin ueber archive_boxes_view.py importierbar.
 """
+
+from .widgets import DocumentHistoryPanel, LoadingOverlay, ProcessingProgressOverlay
+from .models import DocumentTableModel, DocumentSortFilterProxy, ColorBackgroundDelegate
+from .table import DraggableDocumentView
+from .search_widget import AtlasIndexWidget, SearchResultCard
+from .sidebar import BoxSidebar
+from .dialogs import SmartScanDialog, DuplicateCompareDialog
+
+__all__ = [
+    'DocumentHistoryPanel',
+    'LoadingOverlay',
+    'ProcessingProgressOverlay',
+    'DocumentTableModel',
+    'DocumentSortFilterProxy',
+    'ColorBackgroundDelegate',
+    'DraggableDocumentView',
+    'AtlasIndexWidget',
+    'SearchResultCard',
+    'BoxSidebar',
+    'SmartScanDialog',
+    'DuplicateCompareDialog',
+]

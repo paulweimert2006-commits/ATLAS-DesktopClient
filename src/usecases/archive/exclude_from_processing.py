@@ -9,7 +9,7 @@ processing_status='manual_excluded'.
 from typing import List
 
 from domain.archive.interfaces import IDocumentRepository
-from domain.archive.entities import Document
+from domain.archive.entities import Document, ProcessingToggleResult
 
 
 class ExcludeFromProcessing:
@@ -18,8 +18,8 @@ class ExcludeFromProcessing:
     def __init__(self, repository: IDocumentRepository):
         self._repo = repository
 
-    def execute(self, documents: List[Document]) -> int:
-        """Gibt Anzahl erfolgreich ausgeschlossener Dokumente zurueck."""
+    def execute(self, documents: List[Document]) -> ProcessingToggleResult:
+        """Schliesst Dokumente von der Verarbeitung aus."""
         count = 0
 
         eingang_docs = [d for d in documents if d.box_type == 'eingang']
@@ -36,4 +36,8 @@ class ExcludeFromProcessing:
             if self._repo.update(doc.id, processing_status='manual_excluded'):
                 count += 1
 
-        return count
+        return ProcessingToggleResult(
+            changed_count=count,
+            total_requested=len(documents),
+            action='exclude',
+        )

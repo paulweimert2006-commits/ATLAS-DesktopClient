@@ -19,7 +19,7 @@ __all__ = [
 # ---------------------------------------------------------------------------
 # Extension-Sets fuer Dokumenttyp-Erkennung
 # ---------------------------------------------------------------------------
-SPREADSHEET_EXTENSIONS: frozenset = frozenset({'.csv', '.xlsx', '.xls'})
+SPREADSHEET_EXTENSIONS: frozenset = frozenset({'.csv', '.tsv', '.xlsx', '.xls'})
 GDV_EXTENSIONS: frozenset = frozenset({'.gdv', '.dat', '.vwb'})
 XML_EXTENSIONS: frozenset = frozenset({'.xml'})
 

@@ -9,7 +9,7 @@ und Domain-Entitaeten wo noetig.
 import logging
 from typing import Optional, List, Dict, Tuple, Any
 
-from api.client import APIClient, APIError
+from api.client import APIClient
 from api.documents import DocumentsAPI, Document, BoxStats, SearchResult
 
 logger = logging.getLogger(__name__)
@@ -43,9 +43,6 @@ class DocumentRepository:
     def search_documents(
         self, query: str, *,
         limit: int = 200,
-        box_type: Optional[str] = None,
-        search_content: bool = True,
-        search_filename: bool = True,
         include_raw: bool = False,
         substring: bool = False,
     ) -> List[SearchResult]:
@@ -60,8 +57,11 @@ class DocumentRepository:
     def upload(
         self, file_path: str, *,
         source_type: str = 'manual_upload',
+        box_type: Optional[str] = None,
     ) -> Optional[Document]:
-        return self._api.upload(file_path, source_type=source_type)
+        if box_type:
+            return self._api.upload(file_path, source_type, box_type=box_type)
+        return self._api.upload(file_path, source_type)
 
     def download(
         self, doc_id: int, target_dir: str, *,

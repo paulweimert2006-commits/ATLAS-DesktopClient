@@ -8,7 +8,7 @@ processing_status='pending'.
 from typing import List
 
 from domain.archive.interfaces import IDocumentRepository
-from domain.archive.entities import Document
+from domain.archive.entities import Document, ProcessingToggleResult
 
 
 class IncludeForProcessing:
@@ -17,10 +17,15 @@ class IncludeForProcessing:
     def __init__(self, repository: IDocumentRepository):
         self._repo = repository
 
-    def execute(self, documents: List[Document]) -> int:
-        """Gibt Anzahl erfolgreich freigegebener Dokumente zurueck."""
+    def execute(self, documents: List[Document]) -> ProcessingToggleResult:
+        """Gibt Dokumente fuer Verarbeitung frei."""
         doc_ids = [d.id for d in documents]
-        return self._repo.move_documents(
+        count = self._repo.move_documents(
             doc_ids, 'eingang',
             processing_status='pending',
+        )
+        return ProcessingToggleResult(
+            changed_count=count,
+            total_requested=len(documents),
+            action='include',
         )

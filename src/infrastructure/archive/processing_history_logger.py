@@ -291,6 +291,6 @@ def persist_ai_data(docs_api,
         )
         return True
     else:
-        from src.i18n.de import AI_DATA_SAVE_FAILED
+        from i18n.de import AI_DATA_SAVE_FAILED
         logger.warning(AI_DATA_SAVE_FAILED.format(doc_id=doc.id))
         return False

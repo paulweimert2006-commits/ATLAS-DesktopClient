@@ -526,7 +526,7 @@ class CostStatsWorker(QThread):
     """Worker zum Laden der durchschnittlichen Verarbeitungskosten pro Dokument."""
     finished = Signal(float)
 
-    def __init__(self, api_client):
+    def __init__(self, api_client: APIClient):
         super().__init__()
         self._api_client = api_client
 
@@ -554,7 +554,7 @@ class DelayedCostWorker(QThread):
     finished = Signal(object)
     countdown = Signal(int)
 
-    def __init__(self, api_client, batch_result, history_entry_id: int, delay_seconds: int = 90):
+    def __init__(self, api_client: APIClient, batch_result: object, history_entry_id: int, delay_seconds: int = 90):
         super().__init__()
         self.api_client = api_client
         self.batch_result = batch_result
@@ -613,40 +613,42 @@ class DelayedCostWorker(QThread):
 
 
 class BoxStatsWorker(QThread):
-    """Worker zum Laden der Box-Statistiken."""
+    """Worker zum Laden der Box-Statistiken via LoadBoxStats UseCase."""
     finished = Signal(object)
     error = Signal(str)
 
-    def __init__(self, docs_api: DocumentsAPI):
+    def __init__(self, repository):
         super().__init__()
-        self.docs_api = docs_api
+        self._repo = repository
 
     def run(self):
         try:
-            stats = self.docs_api.get_box_stats()
+            from usecases.archive.load_box_stats import LoadBoxStats
+            uc = LoadBoxStats(self._repo)
+            stats = uc.execute()
             self.finished.emit(stats)
         except Exception as e:
             self.error.emit(str(e))
 
 
 class DocumentMoveWorker(QThread):
-    """Worker zum Verschieben von Dokumenten."""
+    """Worker zum Verschieben von Dokumenten via Repository."""
     finished = Signal(int)
     error = Signal(str)
 
-    def __init__(self, docs_api: DocumentsAPI, doc_ids: List[int], target_box: str,
+    def __init__(self, repository, doc_ids: List[int], target_box: str,
                  processing_status: str = None):
         super().__init__()
-        self.docs_api = docs_api
+        self._repo = repository
         self.doc_ids = doc_ids
         self.target_box = target_box
         self.processing_status = processing_status
 
     def run(self):
         try:
-            moved = self.docs_api.move_documents(
+            moved = self._repo.move_documents(
                 self.doc_ids, self.target_box,
-                processing_status=self.processing_status
+                processing_status=self.processing_status,
             )
             self.finished.emit(moved)
         except Exception as e:
@@ -654,26 +656,26 @@ class DocumentMoveWorker(QThread):
 
 
 class DocumentColorWorker(QThread):
-    """Worker zum Setzen/Entfernen von Farbmarkierungen im Hintergrund."""
+    """Worker zum Setzen/Entfernen von Farbmarkierungen via Repository."""
     finished = Signal(int, object)
     error = Signal(str)
 
-    def __init__(self, docs_api: DocumentsAPI, doc_ids: List[int], color: Optional[str]):
+    def __init__(self, repository, doc_ids: List[int], color: Optional[str]):
         super().__init__()
-        self.docs_api = docs_api
+        self._repo = repository
         self.doc_ids = doc_ids
         self.color = color
 
     def run(self):
         try:
-            count = self.docs_api.set_documents_color(self.doc_ids, self.color)
+            count = self._repo.set_documents_color(self.doc_ids, self.color)
             self.finished.emit(count, self.color)
         except Exception as e:
             self.error.emit(str(e))
 
 
 class ProcessingWorker(QThread):
-    """Worker fuer automatische Dokumentenverarbeitung."""
+    """Worker fuer automatische Dokumentenverarbeitung via ProcessDocument UseCase."""
     finished = Signal(object)
     progress = Signal(int, int, str)
     error = Signal(str)
@@ -688,15 +690,15 @@ class ProcessingWorker(QThread):
 
     def run(self):
         try:
-            from services.document_processor import DocumentProcessor
+            from usecases.archive.process_document import ProcessDocument
 
-            processor = DocumentProcessor(self.api_client)
+            uc = ProcessDocument(self.api_client)
 
             def on_progress(current, total, msg):
                 if not self._cancelled:
                     self.progress.emit(current, total, msg)
 
-            batch_result = processor.process_inbox(progress_callback=on_progress)
+            batch_result = uc.execute(progress_callback=on_progress)
             self.finished.emit(batch_result)
 
         except Exception as e:
@@ -705,14 +707,14 @@ class ProcessingWorker(QThread):
 
 
 class SearchWorker(QThread):
-    """Worker fuer nicht-blockierende ATLAS Index Volltextsuche."""
+    """Worker fuer nicht-blockierende ATLAS Index Volltextsuche via SearchDocuments UseCase."""
     finished = Signal(list)
     error = Signal(str)
 
-    def __init__(self, api_client: APIClient, query: str, limit: int = 200,
+    def __init__(self, repository, query: str, limit: int = 200,
                  include_raw: bool = False, substring: bool = False, parent=None):
         super().__init__(parent)
-        self.api_client = api_client
+        self._repo = repository
         self.query = query
         self.limit = limit
         self.include_raw = include_raw
@@ -720,11 +722,13 @@ class SearchWorker(QThread):
 
     def run(self):
         try:
-            docs_api = DocumentsAPI(self.api_client)
-            results = docs_api.search_documents(
-                self.query, self.limit,
+            from usecases.archive.search_documents import SearchDocuments
+            uc = SearchDocuments(self._repo)
+            results = uc.execute(
+                self.query,
+                limit=self.limit,
                 include_raw=self.include_raw,
-                substring=self.substring
+                substring=self.substring,
             )
             self.finished.emit(results)
         except Exception as e:

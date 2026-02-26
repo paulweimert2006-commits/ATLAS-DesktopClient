@@ -87,6 +87,23 @@ class DownloadResult:
 
 
 @dataclass
+class SmartScanResult:
+    """Ergebnis eines SmartScan-Versands."""
+    success: bool
+    document_count: int
+    job_id: Optional[str] = None
+    raw_response: Optional[dict] = None
+
+
+@dataclass
+class ProcessingToggleResult:
+    """Ergebnis einer Exclude-/Include-Operation."""
+    changed_count: int
+    total_requested: int
+    action: str  # 'exclude' | 'include'
+
+
+@dataclass
 class DuplicateInfo:
     """Informationen ueber ein erkanntes Duplikat."""
     original_id: int

@@ -24,6 +24,5 @@ class SearchDocuments:
             return []
         return self._repo.search_documents(
             query, limit=limit,
-            search_content=True, search_filename=True,
             include_raw=include_raw, substring=substring,
         )
