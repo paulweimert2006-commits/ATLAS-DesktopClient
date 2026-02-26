@@ -76,15 +76,18 @@ class ProvisionspositionenPanel(QWidget):
         """Verbindet dieses Panel mit dem PositionsPresenter."""
         self._presenter = presenter
         presenter.set_view(self)
+        self._load_data()
 
     # ── IPositionsView ──
 
     def show_commissions(self, commissions: List[Commission],
                          pagination: Optional[PaginationInfo] = None) -> None:
         """View-Interface: Provisionen anzeigen."""
+        self._loading_overlay.setVisible(False)
         self._all_data = commissions
         self._update_chips()
         self._apply_filter()
+        self._resize_columns()
 
     def show_loading(self, loading: bool) -> None:
         """View-Interface: Ladezustand."""
@@ -218,9 +221,9 @@ class ProvisionspositionenPanel(QWidget):
         self._table.setSelectionMode(QTableView.SingleSelection)
         self._table.verticalHeader().setVisible(False)
         self._table.verticalHeader().setDefaultSectionSize(52)
-        self._table.horizontalHeader().setDefaultSectionSize(52)
+        self._table.horizontalHeader().setDefaultSectionSize(100)
         self._table.horizontalHeader().setStretchLastSection(False)
-        self._table.horizontalHeader().setMinimumSectionSize(50)
+        self._table.horizontalHeader().setMinimumSectionSize(40)
         self._table.setStyleSheet(get_provision_table_style())
         self._table.setMinimumHeight(400)
         self._table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -542,15 +545,30 @@ class ProvisionspositionenPanel(QWidget):
 
     def _resize_columns(self):
         header = self._table.horizontalHeader()
+        col_widths = {
+            PositionsModel.COL_DATUM: 90,
+            PositionsModel.COL_VU: 100,
+            PositionsModel.COL_VSNR: 130,
+            PositionsModel.COL_KUNDE: 160,
+            PositionsModel.COL_BETRAG: 95,
+            PositionsModel.COL_BUCHUNGSART: 80,
+            PositionsModel.COL_XEMPUS_BERATER: 130,
+            PositionsModel.COL_BERATER: 120,
+            PositionsModel.COL_STATUS: 120,
+            PositionsModel.COL_BERATER_ANTEIL: 90,
+            PositionsModel.COL_SOURCE: 70,
+            PositionsModel.COL_MENU: 40,
+        }
         for i in range(self._model.columnCount()):
-            if i == PositionsModel.COL_MENU:
-                header.setSectionResizeMode(i, QHeaderView.Fixed)
-                self._table.setColumnWidth(i, 48)
-            elif i == PositionsModel.COL_STATUS:
-                header.setSectionResizeMode(i, QHeaderView.Fixed)
-                self._table.setColumnWidth(i, 170)
-            else:
+            if i == PositionsModel.COL_KUNDE:
                 header.setSectionResizeMode(i, QHeaderView.Stretch)
+                self._table.setColumnWidth(i, col_widths.get(i, 80))
+            elif i in col_widths:
+                header.setSectionResizeMode(i, QHeaderView.Interactive)
+                self._table.setColumnWidth(i, col_widths[i])
+            else:
+                header.setSectionResizeMode(i, QHeaderView.Interactive)
+                self._table.setColumnWidth(i, 80)
 
     def _on_selection_changed(self, selected, deselected):
         indexes = self._table.selectionModel().selectedRows()

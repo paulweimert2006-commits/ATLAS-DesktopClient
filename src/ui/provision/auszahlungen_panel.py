@@ -68,6 +68,7 @@ class AuszahlungenPanel(QWidget):
         """Verbindet dieses Panel mit dem PayoutsPresenter."""
         self._presenter = presenter
         presenter.set_view(self)
+        self._load_data()
 
     # ── IPayoutsView ──
 
