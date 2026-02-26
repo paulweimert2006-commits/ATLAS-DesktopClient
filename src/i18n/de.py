@@ -2248,6 +2248,7 @@ PROVISION_PAGINATION_SHOWING = "Zeige {start}\u2013{end} von {total}"
 # ══════════════════════════════════════════════════════════════════════════
 
 ADMIN_TAB_SERVER_HEALTH = "Server-Gesundheit"
+ADMIN_TAB_MIGRATIONS = "Migrationen"
 ADMIN_SECTION_SYSTEM = "SYSTEM"
 
 HEALTH_TITLE = "Server-Gesundheit"
