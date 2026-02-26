@@ -15,7 +15,7 @@ import tempfile
 from PySide6.QtCore import Qt, Signal, QThread
 
 from api.client import APIClient
-from api.documents import DocumentsAPI, Document, safe_cache_filename
+from api.documents import DocumentsAPI, safe_cache_filename
 
 logger = logging.getLogger(__name__)
 
@@ -128,7 +128,7 @@ class MissingAiDataWorker(QThread):
 
 
 class MultiUploadWorker(QThread):
-    """Worker zum Hochladen mehrerer Dateien.
+    """Worker zum Hochladen mehrerer Dateien via UploadDocument UseCase.
 
     Phase 1: Alle ZIPs/MSGs rekursiv entpacken -> flache Job-Liste
     Phase 2: Parallele Uploads via ThreadPoolExecutor (max. 5 gleichzeitig)
@@ -140,9 +140,9 @@ class MultiUploadWorker(QThread):
     all_finished = Signal(int, int)
     progress = Signal(int, int, str)
 
-    def __init__(self, docs_api: DocumentsAPI, file_paths: list, source_type: str):
+    def __init__(self, api_client: APIClient, file_paths: list, source_type: str):
         super().__init__()
-        self.docs_api = docs_api
+        self._api_client = api_client
         self.file_paths = file_paths
         self.source_type = source_type
 
@@ -183,7 +183,7 @@ class MultiUploadWorker(QThread):
             if is_zip_file(fp):
                 td = tempfile.mkdtemp(prefix="atlas_zip_")
                 self._temp_dirs.append(td)
-                zr = extract_zip_contents(fp, td, api_client=self.docs_api.client)
+                zr = extract_zip_contents(fp, td, api_client=self._api_client)
                 if zr.error:
                     self._errors.append((Path(fp).name, zr.error))
                     jobs.append((fp, 'roh'))
@@ -191,71 +191,71 @@ class MultiUploadWorker(QThread):
                 for ext in zr.extracted_paths:
                     if is_msg_file(ext):
                         md = tempfile.mkdtemp(prefix="atlas_msg_", dir=td)
-                        mr = extract_msg_attachments(ext, md, api_client=self.docs_api.client)
+                        mr = extract_msg_attachments(ext, md, api_client=self._api_client)
                         if mr.error:
                             self._errors.append((Path(ext).name, mr.error))
                         else:
                             for att in mr.attachment_paths:
-                                self._prepare_single_file(att, jobs, self.docs_api.client)
+                                self._prepare_single_file(att, jobs, self._api_client)
                         jobs.append((ext, 'roh'))
                     else:
-                        self._prepare_single_file(ext, jobs, self.docs_api.client)
+                        self._prepare_single_file(ext, jobs, self._api_client)
                 jobs.append((fp, 'roh'))
 
             elif is_msg_file(fp):
                 td = tempfile.mkdtemp(prefix="atlas_msg_")
                 self._temp_dirs.append(td)
-                mr = extract_msg_attachments(fp, td, api_client=self.docs_api.client)
+                mr = extract_msg_attachments(fp, td, api_client=self._api_client)
                 if mr.error:
                     self._errors.append((Path(fp).name, mr.error))
                     continue
                 for att in mr.attachment_paths:
                     if is_zip_file(att):
                         zd = tempfile.mkdtemp(prefix="atlas_zip_", dir=td)
-                        zr = extract_zip_contents(att, zd, api_client=self.docs_api.client)
+                        zr = extract_zip_contents(att, zd, api_client=self._api_client)
                         if zr.error:
                             self._errors.append((Path(att).name, zr.error))
                         else:
                             for ext in zr.extracted_paths:
-                                self._prepare_single_file(ext, jobs, self.docs_api.client)
+                                self._prepare_single_file(ext, jobs, self._api_client)
                         jobs.append((att, 'roh'))
                     else:
-                        self._prepare_single_file(att, jobs, self.docs_api.client)
+                        self._prepare_single_file(att, jobs, self._api_client)
                 jobs.append((fp, 'roh'))
 
             else:
-                self._prepare_single_file(fp, jobs, self.docs_api.client)
+                self._prepare_single_file(fp, jobs, self._api_client)
 
         return jobs
 
     def _upload_single(self, path: str, source_type: str, box_type: str = None):
-        """Thread-safe Upload einer einzelnen Datei mit per-Thread API-Client."""
+        """Thread-safe Upload via per-Thread Repository + UploadDocument UseCase."""
         import threading
         name = Path(path).name
         try:
             tid = threading.get_ident()
-            if tid not in self._thread_apis:
-                from api.client import APIClient
-                client = APIClient(self.docs_api.client.config)
-                client.set_token(self.docs_api.client._token)
-                self._thread_apis[tid] = DocumentsAPI(client)
-            docs_api = self._thread_apis[tid]
+            if tid not in self._thread_repos:
+                from infrastructure.archive.document_repository import DocumentRepository
+                client = APIClient(self._api_client.config)
+                client.set_token(self._api_client._token)
+                self._thread_repos[tid] = DocumentRepository(client)
+            repo = self._thread_repos[tid]
 
-            if box_type:
-                doc = docs_api.upload(path, source_type, box_type=box_type)
-            else:
-                doc = docs_api.upload(path, source_type)
-            if doc:
+            from usecases.archive.upload_document import UploadDocument
+            uc = UploadDocument(repo)
+            result = uc.execute(path, source_type=source_type, box_type=box_type)
+
+            if result.success and result.document:
                 if box_type != 'roh':
                     try:
                         from services.early_text_extract import extract_and_save_text
-                        extract_and_save_text(docs_api, doc.id, path, name)
+                        extract_and_save_text(repo.api, result.document.id, path, name)
                     except Exception:
                         pass
-                return (name, True, doc)
+                return (name, True, result.document)
             else:
                 from i18n.de import WORKER_UPLOAD_FAILED
-                return (name, False, WORKER_UPLOAD_FAILED)
+                return (name, False, result.error or WORKER_UPLOAD_FAILED)
         except Exception as e:
             return (name, False, str(e))
 
@@ -264,7 +264,7 @@ class MultiUploadWorker(QThread):
 
         self._temp_dirs = []
         self._errors = []
-        self._thread_apis = {}
+        self._thread_repos = {}
 
         jobs = self._expand_all_files(self.file_paths)
         total = len(jobs)
@@ -357,15 +357,19 @@ class PreviewDownloadWorker(QThread):
 
 
 class MultiDownloadWorker(QThread):
-    """Worker zum Herunterladen mehrerer Dateien im Hintergrund."""
+    """Worker zum Herunterladen mehrerer Dateien via DownloadDocument UseCase.
+
+    Nutzt den UseCase fuer jeden Download, wodurch Business-Logik
+    (z.B. Auto-Archivierung nach Download) korrekt ausgefuehrt wird.
+    """
     file_finished = Signal(int, str, str)
     file_error = Signal(int, str, str)
     all_finished = Signal(int, int, list, list)
     progress = Signal(int, int, str)
 
-    def __init__(self, docs_api: DocumentsAPI, documents: list, target_dir: str):
+    def __init__(self, repository, documents: list, target_dir: str):
         super().__init__()
-        self.docs_api = docs_api
+        self._repo = repository
         self.documents = documents
         self.target_dir = target_dir
         self._cancelled = False
@@ -374,6 +378,9 @@ class MultiDownloadWorker(QThread):
         self._cancelled = True
 
     def run(self):
+        from usecases.archive.download_document import DownloadDocument
+        uc = DownloadDocument(self._repo)
+
         erfolge = 0
         fehler = 0
         fehler_liste = []
@@ -387,17 +394,14 @@ class MultiDownloadWorker(QThread):
             self.progress.emit(i + 1, total, doc.original_filename)
 
             try:
-                result = self.docs_api.download(
-                    doc.id, self.target_dir,
-                    filename_override=doc.original_filename
-                )
-                if result:
-                    self.file_finished.emit(doc.id, doc.original_filename, result)
+                result = uc.execute(doc, self.target_dir)
+                if result.success:
+                    self.file_finished.emit(doc.id, doc.original_filename, result.saved_path)
                     erfolgreiche_doc_ids.append(doc.id)
                     erfolge += 1
                 else:
                     from i18n.de import WORKER_DOWNLOAD_FAILED
-                    error_msg = WORKER_DOWNLOAD_FAILED
+                    error_msg = result.error or WORKER_DOWNLOAD_FAILED
                     self.file_error.emit(doc.id, doc.original_filename, error_msg)
                     fehler_liste.append(f"{doc.original_filename}: {error_msg}")
                     fehler += 1
@@ -737,16 +741,21 @@ class SearchWorker(QThread):
 
 
 class SmartScanWorker(QThread):
-    """Worker fuer SmartScan Versand mit Client-seitigem Chunking."""
+    """Worker fuer SmartScan Versand via SmartScanSend UseCase.
+
+    Initiale Sendung ueber UseCase, Chunk-Verarbeitung ueber SmartScanAPI,
+    Post-Send-Aktionen (Recolor/Archiv) ueber Repository.
+    """
     progress = Signal(int, int, str)
     completed = Signal(int, dict)
     error = Signal(str)
 
-    def __init__(self, api_client, mode: str, document_ids: list = None,
+    def __init__(self, api_client, repository, mode: str, document_ids: list = None,
                  box_type: str = None, archive_after: bool = False,
                  recolor_after: bool = False, recolor_color: str = None):
         super().__init__()
         self._api_client = api_client
+        self._repo = repository
         self._mode = mode
         self._document_ids = document_ids
         self._box_type = box_type
@@ -761,29 +770,33 @@ class SmartScanWorker(QThread):
     def run(self):
         import uuid
         try:
-            from api.smartscan import SmartScanAPI
-            api = SmartScanAPI(self._api_client)
+            from usecases.archive.smartscan_send import SmartScanSend
 
             client_request_id = str(uuid.uuid4())[:16]
 
-            result = api.send(
+            uc = SmartScanSend(self._api_client)
+            send_result = uc.execute(
+                self._document_ids or [],
                 mode=self._mode,
-                document_ids=self._document_ids,
                 box_type=self._box_type,
-                client_request_id=client_request_id
+                client_request_id=client_request_id,
             )
 
-            if not result or not result.get('job_id'):
+            result = send_result.raw_response or {}
+            if not send_result.job_id:
                 from i18n.de import WORKER_SMARTSCAN_START_ERROR
                 self.error.emit(WORKER_SMARTSCAN_START_ERROR)
                 return
 
-            job_id = result['job_id']
+            job_id = send_result.job_id
             total = result.get('total', 0)
             processed = result.get('processed', 0)
             remaining = result.get('remaining', total)
 
             self.progress.emit(processed, total, "Versendet...")
+
+            from api.smartscan import SmartScanAPI
+            api = SmartScanAPI(self._api_client)
 
             max_iterations = (total // 5) + 10
             iteration = 0
@@ -831,16 +844,13 @@ class SmartScanWorker(QThread):
 
             if self._document_ids and (self._recolor_after or self._archive_after):
                 try:
-                    from api.documents import DocumentsAPI
-                    docs_api = DocumentsAPI(self._api_client)
-
                     if self._recolor_after and self._recolor_color:
                         self.progress.emit(processed, total, "Dokumente werden gefaerbt...")
-                        docs_api.set_documents_color(self._document_ids, self._recolor_color)
+                        self._repo.set_documents_color(self._document_ids, self._recolor_color)
 
                     if self._archive_after:
                         self.progress.emit(processed, total, "Dokumente werden archiviert...")
-                        docs_api.archive_documents(self._document_ids)
+                        self._repo.archive_documents(self._document_ids)
 
                 except Exception as e:
                     logger.warning(f"Post-Send-Aktion fehlgeschlagen: {e}")
@@ -853,23 +863,23 @@ class SmartScanWorker(QThread):
 
 
 class AIRenameWorker(QThread):
-    """Worker fuer KI-basierte PDF-Benennung.
+    """Worker fuer KI-basierte PDF-Benennung via Repository.
 
     Verarbeitet PDFs im Hintergrund mit zweistufigem KI-System:
-    1. Laedt PDF herunter
+    1. Laedt PDF herunter (via Repository)
     2. Stufe 1 (Triage): Schnelle Kategorisierung mit GPT-4o-mini
     3. Stufe 2 (Detail): Detailanalyse mit GPT-4o nur bei Bedarf
-    4. Umbenennung auf Server
+    4. Umbenennung auf Server (via Repository)
     """
     finished = Signal(list)
     progress = Signal(int, int, str)
     single_finished = Signal(int, bool, str)
     error = Signal(str)
 
-    def __init__(self, api_client: APIClient, docs_api: DocumentsAPI, documents: List):
+    def __init__(self, api_client: APIClient, repository, documents: List):
         super().__init__()
         self.api_client = api_client
-        self.docs_api = docs_api
+        self._repo = repository
         self.documents = documents
         self._cancelled = False
 
@@ -907,7 +917,9 @@ class AIRenameWorker(QThread):
 
                 try:
                     temp_dir = tempfile.mkdtemp(prefix='bipro_ai_')
-                    pdf_path = self.docs_api.download(doc.id, temp_dir, filename_override=doc.original_filename)
+                    pdf_path = self._repo.download(
+                        doc.id, temp_dir, filename_override=doc.original_filename,
+                    )
 
                     if not pdf_path or not os.path.exists(pdf_path):
                         raise Exception("Download fehlgeschlagen")
@@ -918,7 +930,9 @@ class AIRenameWorker(QThread):
                     original_ext = os.path.splitext(doc.original_filename)[1] or '.pdf'
                     new_filename = classification.generate_filename(original_ext)
 
-                    success = self.docs_api.rename_document(doc.id, new_filename, mark_ai_renamed=True)
+                    success = self._repo.rename_document(
+                        doc.id, new_filename, mark_ai_renamed=True,
+                    )
 
                     if success:
                         logger.info(f"Umbenannt: {doc.original_filename} -> {new_filename}")
@@ -938,7 +952,7 @@ class AIRenameWorker(QThread):
                     logger.error(f"Fehler bei {doc.original_filename}: {error_msg}")
 
                     try:
-                        self.docs_api.update(doc.id, ai_processing_error=error_msg[:500])
+                        self._repo.update(doc.id, ai_processing_error=error_msg[:500])
                     except Exception:
                         pass
 

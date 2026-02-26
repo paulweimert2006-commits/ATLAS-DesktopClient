@@ -233,7 +233,7 @@ class ArchivePresenter:
 
     def load_stats(self, callback, error_callback=None) -> None:
         """Laedt Box-Statistiken asynchron."""
-        self._stats_worker = BoxStatsWorker(self._docs_api)
+        self._stats_worker = BoxStatsWorker(self._repo)
         self._stats_worker.finished.connect(callback)
         if error_callback:
             self._stats_worker.error.connect(error_callback)
@@ -289,7 +289,7 @@ class ArchivePresenter:
     ) -> None:
         """Verschiebt Dokumente asynchron."""
         self._move_worker = DocumentMoveWorker(
-            self._docs_api, doc_ids, target_box,
+            self._repo, doc_ids, target_box,
             processing_status=processing_status,
         )
         if finished_callback:
@@ -304,7 +304,7 @@ class ArchivePresenter:
         finished_callback=None, error_callback=None,
     ) -> None:
         """Setzt Farbmarkierung asynchron."""
-        self._color_worker = DocumentColorWorker(self._docs_api, doc_ids, color)
+        self._color_worker = DocumentColorWorker(self._repo, doc_ids, color)
         if finished_callback:
             self._color_worker.finished.connect(finished_callback)
         if error_callback:
@@ -378,7 +378,7 @@ class ArchivePresenter:
     ) -> MultiUploadWorker:
         """Startet Multi-Upload Worker."""
         self._upload_worker = MultiUploadWorker(
-            self._docs_api, file_paths, source_type,
+            self._api_client, file_paths, source_type,
         )
         if progress_callback:
             self._upload_worker.progress.connect(progress_callback)
@@ -401,7 +401,7 @@ class ArchivePresenter:
     ) -> MultiDownloadWorker:
         """Startet Multi-Download Worker."""
         self._download_worker = MultiDownloadWorker(
-            self._docs_api, documents, target_dir,
+            self._repo, documents, target_dir,
         )
         if progress_callback:
             self._download_worker.progress.connect(progress_callback)
@@ -475,7 +475,7 @@ class ArchivePresenter:
         """Startet KI-Benennung Worker."""
         from infrastructure.threading.archive_workers import AIRenameWorker
         self._ai_rename_worker = AIRenameWorker(
-            self._api_client, self._docs_api, documents,
+            self._api_client, self._repo, documents,
         )
         if progress_callback:
             self._ai_rename_worker.progress.connect(progress_callback)
@@ -552,7 +552,7 @@ class ArchivePresenter:
     ) -> SmartScanWorker:
         """Startet SmartScan Worker."""
         self._smartscan_worker = SmartScanWorker(
-            self._api_client, mode, document_ids=document_ids,
+            self._api_client, self._repo, mode, document_ids=document_ids,
             box_type=box_type, archive_after=archive_after,
             recolor_after=recolor_after, recolor_color=recolor_color,
         )
