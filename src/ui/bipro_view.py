@@ -1762,10 +1762,13 @@ class BiPROView(QWidget):
         """)
         header_row.addWidget(header)
 
+        from i18n.de import BIPRO_TOOLTIP_REFRESH, BIPRO_TOOLTIP_TOGGLE_EXPERT
         self._refresh_btn = QPushButton(BIPRO_PREVIEW_REFRESH)
         self._refresh_btn.setFixedHeight(28)
         self._refresh_btn.setStyleSheet(get_button_ghost_style())
-        self._refresh_btn.setToolTip("Vorschau manuell aktualisieren (max. 1x / 30s)")
+        self._refresh_btn.setToolTip(BIPRO_TOOLTIP_REFRESH)
+        self._refresh_btn.setShortcut("Ctrl+R")
+        self._refresh_btn.setAccessibleName(BIPRO_PREVIEW_REFRESH)
         self._refresh_btn.clicked.connect(self._on_manual_refresh)
         header_row.addWidget(self._refresh_btn)
 
@@ -1774,6 +1777,9 @@ class BiPROView(QWidget):
         self._admin_toggle = QPushButton(BIPRO_VIEW_TOGGLE_STANDARD)
         self._admin_toggle.setFixedHeight(28)
         self._admin_toggle.setCheckable(True)
+        self._admin_toggle.setToolTip(BIPRO_TOOLTIP_TOGGLE_EXPERT)
+        self._admin_toggle.setShortcut("Ctrl+T")
+        self._admin_toggle.setAccessibleName(BIPRO_VIEW_TOGGLE_STANDARD)
         self._admin_toggle.setChecked(False)
         self._admin_toggle.setStyleSheet(f"""
             QPushButton {{
@@ -1808,11 +1814,12 @@ class BiPROView(QWidget):
         action_bar = QHBoxLayout()
         action_bar.setSpacing(8)
 
-        self.fetch_all_vus_btn = QPushButton(BIPRO_FETCH_ALL)
+        self.fetch_all_vus_btn = QPushButton(f"🔄 {BIPRO_FETCH_ALL}")
         self.fetch_all_vus_btn.setFixedHeight(44)
         self.fetch_all_vus_btn.setStyleSheet(get_button_primary_style())
         self.fetch_all_vus_btn.setToolTip(BIPRO_FETCH_ALL_TOOLTIP)
         self.fetch_all_vus_btn.setShortcut("F5")
+        self.fetch_all_vus_btn.setAccessibleName(BIPRO_FETCH_ALL)
         self.fetch_all_vus_btn.clicked.connect(self._unified_fetch)
         action_bar.addWidget(self.fetch_all_vus_btn)
 
@@ -1825,12 +1832,18 @@ class BiPROView(QWidget):
         self.mail_fetch_btn.setFixedHeight(30)
         self.mail_fetch_btn.setStyleSheet(get_button_secondary_style())
         self.mail_fetch_btn.setToolTip(BIPRO_MAIL_FETCH_TOOLTIP)
+        self.mail_fetch_btn.setShortcut("Ctrl+M")
+        self.mail_fetch_btn.setAccessibleName(BIPRO_FETCH_ONLY_MAIL)
         self.mail_fetch_btn.clicked.connect(self._fetch_mails)
         action_bar.addWidget(self.mail_fetch_btn)
 
+        from i18n.de import BIPRO_TOOLTIP_FETCH_SINGLE, BIPRO_ACK_TOOLTIP
         self.fetch_single_vu_btn = QPushButton(BIPRO_FETCH_ONLY_VU)
         self.fetch_single_vu_btn.setFixedHeight(30)
         self.fetch_single_vu_btn.setStyleSheet(get_button_secondary_style())
+        self.fetch_single_vu_btn.setToolTip(BIPRO_TOOLTIP_FETCH_SINGLE)
+        self.fetch_single_vu_btn.setShortcut("Shift+F5")
+        self.fetch_single_vu_btn.setAccessibleName(BIPRO_FETCH_ONLY_VU)
         self.fetch_single_vu_btn.clicked.connect(self._fetch_selected_vu)
         action_bar.addWidget(self.fetch_single_vu_btn)
 
@@ -1839,10 +1852,8 @@ class BiPROView(QWidget):
         self._ack_btn = QPushButton(BIPRO_ACK_BUTTON)
         self._ack_btn.setFixedHeight(36)
         self._ack_btn.setStyleSheet(get_button_danger_style())
-        self._ack_btn.setToolTip(
-            "Quittiert ALLE gelisteten Lieferungen bei allen Versicherern.\n"
-            "ACHTUNG: Quittierte Lieferungen werden vom Server geloescht!"
-        )
+        self._ack_btn.setToolTip(BIPRO_ACK_TOOLTIP)
+        self._ack_btn.setAccessibleName(BIPRO_ACK_BUTTON)
         self._ack_btn.clicked.connect(self._acknowledge_all_listed)
         action_bar.addWidget(self._ack_btn)
 
@@ -1936,7 +1947,7 @@ class BiPROView(QWidget):
         self._archive_link_btn = QPushButton(BIPRO_GO_TO_ARCHIVE)
         self._archive_link_btn.setStyleSheet(f"""
             QPushButton {{
-                background: transparent; color: {ACCENT_500};
+                background: transparent; color: {PRIMARY_900};
                 border: none; font-weight: 600;
                 font-size: {FONT_SIZE_BODY};
                 text-decoration: underline; padding: 0;
@@ -2146,9 +2157,9 @@ class BiPROView(QWidget):
         """Schaltet zwischen Standard- und Admin-Ansicht."""
         from i18n.de import BIPRO_VIEW_TOGGLE_STANDARD, BIPRO_VIEW_TOGGLE_ADMIN
         self._admin_view_active = checked
-        self._admin_toggle.setText(
-            BIPRO_VIEW_TOGGLE_ADMIN if checked else BIPRO_VIEW_TOGGLE_STANDARD
-        )
+        new_text = BIPRO_VIEW_TOGGLE_ADMIN if checked else BIPRO_VIEW_TOGGLE_STANDARD
+        self._admin_toggle.setText(new_text)
+        self._admin_toggle.setAccessibleName(new_text)
         self._apply_view_mode()
 
     def _apply_view_mode(self):
@@ -3144,7 +3155,7 @@ class BiPROView(QWidget):
         
         # Status-Update in Toolbar
         self.fetch_all_vus_btn.setText(
-            BIPRO_FETCH_ALL_IN_PROGRESS.format(
+            f"🔄 " + BIPRO_FETCH_ALL_IN_PROGRESS.format(
                 current=self._all_vus_current_index,
                 total=self._all_vus_total,
                 vu_name=conn.vu_name
@@ -3358,7 +3369,7 @@ class BiPROView(QWidget):
         
         self._all_vus_mode = False
         self.fetch_all_vus_btn.setEnabled(True)
-        self.fetch_all_vus_btn.setText(BIPRO_FETCH_ALL)
+        self.fetch_all_vus_btn.setText(f"🔄 {BIPRO_FETCH_ALL}")
         
         self._progress_overlay._stats['download_success'] = stats['total_shipments']
         self._progress_overlay._stats['download_docs'] = stats['total_docs']
