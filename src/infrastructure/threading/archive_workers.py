@@ -15,10 +15,7 @@ import tempfile
 from PySide6.QtCore import Qt, Signal, QThread
 
 from api.client import APIClient
-from api.documents import (
-    DocumentsAPI, Document, BoxStats, SearchResult,
-    safe_cache_filename
-)
+from api.documents import DocumentsAPI, Document, safe_cache_filename
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +37,8 @@ class DocumentHistoryWorker(QThread):
             if history is not None:
                 self.finished.emit(self.doc_id, history)
             else:
-                self.error.emit(self.doc_id, "Historie konnte nicht geladen werden")
+                from i18n.de import WORKER_HISTORY_LOAD_ERROR
+                self.error.emit(self.doc_id, WORKER_HISTORY_LOAD_ERROR)
         except Exception as e:
             logger.error(f"Fehler beim Laden der Dokument-Historie: {e}")
             self.error.emit(self.doc_id, str(e))
@@ -87,7 +85,7 @@ class MissingAiDataWorker(QThread):
     """
     finished = Signal(int)
 
-    def __init__(self, docs_api):
+    def __init__(self, docs_api: DocumentsAPI):
         super().__init__()
         self._docs_api = docs_api
 
@@ -256,7 +254,8 @@ class MultiUploadWorker(QThread):
                         pass
                 return (name, True, doc)
             else:
-                return (name, False, "Upload fehlgeschlagen")
+                from i18n.de import WORKER_UPLOAD_FAILED
+                return (name, False, WORKER_UPLOAD_FAILED)
         except Exception as e:
             return (name, False, str(e))
 
@@ -397,7 +396,8 @@ class MultiDownloadWorker(QThread):
                     erfolgreiche_doc_ids.append(doc.id)
                     erfolge += 1
                 else:
-                    error_msg = "Download fehlgeschlagen"
+                    from i18n.de import WORKER_DOWNLOAD_FAILED
+                    error_msg = WORKER_DOWNLOAD_FAILED
                     self.file_error.emit(doc.id, doc.original_filename, error_msg)
                     fehler_liste.append(f"{doc.original_filename}: {error_msg}")
                     fehler += 1
@@ -470,7 +470,8 @@ class BoxDownloadWorker(QThread):
                         erfolgreiche_doc_ids.append(doc.id)
                         erfolge += 1
                     else:
-                        fehler_liste.append(f"{doc.original_filename}: Download fehlgeschlagen")
+                        from i18n.de import WORKER_DOWNLOAD_FAILED
+                        fehler_liste.append(f"{doc.original_filename}: {WORKER_DOWNLOAD_FAILED}")
                         fehler += 1
                 except Exception as e:
                     fehler_liste.append(f"{doc.original_filename}: {str(e)}")
@@ -506,7 +507,7 @@ class CreditsWorker(QThread):
     """Worker zum Abrufen der KI-Provider Credits/Usage."""
     finished = Signal(object)
 
-    def __init__(self, api_client):
+    def __init__(self, api_client: APIClient):
         super().__init__()
         self.api_client = api_client
 
@@ -769,7 +770,8 @@ class SmartScanWorker(QThread):
             )
 
             if not result or not result.get('job_id'):
-                self.error.emit("Versand konnte nicht gestartet werden.")
+                from i18n.de import WORKER_SMARTSCAN_START_ERROR
+                self.error.emit(WORKER_SMARTSCAN_START_ERROR)
                 return
 
             job_id = result['job_id']
@@ -803,7 +805,8 @@ class SmartScanWorker(QThread):
                             raise
 
                 if not chunk_result or 'remaining' not in chunk_result:
-                    self.error.emit("Chunk-Verarbeitung nach Retries fehlgeschlagen.")
+                    from i18n.de import WORKER_SMARTSCAN_CHUNK_ERROR
+                    self.error.emit(WORKER_SMARTSCAN_CHUNK_ERROR)
                     return
 
                 processed += chunk_result.get('processed', 0)
@@ -816,7 +819,8 @@ class SmartScanWorker(QThread):
                     break
 
             if self._cancelled:
-                self.error.emit("Versand abgebrochen.")
+                from i18n.de import WORKER_SMARTSCAN_CANCELLED
+                self.error.emit(WORKER_SMARTSCAN_CANCELLED)
                 return
 
             final = api.get_job_details(job_id)

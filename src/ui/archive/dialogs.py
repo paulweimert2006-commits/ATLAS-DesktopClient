@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QComboBox, QCheckBox, QFormLayout, QFrame, QSplitter,
     QMenu, QMessageBox,
 )
+from ui.toast import ToastManager
 from PySide6.QtCore import Qt, Signal, QTimer
 
 from api.documents import Document
@@ -640,8 +641,8 @@ class DuplicateCompareDialog(QDialog):
             self._mark_pane_modified(side, f"\u274c {DUPLICATE_COMPARE_DELETED}")
         except Exception as e:
             from i18n.de import DUPLICATE_COMPARE_ERROR
-            QMessageBox.warning(self, "Fehler",
-                                DUPLICATE_COMPARE_ERROR.format(error=str(e)))
+            ToastManager.instance().show_error(
+                DUPLICATE_COMPARE_ERROR.format(error=str(e)))
     
     def _archive_document(self, side: str):
         """Archiviert das Dokument."""
@@ -654,8 +655,8 @@ class DuplicateCompareDialog(QDialog):
             self._mark_pane_modified(side, f"\U0001f4e6 {DUPLICATE_COMPARE_ARCHIVED}")
         except Exception as e:
             from i18n.de import DUPLICATE_COMPARE_ERROR
-            QMessageBox.warning(self, "Fehler",
-                                DUPLICATE_COMPARE_ERROR.format(error=str(e)))
+            ToastManager.instance().show_error(
+                DUPLICATE_COMPARE_ERROR.format(error=str(e)))
     
     def _unarchive_document(self, side: str):
         """Entarchiviert das Dokument."""
@@ -668,8 +669,8 @@ class DuplicateCompareDialog(QDialog):
             self._mark_pane_modified(side, f"\U0001f4e4 {DUPLICATE_COMPARE_UNARCHIVED}")
         except Exception as e:
             from i18n.de import DUPLICATE_COMPARE_ERROR
-            QMessageBox.warning(self, "Fehler",
-                                DUPLICATE_COMPARE_ERROR.format(error=str(e)))
+            ToastManager.instance().show_error(
+                DUPLICATE_COMPARE_ERROR.format(error=str(e)))
     
     def _move_document(self, side: str, target_box: str):
         """Verschiebt das Dokument in eine andere Box."""
@@ -686,8 +687,8 @@ class DuplicateCompareDialog(QDialog):
                 side, f"{emoji} {DUPLICATE_COMPARE_MOVED.format(box=box_name)}")
         except Exception as e:
             from i18n.de import DUPLICATE_COMPARE_ERROR
-            QMessageBox.warning(self, "Fehler",
-                                DUPLICATE_COMPARE_ERROR.format(error=str(e)))
+            ToastManager.instance().show_error(
+                DUPLICATE_COMPARE_ERROR.format(error=str(e)))
     
     def _color_document(self, side: str, color_key):
         """Setzt die Farbmarkierung des Dokuments."""
@@ -703,8 +704,8 @@ class DuplicateCompareDialog(QDialog):
                 self._mark_pane_modified(side, DUPLICATE_COMPARE_COLOR_REMOVED)
         except Exception as e:
             from i18n.de import DUPLICATE_COMPARE_ERROR
-            QMessageBox.warning(self, "Fehler",
-                                DUPLICATE_COMPARE_ERROR.format(error=str(e)))
+            ToastManager.instance().show_error(
+                DUPLICATE_COMPARE_ERROR.format(error=str(e)))
     
     def closeEvent(self, event):
         """Beim Schliessen: Worker stoppen und ggf. Signal senden."""

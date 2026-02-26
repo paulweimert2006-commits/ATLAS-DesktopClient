@@ -2,8 +2,6 @@
 UseCase: Dokument hochladen.
 """
 
-from typing import Optional
-
 from domain.archive.interfaces import IDocumentRepository
 from domain.archive.entities import Document, UploadResult
 
@@ -26,8 +24,9 @@ class UploadDocument:
                 document=doc,
                 is_duplicate=doc.is_duplicate,
             )
+        from i18n.de import WORKER_UPLOAD_FAILED
         return UploadResult(
             success=False,
             filename=file_path.rsplit('/', 1)[-1] if '/' in file_path else file_path.rsplit('\\', 1)[-1],
-            error='Upload fehlgeschlagen',
+            error=WORKER_UPLOAD_FAILED,
         )

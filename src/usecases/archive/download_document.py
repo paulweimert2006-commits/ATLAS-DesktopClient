@@ -2,8 +2,6 @@
 UseCase: Dokument herunterladen.
 """
 
-from typing import Optional
-
 from domain.archive.interfaces import IDocumentRepository
 from domain.archive.entities import Document, DownloadResult
 from domain.archive import archive_rules
@@ -24,11 +22,12 @@ class DownloadDocument:
         )
 
         if not saved_path:
+            from i18n.de import WORKER_DOWNLOAD_FAILED
             return DownloadResult(
                 success=False,
                 doc_id=doc.id,
                 filename=doc.original_filename,
-                error='Download fehlgeschlagen',
+                error=WORKER_DOWNLOAD_FAILED,
             )
 
         auto_archived = False
