@@ -13,6 +13,7 @@ from datetime import datetime
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFrame, QScrollArea, QGridLayout, QSizePolicy, QProgressBar,
+    QMessageBox, QPlainTextEdit,
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont
@@ -36,7 +37,10 @@ from ui.styles.tokens import (
     SPACING_SM, SPACING_MD, SPACING_LG,
     get_button_primary_style, get_button_secondary_style,
 )
-from ui.admin.workers import RunHealthCheckWorker, LoadHealthHistoryWorker
+from ui.admin.workers import (
+    RunHealthCheckWorker, LoadHealthHistoryWorker,
+    LoadMigrationsWorker, ExecuteMigrationWorker,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -90,11 +94,13 @@ class ServerHealthPanel(QWidget):
         self._active_workers: list = []
         self._last_result: Optional[Dict] = None
         self._history: List[Dict] = []
+        self._migrations: List[Dict] = []
         self._create_ui()
 
     def load_data(self):
-        """Laedt History beim Panel-Wechsel."""
+        """Laedt History und Migrationen beim Panel-Wechsel."""
         self._load_history()
+        self._load_migrations()
 
     # ================================================================
     #  UI-Aufbau
@@ -184,7 +190,68 @@ class ServerHealthPanel(QWidget):
         self._checks_layout.addStretch()
 
         scroll.setWidget(self._checks_container)
-        layout.addWidget(scroll)
+        layout.addWidget(scroll, 1)
+
+        # --- Migrations-Bereich ---
+        mig_frame = QFrame()
+        mig_frame.setStyleSheet(f"""
+            QFrame {{
+                background-color: {BG_PRIMARY};
+                border: 1px solid {BORDER_DEFAULT};
+                border-radius: {RADIUS_LG};
+            }}
+        """)
+        mig_layout = QVBoxLayout(mig_frame)
+        mig_layout.setContentsMargins(20, 16, 20, 16)
+        mig_layout.setSpacing(8)
+
+        mig_header = QHBoxLayout()
+
+        mig_title = QLabel(f"\U0001F4E6  {texts.MIGRATIONS_TITLE}")
+        mig_title.setFont(QFont(FONT_HEADLINE, 13))
+        mig_title.setStyleSheet(f"color: {PRIMARY_900}; border: none; background: transparent;")
+        mig_header.addWidget(mig_title)
+
+        mig_header.addStretch()
+
+        self._mig_summary_label = QLabel("")
+        self._mig_summary_label.setStyleSheet(f"""
+            color: {TEXT_SECONDARY};
+            font-size: {FONT_SIZE_CAPTION};
+            border: none;
+            background: transparent;
+        """)
+        mig_header.addWidget(self._mig_summary_label)
+
+        self._mig_refresh_btn = QPushButton(texts.MIGRATIONS_REFRESH)
+        self._mig_refresh_btn.setStyleSheet(get_button_secondary_style())
+        self._mig_refresh_btn.setCursor(Qt.PointingHandCursor)
+        self._mig_refresh_btn.clicked.connect(self._load_migrations)
+        mig_header.addWidget(self._mig_refresh_btn)
+
+        mig_layout.addLayout(mig_header)
+
+        mig_sep = QFrame()
+        mig_sep.setFixedHeight(1)
+        mig_sep.setStyleSheet(f"background-color: {BORDER_DEFAULT}; border: none;")
+        mig_layout.addWidget(mig_sep)
+
+        self._mig_list_container = QVBoxLayout()
+        self._mig_list_container.setSpacing(4)
+        mig_layout.addLayout(self._mig_list_container)
+
+        self._mig_empty_label = QLabel(texts.MIGRATIONS_EMPTY)
+        self._mig_empty_label.setStyleSheet(f"""
+            color: {TEXT_DISABLED};
+            font-size: {FONT_SIZE_BODY};
+            padding: 12px;
+            border: none;
+            background: transparent;
+        """)
+        self._mig_empty_label.setAlignment(Qt.AlignCenter)
+        self._mig_list_container.addWidget(self._mig_empty_label)
+
+        layout.addWidget(mig_frame)
 
     # ================================================================
     #  Health-Check ausfuehren
@@ -563,6 +630,231 @@ class ServerHealthPanel(QWidget):
             layout.addWidget(row)
 
         return frame
+
+    # ================================================================
+    #  Migrationen
+    # ================================================================
+
+    def _load_migrations(self):
+        self._mig_refresh_btn.setEnabled(False)
+        self._mig_refresh_btn.setText(texts.MIGRATIONS_LOADING)
+
+        worker = LoadMigrationsWorker(self._admin_api)
+        worker.finished.connect(self._on_migrations_loaded)
+        worker.error.connect(self._on_migrations_error)
+        worker.finished.connect(lambda: self._cleanup_worker(worker))
+        worker.error.connect(lambda: self._cleanup_worker(worker))
+        self._active_workers.append(worker)
+        worker.start()
+
+    def _on_migrations_loaded(self, data: dict):
+        self._mig_refresh_btn.setEnabled(True)
+        self._mig_refresh_btn.setText(texts.MIGRATIONS_REFRESH)
+
+        self._migrations = data.get('migrations', [])
+        total = data.get('total', 0)
+        applied = data.get('applied', 0)
+        pending = data.get('pending', 0)
+        manual = data.get('manual', 0)
+
+        self._mig_summary_label.setText(
+            texts.MIGRATIONS_SUMMARY.format(
+                total=total, applied=applied, pending=pending, manual=manual
+            )
+        )
+
+        self._render_migrations()
+
+    def _on_migrations_error(self, error: str):
+        self._mig_refresh_btn.setEnabled(True)
+        self._mig_refresh_btn.setText(texts.MIGRATIONS_REFRESH)
+        logger.error(f"Migrationen laden fehlgeschlagen: {error}")
+        if self._toast_manager:
+            self._toast_manager.show_error(
+                texts.MIGRATIONS_ERROR.format(error=error)
+            )
+
+    def _render_migrations(self):
+        while self._mig_list_container.count():
+            item = self._mig_list_container.takeAt(0)
+            w = item.widget()
+            if w:
+                w.deleteLater()
+
+        if not self._migrations:
+            empty = QLabel(texts.MIGRATIONS_EMPTY)
+            empty.setStyleSheet(f"""
+                color: {TEXT_DISABLED};
+                font-size: {FONT_SIZE_BODY};
+                padding: 12px;
+                border: none;
+                background: transparent;
+            """)
+            empty.setAlignment(Qt.AlignCenter)
+            self._mig_list_container.addWidget(empty)
+            return
+
+        for mig in self._migrations:
+            row = self._build_migration_row(mig)
+            self._mig_list_container.addWidget(row)
+
+    def _build_migration_row(self, mig: dict) -> QWidget:
+        row = QWidget()
+        row.setStyleSheet("background: transparent; border: none;")
+        h = QHBoxLayout(row)
+        h.setContentsMargins(0, 4, 0, 4)
+        h.setSpacing(12)
+
+        status = mig.get('status', 'unknown')
+        mig_type = mig.get('type', '?')
+
+        status_colors = {
+            'applied': SUCCESS,
+            'pending': WARNING,
+            'manual': ACCENT_500,
+            'unknown': TEXT_DISABLED,
+        }
+        status_bg_colors = {
+            'applied': SUCCESS_LIGHT,
+            'pending': WARNING_LIGHT,
+            'manual': f"{ACCENT_500}22",
+            'unknown': BG_SECONDARY,
+        }
+        status_labels = {
+            'applied': texts.MIGRATIONS_STATUS_APPLIED,
+            'pending': texts.MIGRATIONS_STATUS_PENDING,
+            'manual': texts.MIGRATIONS_STATUS_MANUAL,
+            'unknown': texts.MIGRATIONS_STATUS_UNKNOWN,
+        }
+
+        color = status_colors.get(status, TEXT_DISABLED)
+        bg = status_bg_colors.get(status, BG_SECONDARY)
+
+        status_pill = QLabel(status_labels.get(status, status))
+        status_pill.setFixedWidth(90)
+        status_pill.setAlignment(Qt.AlignCenter)
+        status_pill.setStyleSheet(f"""
+            color: {color};
+            background-color: {bg};
+            border-radius: 10px;
+            font-size: {FONT_SIZE_CAPTION};
+            font-weight: bold;
+            padding: 3px 8px;
+        """)
+        h.addWidget(status_pill)
+
+        type_label = QLabel(texts.MIGRATIONS_TYPE_PHP if mig_type == 'php' else texts.MIGRATIONS_TYPE_SQL)
+        type_label.setFixedWidth(40)
+        type_label.setAlignment(Qt.AlignCenter)
+        type_label.setStyleSheet(f"""
+            color: {TEXT_SECONDARY};
+            font-size: {FONT_SIZE_CAPTION};
+            font-family: {FONT_MONO};
+            font-weight: bold;
+            border: none;
+            background: transparent;
+        """)
+        h.addWidget(type_label)
+
+        name_label = QLabel(mig.get('filename', ''))
+        name_label.setStyleSheet(f"""
+            color: {TEXT_PRIMARY};
+            font-size: {FONT_SIZE_BODY};
+            font-family: {FONT_MONO};
+        """)
+        name_label.setMinimumWidth(300)
+        h.addWidget(name_label)
+
+        h.addStretch()
+
+        modified = mig.get('modified', '')
+        if modified:
+            date_label = QLabel(modified)
+            date_label.setStyleSheet(f"""
+                color: {TEXT_SECONDARY};
+                font-size: {FONT_SIZE_CAPTION};
+                font-family: {FONT_MONO};
+            """)
+            date_label.setFixedWidth(140)
+            h.addWidget(date_label)
+
+        size_bytes = mig.get('size_bytes', 0)
+        size_kb = round(size_bytes / 1024, 1) if size_bytes else 0
+        size_label = QLabel(f"{size_kb} KB")
+        size_label.setStyleSheet(f"""
+            color: {TEXT_SECONDARY};
+            font-size: {FONT_SIZE_CAPTION};
+            font-family: {FONT_MONO};
+        """)
+        size_label.setFixedWidth(60)
+        size_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        h.addWidget(size_label)
+
+        exec_btn = QPushButton(texts.MIGRATIONS_EXECUTE)
+        exec_btn.setFixedWidth(110)
+        exec_btn.setCursor(Qt.PointingHandCursor)
+        exec_btn.setStyleSheet(get_button_secondary_style())
+        filename = mig.get('filename', '')
+        exec_btn.clicked.connect(lambda _, f=filename: self._confirm_execute(f))
+        h.addWidget(exec_btn)
+
+        return row
+
+    def _confirm_execute(self, filename: str):
+        reply = QMessageBox.warning(
+            self,
+            texts.MIGRATIONS_CONFIRM_TITLE,
+            texts.MIGRATIONS_CONFIRM_TEXT.format(filename=filename),
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply == QMessageBox.Yes:
+            self._execute_migration(filename)
+
+    def _execute_migration(self, filename: str):
+        worker = ExecuteMigrationWorker(self._admin_api, filename)
+        worker.finished.connect(self._on_migration_executed)
+        worker.error.connect(self._on_migration_exec_error)
+        worker.finished.connect(lambda: self._cleanup_worker(worker))
+        worker.error.connect(lambda: self._cleanup_worker(worker))
+        self._active_workers.append(worker)
+        worker.start()
+
+    def _on_migration_executed(self, result: dict):
+        success = result.get('success', False)
+        output = result.get('output', '')
+        filename = result.get('filename', '')
+
+        if success:
+            if self._toast_manager:
+                self._toast_manager.show_success(
+                    f"{texts.MIGRATIONS_SUCCESS}: {filename}"
+                )
+        else:
+            if self._toast_manager:
+                self._toast_manager.show_error(
+                    texts.MIGRATIONS_ERROR.format(error=output[:200])
+                )
+
+        if output:
+            self._show_output_dialog(filename, output, success)
+
+        self._load_migrations()
+
+    def _on_migration_exec_error(self, error: str):
+        logger.error(f"Migration Ausfuehrung fehlgeschlagen: {error}")
+        if self._toast_manager:
+            self._toast_manager.show_error(
+                texts.MIGRATIONS_ERROR.format(error=error)
+            )
+
+    def _show_output_dialog(self, filename: str, output: str, success: bool):
+        dlg = QMessageBox(self)
+        dlg.setWindowTitle(f"{texts.MIGRATIONS_OUTPUT_TITLE}: {filename}")
+        dlg.setIcon(QMessageBox.Information if success else QMessageBox.Warning)
+        dlg.setText(texts.MIGRATIONS_SUCCESS if success else texts.MIGRATIONS_ERROR.format(error=""))
+        dlg.setDetailedText(output)
+        dlg.exec()
 
     # ================================================================
     #  Helpers

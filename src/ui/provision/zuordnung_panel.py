@@ -65,7 +65,7 @@ class ZuordnungPanel(QWidget):
         """View-Interface: Klaerfaelle anzeigen."""
         self._all_unmatched = commissions
         self._unmatched_model.set_data(commissions)
-        self._filter_clearance()
+        self._filter_clearance("alle")
 
     def show_mappings(self, mappings: list, unmapped: list = None) -> None:
         """View-Interface: Vermittler-Mappings anzeigen."""

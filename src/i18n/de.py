@@ -2287,6 +2287,26 @@ HEALTH_HISTORY_TITLE = "Verlauf"
 HEALTH_HISTORY_EMPTY = "Keine vergangenen Laeufe"
 HEALTH_HISTORY_RUN = "{date} - {status} ({duration}ms)"
 
+# --- Migrations-Verwaltung ---
+MIGRATIONS_TITLE = "Migrationen"
+MIGRATIONS_REFRESH = "Aktualisieren"
+MIGRATIONS_LOADING = "Lade Migrationen..."
+MIGRATIONS_EMPTY = "Keine Migrationsdateien gefunden"
+MIGRATIONS_EXECUTE = "Ausfuehren"
+MIGRATIONS_EXECUTING = "Wird ausgefuehrt..."
+MIGRATIONS_CONFIRM_TITLE = "Migration ausfuehren"
+MIGRATIONS_CONFIRM_TEXT = "Soll die Migration \"{filename}\" wirklich ausgefuehrt werden?\n\nDies aendert die Datenbank und kann nicht rueckgaengig gemacht werden."
+MIGRATIONS_SUCCESS = "Migration erfolgreich ausgefuehrt"
+MIGRATIONS_ERROR = "Migration fehlgeschlagen: {error}"
+MIGRATIONS_OUTPUT_TITLE = "Ausgabe"
+MIGRATIONS_STATUS_APPLIED = "Angewendet"
+MIGRATIONS_STATUS_PENDING = "Ausstehend"
+MIGRATIONS_STATUS_MANUAL = "Manuell"
+MIGRATIONS_STATUS_UNKNOWN = "Unbekannt"
+MIGRATIONS_TYPE_PHP = "PHP"
+MIGRATIONS_TYPE_SQL = "SQL"
+MIGRATIONS_SUMMARY = "{total} Dateien | {applied} angewendet | {pending} ausstehend | {manual} manuell"
+
 # ═══════════════════════════════════════════════════════
 # Clean Architecture – Provisions-Redesign
 # ═══════════════════════════════════════════════════════
