@@ -997,6 +997,14 @@ DUPLICATE_COMPARE_NOT_FOUND = "Gegenstueck konnte nicht gefunden werden"
 DUPLICATE_COMPARE_ERROR = "Fehler bei Aktion: {error}"
 DUPLICATE_COMPARE_CONFIRM_DELETE = "Soll dieses Dokument wirklich geloescht werden?\n\n{filename}"
 
+# === Worker-/UseCase-Fehlermeldungen ===
+WORKER_HISTORY_LOAD_ERROR = "Historie konnte nicht geladen werden"
+WORKER_UPLOAD_FAILED = "Upload fehlgeschlagen"
+WORKER_DOWNLOAD_FAILED = "Download fehlgeschlagen"
+WORKER_SMARTSCAN_START_ERROR = "Versand konnte nicht gestartet werden."
+WORKER_SMARTSCAN_CHUNK_ERROR = "Chunk-Verarbeitung nach Retries fehlgeschlagen."
+WORKER_SMARTSCAN_CANCELLED = "Versand abgebrochen."
+
 # === Leere-Seiten-Erkennung ===
 EMPTY_PAGES_COLUMN_HEADER = ""
 EMPTY_PAGES_ICON_PARTIAL = "\u25D1"     # Halb-Kreis (teilweise leer)
