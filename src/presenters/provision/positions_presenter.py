@@ -300,6 +300,18 @@ class PositionsPresenter:
         """
         return self._repo.save_commission_note(commission_id, note)
 
+    def get_raw_data(self, batch_id: int, row: int = None) -> dict:
+        """
+        Laedt die gespeicherten Rohdaten fuer einen Import-Batch.
+
+        Args:
+            batch_id: Import-Batch-ID
+            row: Optional, einzelne Zeilennummer (source_row)
+        Returns:
+            Dict mit headers, rows/row, total_rows etc.
+        """
+        return self._repo.get_raw_data(batch_id, row)
+
     def refresh(self) -> None:
         """
         Löst das Neuladen der aktuellen Ansicht mit zuletzt gesetzten Filterparametern aus.
@@ -325,3 +337,9 @@ class PositionsPresenter:
             if w and w.isRunning():
                 return True
         return False
+
+    def cleanup(self) -> None:
+        for w in (self._load_worker, self._audit_worker, self._ignore_worker):
+            if w and w.isRunning():
+                w.quit()
+                w.wait(5000)

@@ -276,6 +276,39 @@ class ProvisionAPI:
             raise
         return None
 
+    def upload_raw_data(self, batch_id: int, headers: list, rows: list,
+                        sheet_name: str = None, total_rows: int = 0,
+                        skipped_rows: int = 0) -> bool:
+        try:
+            resp = self.client.post(
+                f'/pm/import/{batch_id}/raw-data',
+                json_data={
+                    'headers': headers,
+                    'rows': rows,
+                    'sheet_name': sheet_name,
+                    'total_rows': total_rows,
+                    'skipped_rows': skipped_rows,
+                },
+                timeout=120,
+            )
+            return resp.get('success', False)
+        except APIError as e:
+            logger.error(f"Fehler beim Upload der Rohdaten (batch {batch_id}): {e}")
+        return False
+
+    def get_raw_data(self, batch_id: int, row: int = None) -> dict:
+        try:
+            params = {}
+            if row is not None:
+                params['row'] = row
+            resp = self.client.get(
+                f'/pm/import/{batch_id}/raw-data', params=params)
+            if resp.get('success'):
+                return resp.get('data', {})
+        except APIError as e:
+            logger.error(f"Fehler beim Laden der Rohdaten (batch {batch_id}): {e}")
+        return {}
+
     def trigger_auto_match(self, batch_id: int = None) -> Dict:
         try:
             data = {}

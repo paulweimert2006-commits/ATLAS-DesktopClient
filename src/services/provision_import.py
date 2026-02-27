@@ -98,6 +98,8 @@ class ParseResult:
     total_rows: int = 0
     skipped_rows: int = 0
     errors: List[str] = field(default_factory=list)
+    raw_headers: List[str] = field(default_factory=list)
+    raw_rows: List[List[str]] = field(default_factory=list)
 
 
 # ═══════════════════════════════════════════════════════
@@ -165,6 +167,15 @@ def _map_art(raw: str, vu_name: str) -> str:
     return 'sonstige'
 
 
+def _extract_raw_cells(row) -> List[str]:
+    """Alle Zellwerte einer openpyxl-Zeile als String-Liste extrahieren."""
+    cells = []
+    for cell in row:
+        v = cell.value if hasattr(cell, 'value') else cell
+        cells.append(str(v) if v is not None else '')
+    return cells
+
+
 def parse_vu_sheet(wb, sheet_name: str) -> ParseResult:
     """Ein einzelnes VU-Sheet parsen (iter_rows fuer Performance)."""
     result = ParseResult(sheet_name=sheet_name, vu_name=sheet_name)
@@ -204,17 +215,21 @@ def parse_vu_sheet(wb, sheet_name: str) -> ParseResult:
     logger.info(f"Parsing {sheet_name}: vsnr={vsnr_idx}, betrag={betrag_idx}, "
                 f"art={art_idx}, datum={datum_idx}")
 
+    for header_row in ws.iter_rows(min_row=1, max_row=1, values_only=False):
+        result.raw_headers = _extract_raw_cells(header_row)
+        break
+
     row_num = 0
-    for row in ws.iter_rows(min_row=2, max_col=max_col_needed, values_only=False):
-        # Zählt echte Datenzeilen hoch (header = Zeile 1).
+    for row in ws.iter_rows(min_row=2, values_only=False):
         row_num += 1
         result.total_rows += 1
+
+        result.raw_rows.append(_extract_raw_cells(row))
+
         try:
-            # Versicherungsnummer extrahieren, Pflichtfeld für Import.
             vsnr_cell = row[vsnr_idx - 1] if vsnr_idx - 1 < len(row) else None
             vsnr_raw = vsnr_cell.value if vsnr_cell else None
             if vsnr_raw is None or str(vsnr_raw).strip() == '':
-                # Leere Zeile überspringen.
                 result.skipped_rows += 1
                 continue
 

@@ -241,3 +241,9 @@ class DistributionPresenter:
             if w and w.isRunning():
                 return True
         return False
+
+    def cleanup(self) -> None:
+        for w in (self._load_worker, self._save_emp_worker, self._save_model_worker):
+            if w and w.isRunning():
+                w.quit()
+                w.wait(5000)

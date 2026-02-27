@@ -194,3 +194,9 @@ class PayoutsPresenter:
             if w and w.isRunning():
                 return True
         return False
+
+    def cleanup(self) -> None:
+        for w in (self._load_worker, self._pos_worker):
+            if w and w.isRunning():
+                w.quit()
+                w.wait(5000)

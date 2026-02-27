@@ -37,7 +37,7 @@ from ui.provision.widgets import (
 )
 from ui.provision.workers import (
     PositionsLoadWorker, AuditLoadWorker, IgnoreWorker, MappingCreateWorker,
-    OverrideWorker, OverrideResetWorker, NoteWorker,
+    OverrideWorker, OverrideResetWorker, NoteWorker, RawDataLoadWorker,
 )
 from ui.provision.models import PositionsModel, status_label, status_pill_key, ART_LABELS
 from ui.provision.dialogs import MatchContractDialog, OverrideDialog, NoteDialog
@@ -304,6 +304,11 @@ class ProvisionspositionenPanel(QWidget):
         self._det_art = self._add_detail_field(texts.PROVISION_POS_DETAIL_ART)
         self._det_datum = self._add_detail_field(texts.PROVISION_POS_COL_DATUM)
         self._det_kunde = self._add_detail_field(texts.PROVISION_POS_COL_KUNDE)
+
+        self._det_raw_btn = QPushButton(texts.PM_RAW_BTN_SHOW)
+        self._det_raw_btn.setCursor(Qt.PointingHandCursor)
+        self._det_raw_btn.clicked.connect(self._show_raw_data)
+        self._detail_layout.addWidget(self._det_raw_btn)
 
         # Zuordnung
         self._det_section_match = QLabel(texts.PROVISION_POS_DETAIL_MATCHING)
@@ -629,6 +634,7 @@ class ProvisionspositionenPanel(QWidget):
                 pass
         self._det_datum.setText(d)
         self._det_kunde.setText(comm.versicherungsnehmer or "")
+        self._det_raw_btn.setVisible(bool(comm.import_batch_id))
 
         self._det_status.setText(status_label(comm))
 
@@ -714,6 +720,69 @@ class ProvisionspositionenPanel(QWidget):
                 'time': e.get('created_at', '')[:16].replace('T', ' ') if e.get('created_at') else '',
             })
         self._activity_feed.set_items(feed_items)
+
+    def _show_raw_data(self):
+        comm = self._current_detail_comm
+        if not comm or not comm.import_batch_id:
+            return
+
+        if hasattr(self, '_raw_worker') and self._raw_worker and self._raw_worker.isRunning():
+            return
+
+        self._det_raw_btn.setEnabled(False)
+        self._det_raw_btn.setText(texts.PM_RAW_LOADING)
+
+        self._raw_comm = comm
+        logger.info(f"Rohdaten laden: batch_id={comm.import_batch_id}, sheet={comm.import_sheet_name}, vu={comm.import_vu_name}")
+        self._raw_worker = RawDataLoadWorker(self._backend, comm.import_batch_id)
+        self._raw_worker.finished.connect(self._on_raw_data_loaded)
+        self._raw_worker.error.connect(self._on_raw_data_error)
+        self._raw_worker.start()
+
+    def _on_raw_data_loaded(self, batch_id: int, raw: dict):
+        self._det_raw_btn.setEnabled(True)
+        self._det_raw_btn.setText(texts.PM_RAW_BTN_SHOW)
+
+        logger.info(f"Rohdaten GET batch={batch_id}: keys={list(raw.keys()) if raw else 'None'}, "
+                     f"sheets={len(raw.get('sheets', []))} entries" if raw else "raw=None")
+        sheets = raw.get('sheets', []) if raw else []
+        if not sheets:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.information(self, texts.PM_RAW_BTN_SHOW, texts.PM_RAW_NO_DATA)
+            return
+
+        comm = self._raw_comm
+        sheet_key = (comm.import_sheet_name or comm.import_vu_name) if comm else None
+        sheet = None
+        if sheet_key:
+            sheet = next((s for s in sheets if s.get('sheet_name') == sheet_key), None)
+        if not sheet and len(sheets) == 1:
+            sheet = sheets[0]
+        if not sheet:
+            sheet = sheets[0]
+
+        logger.info(f"Rohdaten-Viewer: sheet_key='{sheet_key}', "
+                     f"gewaehlt='{sheet.get('sheet_name')}', "
+                     f"source_row={comm.source_row if comm else None}, "
+                     f"rows={len(sheet.get('rows', []))}")
+
+        from ui.provision.raw_data_viewer import RawDataViewerDialog
+        dlg = RawDataViewerDialog(
+            parent=self,
+            headers=sheet.get('headers', []),
+            rows_data=sheet.get('rows', []),
+            target_row=comm.source_row if comm else None,
+            sheet_name=sheet.get('sheet_name'),
+            title=texts.PM_RAW_TITLE_JSON.format(batch_id=batch_id),
+        )
+        dlg.exec()
+
+    def _on_raw_data_error(self, error: str):
+        self._det_raw_btn.setEnabled(True)
+        self._det_raw_btn.setText(texts.PM_RAW_BTN_SHOW)
+        logger.error(f"Rohdaten-Laden fehlgeschlagen: {error}")
+        from PySide6.QtWidgets import QMessageBox
+        QMessageBox.warning(self, texts.PM_RAW_BTN_SHOW, texts.PM_RAW_LOAD_ERROR)
 
     def _ignore_commission(self, comm: Commission):
         if hasattr(self, '_ignore_worker') and self._ignore_worker and self._ignore_worker.isRunning():

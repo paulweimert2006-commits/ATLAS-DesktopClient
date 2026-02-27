@@ -2394,6 +2394,19 @@ PROVISION_IRRELEVANT_REASON_VB_DY = "Buchungsart 'dy'"
 PROVISION_IRRELEVANT_REASON_VB_KOND = "Konditionssatz nicht 15/35/50"
 
 PROVISION_SOURCE_JUMP_TIP = "Zur Originalzeile in der Quelldatei springen"
+
+# ── Rohdaten-Speicherung ──
+
+PM_RAW_BTN_SHOW = "Alle Originaldaten anzeigen"
+PM_RAW_BTN_EXPORT = "Als Excel exportieren"
+PM_RAW_BTN_PRINT = "Drucken"
+PM_RAW_NO_DATA = "Keine Rohdaten gespeichert (Import vor Aktivierung)"
+PM_RAW_EXPORT_SUCCESS = "Rohdaten exportiert: {path}"
+PM_RAW_EXPORT_ERROR = "Export fehlgeschlagen: {error}"
+PM_RAW_LOADING = "Lade Originaldaten..."
+PM_RAW_LOAD_ERROR = "Fehler beim Laden der Originaldaten"
+PM_RAW_TITLE_JSON = "Originaldaten – Batch {batch_id}"
+PM_RAW_ROW_COUNT = "{total} Zeilen ({skipped} uebersprungen)"
 PROVISION_DETAIL_BUCHUNGSART = "Buchungsart (roh)"
 PROVISION_DETAIL_KONDITIONSSATZ = "Konditionssatz"
 PROVISION_DETAIL_COURTAGE_RATE = "Courtagesatz"

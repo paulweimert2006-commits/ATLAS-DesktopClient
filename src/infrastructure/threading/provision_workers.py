@@ -91,6 +91,20 @@ class VuParseFileWorker(QThread):
     def __init__(self, path: str):
         super().__init__()
         self._path = path
+        self.raw_data_map: Dict = {}
+
+    @staticmethod
+    def _build_raw_data_map(results) -> Dict:
+        raw_map = {}
+        for pr in results:
+            if pr.raw_headers or pr.raw_rows:
+                raw_map[pr.sheet_name or pr.vu_name] = {
+                    'headers': pr.raw_headers,
+                    'rows': pr.raw_rows,
+                    'total_rows': pr.total_rows,
+                    'skipped_rows': pr.skipped_rows,
+                }
+        return raw_map
 
     def run(self):
         try:
@@ -111,6 +125,7 @@ class VuParseFileWorker(QThread):
                     all_rows.extend(pr.rows)
                     if pr.rows:
                         vu_names.append(pr.vu_name)
+                self.raw_data_map = self._build_raw_data_map(results)
                 vu = ', '.join(vu_names) if vu_names else (known_sheets[0] if known_sheets else '')
                 sheet = known_sheets[0] if len(known_sheets) == 1 else None
                 log += f"\n{len(all_rows)} {texts.PROVISION_IMPORT_ROWS_FOUND}"
@@ -125,6 +140,7 @@ class VuParseFileWorker(QThread):
                     all_rows = []
                     for pr in results:
                         all_rows.extend(pr.rows)
+                    self.raw_data_map = self._build_raw_data_map(results)
                     log += f"\n{len(all_rows)} {texts.PROVISION_IMPORT_ROWS_FOUND}"
                     self.finished.emit(all_rows, vu_name, vu_name, log)
                 else:
@@ -140,7 +156,8 @@ class VuImportWorker(QThread):
     progress = Signal(str)
 
     def __init__(self, repo: ProvisionRepository, rows: List[Dict], filename: str,
-                 sheet_name: str, vu_name: str, file_hash: str):
+                 sheet_name: str, vu_name: str, file_hash: str,
+                 raw_data_map: Dict = None):
         super().__init__()
         self._repo = repo
         self._rows = rows
@@ -148,6 +165,7 @@ class VuImportWorker(QThread):
         self._sheet_name = sheet_name
         self._vu_name = vu_name
         self._file_hash = file_hash
+        self._raw_data_map = raw_data_map or {}
 
     def run(self):
         try:
@@ -161,6 +179,7 @@ class VuImportWorker(QThread):
 
             accumulated = ImportResult()
             chunk_size = 2000
+            batch_map = {}
 
             for (vu_name, sheet_name), vu_rows in vu_groups.items():
                 chunks = [vu_rows[i:i+chunk_size] for i in range(0, len(vu_rows), chunk_size)]
@@ -192,9 +211,40 @@ class VuImportWorker(QThread):
                         accumulated.batch_id = result.batch_id
                         if result.matching:
                             accumulated.matching = result.matching
+                        batch_map[sheet_name or vu_name] = result.batch_id
+
+            if batch_map and self._raw_data_map:
+                self._upload_raw_data(batch_map)
+
             self.finished.emit(accumulated)
         except Exception as e:
             self.error.emit(str(e))
+
+    def _upload_raw_data(self, batch_map: dict) -> None:
+        logger.info(f"Rohdaten-Upload: batch_map={batch_map}, raw_sheets={list(self._raw_data_map.keys())}")
+        for sheet_key, raw_info in self._raw_data_map.items():
+            batch_id = batch_map.get(sheet_key)
+            if not batch_id:
+                logger.warning(f"  Sheet '{sheet_key}': Kein Batch-ID gefunden, uebersprungen")
+                continue
+            try:
+                n_rows = len(raw_info.get('rows', []))
+                n_headers = len(raw_info.get('headers', []))
+                logger.info(f"  Upload Sheet '{sheet_key}' -> batch={batch_id}: {n_headers} headers, {n_rows} rows")
+                ok = self._repo.upload_raw_data(
+                    batch_id=batch_id,
+                    headers=raw_info['headers'],
+                    rows=raw_info['rows'],
+                    sheet_name=sheet_key,
+                    total_rows=raw_info.get('total_rows', len(raw_info['rows'])),
+                    skipped_rows=raw_info.get('skipped_rows', 0),
+                )
+                if ok:
+                    logger.info(f"  Sheet '{sheet_key}' (batch={batch_id}): Upload OK")
+                else:
+                    logger.error(f"  Sheet '{sheet_key}' (batch={batch_id}): Upload FEHLGESCHLAGEN (success=false)")
+            except Exception as e:
+                logger.error(f"  Sheet '{sheet_key}' (batch={batch_id}): Upload EXCEPTION: {e}")
 
 
 # ═══════════════════════════════════════════════════════
@@ -249,6 +299,23 @@ class IgnoreWorker(QThread):
         try:
             ok = self._repo.ignore_commission(self._comm_id)
             self.finished.emit(ok)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+class RawDataLoadWorker(QThread):
+    finished = Signal(int, dict)
+    error = Signal(str)
+
+    def __init__(self, repo: ProvisionRepository, batch_id: int):
+        super().__init__()
+        self._repo = repo
+        self._batch_id = batch_id
+
+    def run(self):
+        try:
+            data = self._repo.get_raw_data(self._batch_id)
+            self.finished.emit(self._batch_id, data)
         except Exception as e:
             self.error.emit(str(e))
 

@@ -337,26 +337,29 @@ class ProvisionHub(QWidget):
     def get_blocking_operations(self) -> list:
         """Laufende Operationen die das Schliessen blockieren."""
         ops = []
-        runs_panel = self._content_stack.widget(self.PANEL_IMPORT)
-        if runs_panel and hasattr(runs_panel, '_import_worker'):
-            worker = runs_panel._import_worker
-            if worker and worker.isRunning():
-                ops.append(texts.PROVISION_BLOCKING_IMPORT)
-            parse_worker = getattr(runs_panel, '_parse_worker', None)
-            if parse_worker and parse_worker.isRunning():
-                ops.append(texts.PROVISION_BLOCKING_PARSE)
+
+        for name, presenter in self._presenters.items():
+            if presenter and hasattr(presenter, 'has_running_workers'):
+                if presenter.has_running_workers():
+                    ops.append(texts.PROVISION_BLOCKING_IMPORT if name == 'import'
+                               else texts.PROVISION_BLOCKING_WORKER)
 
         for index in list(self._panels_loaded):
-            if index == self.PANEL_IMPORT:
-                continue
             panel = self._content_stack.widget(index)
             if not panel:
                 continue
-            for attr in ('_load_worker', '_worker', '_detail_worker',
-                         '_audit_worker', '_ignore_worker', '_mapping_worker',
-                         '_pos_worker', '_generate_worker', '_save_worker'):
+            for attr in ('_import_worker', '_parse_worker', '_load_worker',
+                         '_worker', '_detail_worker', '_audit_worker',
+                         '_ignore_worker', '_mapping_worker', '_pos_worker',
+                         '_generate_worker', '_save_worker', '_raw_worker'):
                 w = getattr(panel, attr, None)
                 if w and w.isRunning():
                     ops.append(texts.PROVISION_BLOCKING_WORKER)
                     break
         return ops
+
+    def cleanup(self) -> None:
+        """Alle laufenden Worker sicher beenden."""
+        for presenter in self._presenters.values():
+            if presenter and hasattr(presenter, 'cleanup'):
+                presenter.cleanup()

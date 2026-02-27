@@ -136,7 +136,8 @@ class ImportPresenter:
                 self._view.on_parse_complete(rows, vu_name, sheet_name)
 
     def start_import(self, rows: List[Dict], filename: str,
-                     sheet_name: str, vu_name: str, file_hash: str) -> None:
+                     sheet_name: str, vu_name: str, file_hash: str,
+                     raw_data_map: dict = None) -> None:
         """
         Startet den eigentlichen Datenimport (asynchron) für das Panel.
 
@@ -146,11 +147,13 @@ class ImportPresenter:
             sheet_name: Sheet-Name aus der Datei (falls relevant)
             vu_name: Versicherername (VU)
             file_hash: Dateihash (Fingerprint für Duplikatsprüfung)
+            raw_data_map: Rohdaten pro Sheet (Headers + alle Zeilen)
         """
         if self._import_worker and self._import_worker.isRunning():
             return
         self._import_worker = VuImportWorker(
-            self._repo, rows, filename, sheet_name, vu_name, file_hash)
+            self._repo, rows, filename, sheet_name, vu_name, file_hash,
+            raw_data_map=raw_data_map)
         self._import_worker.progress.connect(self._on_import_progress)
         self._import_worker.finished.connect(self._on_import_done)
         self._import_worker.error.connect(self._on_error)
@@ -193,3 +196,10 @@ class ImportPresenter:
             if w and w.isRunning():
                 return True
         return False
+
+    def cleanup(self) -> None:
+        for w in (self._import_worker, self._parse_worker, self._batches_worker):
+            if w and w.isRunning():
+                logger.info(f"Warte auf Worker {w.__class__.__name__}...")
+                w.quit()
+                w.wait(10000)

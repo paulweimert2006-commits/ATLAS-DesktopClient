@@ -266,6 +266,7 @@ class AbrechnungslaeufPanel(QWidget):
         self._parsed_rows = rows
         self._parsed_vu = vu_name
         self._parsed_sheet = sheet_name
+        self._parsed_raw_data_map = getattr(self._parse_worker, 'raw_data_map', {})
         self._log.setText(log_text)
         self._import_btn.setEnabled(len(rows) > 0)
 
@@ -281,6 +282,7 @@ class AbrechnungslaeufPanel(QWidget):
         self._import_btn.setEnabled(False)
         self._progress.setVisible(True)
 
+        raw_map = getattr(self, '_parsed_raw_data_map', {})
         if self._presenter:
             self._presenter.start_import(
                 rows=self._parsed_rows,
@@ -288,11 +290,13 @@ class AbrechnungslaeufPanel(QWidget):
                 sheet_name=self._parsed_sheet,
                 vu_name=self._parsed_vu,
                 file_hash=self._parsed_hash,
+                raw_data_map=raw_map,
             )
         elif self._api:
             self._import_worker = VuImportWorker(
                 self._api, self._parsed_rows, os.path.basename(self._selected_path),
                 self._parsed_sheet, self._parsed_vu, self._parsed_hash,
+                raw_data_map=raw_map,
             )
             self._import_worker.progress.connect(lambda msg: self._log.append(msg))
             self._import_worker.finished.connect(self._on_import_done)
