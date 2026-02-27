@@ -210,6 +210,27 @@ class Commission:
     buchungsart_raw: Optional[str] = None
     konditionssatz: Optional[str] = None
     courtage_rate: Optional[float] = None
+    amount_settled: Optional[float] = None
+    amount_override_reason: Optional[str] = None
+    amount_overridden_by: Optional[int] = None
+    amount_overridden_at: Optional[str] = None
+    overrider_name: Optional[str] = None
+    note: Optional[str] = None
+    note_updated_at: Optional[str] = None
+    note_updated_by: Optional[int] = None
+    note_updater_name: Optional[str] = None
+
+    @property
+    def effective_amount(self) -> float:
+        return self.amount_settled if self.amount_settled is not None else self.betrag
+
+    @property
+    def is_overridden(self) -> bool:
+        return self.amount_settled is not None
+
+    @property
+    def has_note(self) -> bool:
+        return bool(self.note)
 
     @property
     def source_label(self) -> str:
@@ -257,6 +278,15 @@ class Commission:
             buchungsart_raw=d.get('buchungsart_raw'),
             konditionssatz=d.get('konditionssatz'),
             courtage_rate=float(d['courtage_rate']) if d.get('courtage_rate') is not None else None,
+            amount_settled=float(d['amount_settled']) if d.get('amount_settled') is not None else None,
+            amount_override_reason=d.get('amount_override_reason'),
+            amount_overridden_by=int(d['amount_overridden_by']) if d.get('amount_overridden_by') else None,
+            amount_overridden_at=d.get('amount_overridden_at'),
+            overrider_name=d.get('overrider_name'),
+            note=d.get('note'),
+            note_updated_at=d.get('note_updated_at'),
+            note_updated_by=int(d['note_updated_by']) if d.get('note_updated_by') else None,
+            note_updater_name=d.get('note_updater_name'),
         )
 
 

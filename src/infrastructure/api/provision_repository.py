@@ -107,6 +107,42 @@ class ProvisionRepository:
             logger.error(f"Fehler bei Split-Neuberechnung: {e}")
         return 0
 
+    def set_commission_override(self, commission_id: int, amount_settled: float,
+                                reason: str = None) -> dict:
+        try:
+            data = {'amount_settled': amount_settled}
+            if reason:
+                data['reason'] = reason
+            resp = self._client.put(
+                f'/pm/commissions/{commission_id}/override', json_data=data)
+            if resp.get('success'):
+                return {'success': True, 'abrechnungen': resp.get('data', {}).get('abrechnungen')}
+            return {'success': False}
+        except APIError as e:
+            logger.error(f"Fehler beim Setzen des Overrides {commission_id}: {e}")
+        return {'success': False}
+
+    def reset_commission_override(self, commission_id: int) -> dict:
+        try:
+            resp = self._client.delete(
+                f'/pm/commissions/{commission_id}/override')
+            if resp.get('success'):
+                return {'success': True, 'abrechnungen': resp.get('data', {}).get('abrechnungen')}
+            return {'success': False}
+        except APIError as e:
+            logger.error(f"Fehler beim Zuruecksetzen des Overrides {commission_id}: {e}")
+        return {'success': False}
+
+    def save_commission_note(self, commission_id: int, note: str) -> bool:
+        try:
+            resp = self._client.put(
+                f'/pm/commissions/{commission_id}/note',
+                json_data={'note': note})
+            return resp.get('success', False)
+        except APIError as e:
+            logger.error(f"Fehler beim Speichern der Notiz {commission_id}: {e}")
+        return False
+
     # ── Dashboard ──
 
     def get_dashboard_summary(self, von: str = None,
@@ -455,15 +491,11 @@ class ProvisionRepository:
         return {}
 
     def update_abrechnung_status(self, abrechnung_id: int, status: str) -> bool:
-        try:
-            resp = self._client.put(
-                f'/pm/abrechnungen/{abrechnung_id}',
-                json_data={'status': status}
-            )
-            return resp.get('success', False)
-        except APIError as e:
-            logger.error(f"Fehler beim Aktualisieren der Abrechnung {abrechnung_id}: {e}")
-        return False
+        resp = self._client.put(
+            f'/pm/abrechnungen/{abrechnung_id}',
+            json_data={'status': status}
+        )
+        return resp.get('success', False)
 
     # ── Audit (IAuditRepository) ──
 

@@ -428,7 +428,10 @@ class PositionsModel(QAbstractTableModel):
             elif col == self.COL_VSNR:
                 return c.vsnr or ""
             elif col == self.COL_BETRAG:
-                return format_eur(c.betrag)
+                label = format_eur(c.effective_amount)
+                if c.is_overridden:
+                    label += " *"
+                return label
             elif col == self.COL_BUCHUNGSART:
                 return c.buchungsart_raw or ART_LABELS.get(c.art, c.art)
             elif col == self.COL_BERATER_ANTEIL:
@@ -442,20 +445,40 @@ class PositionsModel(QAbstractTableModel):
             elif col == self.COL_SOURCE:
                 return c.source_label
             elif col == self.COL_MENU:
-                return ""
+                return "\U0001f4dd" if c.has_note else ""
+
+        if role == Qt.ToolTipRole:
+            if col == self.COL_BETRAG and c.is_overridden:
+                return texts.PM_OVERRIDE_TOOLTIP.format(
+                    original=format_eur(c.betrag),
+                    settled=format_eur(c.amount_settled),
+                )
+            if col == self.COL_MENU and c.has_note:
+                snippet = (c.note[:80] + "...") if len(c.note or '') > 80 else (c.note or '')
+                return snippet
 
         if role == Qt.TextAlignmentRole:
             if col in (self.COL_BETRAG, self.COL_BERATER_ANTEIL):
                 return Qt.AlignRight | Qt.AlignVCenter
 
         if role == Qt.ForegroundRole:
-            if col == self.COL_BETRAG and c.betrag < 0:
-                return QColor(ERROR)
+            if col == self.COL_BETRAG:
+                if c.is_overridden:
+                    return QColor("#b45309")
+                if c.effective_amount < 0:
+                    return QColor(ERROR)
             if col == self.COL_VU:
                 vu = c.vu_name or c.versicherer or ''
                 color = VU_BADGE_COLORS.get(vu)
                 if color:
                     return QColor(color)
+
+        if role == Qt.FontRole:
+            if col == self.COL_BETRAG and c.is_overridden:
+                from PySide6.QtGui import QFont
+                f = QFont()
+                f.setItalic(True)
+                return f
 
         if role == Qt.UserRole:
             return c

@@ -258,6 +258,62 @@ class IgnoreWorker(QThread):
             self.error.emit(str(e))
 
 
+class OverrideWorker(QThread):
+    finished = Signal(object)
+    error = Signal(str)
+
+    def __init__(self, api: ProvisionAPI, comm_id: int, amount_settled: float,
+                 reason: str = None):
+        super().__init__()
+        self._api = api
+        self._comm_id = comm_id
+        self._amount_settled = amount_settled
+        self._reason = reason
+
+    def run(self):
+        try:
+            result = self._api.set_commission_override(
+                self._comm_id, self._amount_settled, self._reason)
+            self.finished.emit(result)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+class OverrideResetWorker(QThread):
+    finished = Signal(object)
+    error = Signal(str)
+
+    def __init__(self, api: ProvisionAPI, comm_id: int):
+        super().__init__()
+        self._api = api
+        self._comm_id = comm_id
+
+    def run(self):
+        try:
+            result = self._api.reset_commission_override(self._comm_id)
+            self.finished.emit(result)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+class NoteWorker(QThread):
+    finished = Signal(bool)
+    error = Signal(str)
+
+    def __init__(self, api: ProvisionAPI, comm_id: int, note: str):
+        super().__init__()
+        self._api = api
+        self._comm_id = comm_id
+        self._note = note
+
+    def run(self):
+        try:
+            ok = self._api.save_commission_note(self._comm_id, self._note)
+            self.finished.emit(ok)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
 class MappingCreateWorker(QThread):
     finished = Signal()
     error = Signal(str)
@@ -418,6 +474,24 @@ class AuszahlungenPositionenWorker(QThread):
             self.finished.emit(self._berater_id, comms)
         except Exception as e:
             self.error.emit(str(e))
+
+
+class AbrechnungStatusWorker(QThread):
+    finished = Signal(bool, str, str)
+    error = Signal(str)
+
+    def __init__(self, api, abrechnung_id: int, status: str, parent=None):
+        super().__init__(parent)
+        self._api = api
+        self._abrechnung_id = abrechnung_id
+        self._status = status
+
+    def run(self):
+        try:
+            ok = self._api.update_abrechnung_status(self._abrechnung_id, self._status)
+            self.finished.emit(ok, self._status, "")
+        except Exception as e:
+            self.finished.emit(False, self._status, str(e))
 
 
 # =============================================================================

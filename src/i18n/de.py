@@ -1648,6 +1648,7 @@ PROVISION_EMP_DELETE_HAS_REF = "Mitarbeiter hat noch zugeordnete Provisionen und
 PROVISION_TOAST_IMPORT_SUCCESS = "{count} Positionen importiert"
 PROVISION_TOAST_AUTOMATCH_DONE = "{matched} zugeordnet, {open} offen"
 PROVISION_TOAST_STATUS_CHANGED = "Status geaendert: {status}"
+PROVISION_TOAST_STATUS_ERROR = "Statusaenderung fehlgeschlagen"
 PROVISION_TOAST_EXPORT_DONE = "Export gespeichert: {path}"
 PROVISION_TOAST_GENERATE_DONE = "Abrechnungen fuer {monat} generiert"
 
@@ -1655,6 +1656,37 @@ PROVISION_GUELTIG_AB = "Gueltig ab"
 PROVISION_GUELTIG_AB_HINT = "Neuberechnung gilt ab diesem Datum"
 PROVISION_RECALC_TOAST = "{splits} Splits neuberechnet, {abrechnungen} Abrechnungen aktualisiert"
 PROVISION_RECALC_TOAST_NO_CHANGES = "Gespeichert (keine Neuberechnung noetig)"
+
+# ── Commission Override ──
+
+PM_OVERRIDE_TITLE = "Betrag korrigieren"
+PM_OVERRIDE_AMOUNT = "Abzurechnender Betrag"
+PM_OVERRIDE_REASON = "Grund (optional)"
+PM_OVERRIDE_REASON_PLACEHOLDER = "Warum wird der Betrag korrigiert?"
+PM_OVERRIDE_SET = "Korrektur speichern"
+PM_OVERRIDE_RESET = "Korrektur zuruecksetzen"
+PM_OVERRIDE_RESET_CONFIRM = "Soll die Betragskorrektur zurueckgesetzt werden? Der Originalbetrag wird wieder fuer die Abrechnung verwendet."
+PM_OVERRIDE_ORIGINAL = "Originalbetrag"
+PM_OVERRIDE_SETTLED = "Abzurechnender Betrag"
+PM_OVERRIDE_BY = "Korrigiert von"
+PM_OVERRIDE_AT = "Korrigiert am"
+PM_OVERRIDE_TOAST_SET = "Betragskorrektur gespeichert"
+PM_OVERRIDE_TOAST_SET_WITH_ABRECHNUNGEN = "Betragskorrektur gespeichert – {count} Abrechnung(en) neu berechnet"
+PM_OVERRIDE_TOAST_RESET = "Betragskorrektur zurueckgesetzt"
+PM_OVERRIDE_TOAST_RESET_WITH_ABRECHNUNGEN = "Betragskorrektur zurueckgesetzt – {count} Abrechnung(en) neu berechnet"
+PM_OVERRIDE_TOAST_ERROR = "Fehler bei Betragskorrektur"
+PM_OVERRIDE_TOOLTIP = "Korrigiert: {original} \u2192 {settled}"
+
+# ── Commission Note ──
+
+PM_NOTE_TITLE = "Notiz"
+PM_NOTE_PLACEHOLDER = "Notiz eingeben..."
+PM_NOTE_SAVE = "Notiz speichern"
+PM_NOTE_UPDATED_BY = "Zuletzt bearbeitet von {name}, {date}"
+PM_NOTE_EMPTY = "Keine Notiz vorhanden"
+PM_NOTE_TOAST_SAVED = "Notiz gespeichert"
+PM_NOTE_TOAST_DELETED = "Notiz geloescht"
+PM_NOTE_TOAST_ERROR = "Fehler beim Speichern der Notiz"
 
 # ── Provisionspositionen-Panel ──
 

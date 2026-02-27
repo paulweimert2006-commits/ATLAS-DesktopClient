@@ -37,9 +37,10 @@ from ui.provision.widgets import (
 )
 from ui.provision.workers import (
     PositionsLoadWorker, AuditLoadWorker, IgnoreWorker, MappingCreateWorker,
+    OverrideWorker, OverrideResetWorker, NoteWorker,
 )
 from ui.provision.models import PositionsModel, status_label, status_pill_key, ART_LABELS
-from ui.provision.dialogs import MatchContractDialog
+from ui.provision.dialogs import MatchContractDialog, OverrideDialog, NoteDialog
 from i18n import de as texts
 import logging
 
@@ -321,6 +322,27 @@ class ProvisionspositionenPanel(QWidget):
         self._det_berater_ant = self._add_detail_field(texts.PROVISION_POS_DETAIL_BERATER_ANTEIL)
         self._det_tl = self._add_detail_field(texts.PROVISION_POS_DETAIL_TEAMLEITER)
 
+        # Override-Info
+        self._det_section_override = QLabel(texts.PM_OVERRIDE_TITLE)
+        self._det_section_override.setStyleSheet(f"font-weight: 600; font-size: 11pt; color: {PRIMARY_900}; margin-top: 8px;")
+        self._detail_layout.addWidget(self._det_section_override)
+        self._det_override_original = self._add_detail_field(texts.PM_OVERRIDE_ORIGINAL)
+        self._det_override_settled = self._add_detail_field(texts.PM_OVERRIDE_SETTLED)
+        self._det_override_reason = self._add_detail_field(texts.PM_OVERRIDE_REASON)
+        self._det_override_by = self._add_detail_field(texts.PM_OVERRIDE_BY)
+
+        # Notiz
+        self._det_section_note = QLabel(texts.PM_NOTE_TITLE)
+        self._det_section_note.setStyleSheet(f"font-weight: 600; font-size: 11pt; color: {PRIMARY_900}; margin-top: 8px;")
+        self._detail_layout.addWidget(self._det_section_note)
+        self._det_note_text = QLabel("")
+        self._det_note_text.setWordWrap(True)
+        self._det_note_text.setStyleSheet(f"color: {PRIMARY_900}; font-size: {FONT_SIZE_BODY};")
+        self._detail_layout.addWidget(self._det_note_text)
+        self._det_note_meta = QLabel("")
+        self._det_note_meta.setStyleSheet(f"color: {PRIMARY_500}; font-size: {FONT_SIZE_CAPTION}; font-style: italic;")
+        self._detail_layout.addWidget(self._det_note_meta)
+
         # Audit-Log
         self._det_section_audit = QLabel(texts.PROVISION_POS_DETAIL_AUDIT)
         self._det_section_audit.setStyleSheet(f"font-weight: 600; font-size: 11pt; color: {PRIMARY_900}; margin-top: 8px;")
@@ -380,6 +402,12 @@ class ProvisionspositionenPanel(QWidget):
         mappable_name = comm.xempus_berater_name or comm.vermittler_name
         if not comm.berater_id and mappable_name:
             menu.addAction(texts.PROVISION_MAP_DLG_CREATE_TITLE, lambda: self._create_mapping_for(comm))
+        menu.addSeparator()
+        menu.addAction(texts.PM_OVERRIDE_TITLE, lambda: self._open_override_dialog(comm))
+        if comm.is_overridden:
+            menu.addAction(texts.PM_OVERRIDE_RESET, lambda: self._reset_override(comm))
+        menu.addAction(texts.PM_NOTE_TITLE, lambda: self._open_note_dialog(comm))
+        menu.addSeparator()
         menu.addAction(texts.PROVISION_MENU_IGNORE, lambda: self._ignore_commission(comm))
         return menu
 
@@ -620,6 +648,38 @@ class ProvisionspositionenPanel(QWidget):
         self._det_berater_ant.setText(format_eur(comm.berater_anteil) if comm.berater_anteil is not None else "\u2014")
         self._det_tl.setText(format_eur(comm.tl_anteil) if comm.tl_anteil is not None else "\u2014")
 
+        has_override = comm.is_overridden
+        self._det_section_override.setVisible(has_override)
+        if has_override:
+            self._det_override_original.setText(format_eur(comm.betrag))
+            self._det_override_settled.setText(format_eur(comm.amount_settled))
+            self._det_override_reason.setText(comm.amount_override_reason or "\u2014")
+            override_info = comm.overrider_name or "\u2014"
+            if comm.amount_overridden_at:
+                override_info += f" ({comm.amount_overridden_at[:16]})"
+            self._det_override_by.setText(override_info)
+        else:
+            self._det_override_original.setText("")
+            self._det_override_settled.setText("")
+            self._det_override_reason.setText("")
+            self._det_override_by.setText("")
+
+        has_note = comm.has_note
+        self._det_section_note.setVisible(True)
+        if has_note:
+            self._det_note_text.setText(comm.note)
+            self._det_note_text.setVisible(True)
+            if comm.note_updater_name and comm.note_updated_at:
+                self._det_note_meta.setText(texts.PM_NOTE_UPDATED_BY.format(
+                    name=comm.note_updater_name, date=comm.note_updated_at[:16]))
+                self._det_note_meta.setVisible(True)
+            else:
+                self._det_note_meta.setVisible(False)
+        else:
+            self._det_note_text.setText(texts.PM_NOTE_EMPTY)
+            self._det_note_text.setVisible(True)
+            self._det_note_meta.setVisible(False)
+
         self._detail_panel.setVisible(True)
         self._load_audit(comm)
 
@@ -668,6 +728,84 @@ class ProvisionspositionenPanel(QWidget):
             if self._toast_manager:
                 self._toast_manager.show_success(texts.PROVISION_TOAST_IGNORED)
             self._load_data()
+
+    def _open_override_dialog(self, comm: Commission):
+        dlg = OverrideDialog(comm, parent=self)
+        if dlg.exec() == QDialog.Accepted and dlg.amount is not None:
+            self._override_worker = OverrideWorker(
+                self._backend, comm.id, dlg.amount, dlg.reason)
+            self._override_worker.finished.connect(self._on_override_finished)
+            self._override_worker.error.connect(
+                lambda msg: self._show_toast_error(texts.PM_OVERRIDE_TOAST_ERROR, msg))
+            self._override_worker.start()
+
+    def _on_override_finished(self, result):
+        success = result.get('success', False) if isinstance(result, dict) else result
+        if success:
+            abr = result.get('abrechnungen') if isinstance(result, dict) else None
+            count = abr.get('abrechnungen_regenerated', 0) if abr else 0
+            if self._toast_manager:
+                if count > 0:
+                    self._toast_manager.show_success(
+                        texts.PM_OVERRIDE_TOAST_SET_WITH_ABRECHNUNGEN.format(count=count))
+                else:
+                    self._toast_manager.show_success(texts.PM_OVERRIDE_TOAST_SET)
+            self._load_data()
+        else:
+            if self._toast_manager:
+                self._toast_manager.show_error(texts.PM_OVERRIDE_TOAST_ERROR)
+
+    def _reset_override(self, comm: Commission):
+        from PySide6.QtWidgets import QMessageBox
+        reply = QMessageBox.question(
+            self, texts.PM_OVERRIDE_RESET, texts.PM_OVERRIDE_RESET_CONFIRM,
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if reply != QMessageBox.Yes:
+            return
+        self._override_reset_worker = OverrideResetWorker(self._backend, comm.id)
+        self._override_reset_worker.finished.connect(self._on_override_reset_finished)
+        self._override_reset_worker.error.connect(
+            lambda msg: self._show_toast_error(texts.PM_OVERRIDE_TOAST_ERROR, msg))
+        self._override_reset_worker.start()
+
+    def _on_override_reset_finished(self, result):
+        success = result.get('success', False) if isinstance(result, dict) else result
+        if success:
+            abr = result.get('abrechnungen') if isinstance(result, dict) else None
+            count = abr.get('abrechnungen_regenerated', 0) if abr else 0
+            if self._toast_manager:
+                if count > 0:
+                    self._toast_manager.show_success(
+                        texts.PM_OVERRIDE_TOAST_RESET_WITH_ABRECHNUNGEN.format(count=count))
+                else:
+                    self._toast_manager.show_success(texts.PM_OVERRIDE_TOAST_RESET)
+            self._load_data()
+        else:
+            if self._toast_manager:
+                self._toast_manager.show_error(texts.PM_OVERRIDE_TOAST_ERROR)
+
+    def _open_note_dialog(self, comm: Commission):
+        dlg = NoteDialog(comm, parent=self)
+        if dlg.exec() == QDialog.Accepted and dlg.note is not None:
+            self._note_worker = NoteWorker(self._backend, comm.id, dlg.note)
+            self._note_worker.finished.connect(self._on_note_finished)
+            self._note_worker.error.connect(
+                lambda msg: self._show_toast_error(texts.PM_NOTE_TOAST_ERROR, msg))
+            self._note_worker.start()
+
+    def _on_note_finished(self, ok: bool):
+        if ok:
+            if self._toast_manager:
+                self._toast_manager.show_success(texts.PM_NOTE_TOAST_SAVED)
+            self._load_data()
+        else:
+            if self._toast_manager:
+                self._toast_manager.show_error(texts.PM_NOTE_TOAST_ERROR)
+
+    def _show_toast_error(self, title: str, detail: str):
+        logger.warning(f"{title}: {detail}")
+        if self._toast_manager:
+            self._toast_manager.show_error(f"{title}: {detail}")
 
     def _on_detail_assign(self):
         if self._current_detail_comm:

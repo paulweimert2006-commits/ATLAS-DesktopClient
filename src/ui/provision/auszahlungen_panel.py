@@ -34,7 +34,7 @@ from ui.provision.widgets import (
     PaginationBar, ThreeDotMenuDelegate, ProvisionLoadingOverlay,
     format_eur, get_secondary_button_style, get_combo_style,
 )
-from ui.provision.workers import AuszahlungenLoadWorker, AuszahlungenPositionenWorker
+from ui.provision.workers import AuszahlungenLoadWorker, AuszahlungenPositionenWorker, AbrechnungStatusWorker
 from ui.provision.models import AuszahlungenModel, STATUS_LABELS, STATUS_PILL_MAP
 from i18n import de as texts
 import logging
@@ -260,9 +260,17 @@ class AuszahlungenPanel(QWidget):
             return None
         menu = QMenu(self)
         menu.addAction(texts.PROVISION_MENU_DETAILS, lambda: self._show_detail(item))
-        status_menu = menu.addMenu(texts.PROVISION_MENU_STATUS)
-        for s_key, s_label in STATUS_LABELS.items():
-            if s_key != item.status:
+        allowed = {
+            'berechnet':   ['geprueft'],
+            'geprueft':    ['berechnet', 'freigegeben'],
+            'freigegeben': ['geprueft', 'ausgezahlt'],
+            'ausgezahlt':  [],
+        }
+        transitions = allowed.get(item.status, [])
+        if transitions:
+            status_menu = menu.addMenu(texts.PROVISION_MENU_STATUS)
+            for s_key in transitions:
+                s_label = STATUS_LABELS.get(s_key, s_key)
                 status_menu.addAction(s_label, lambda sid=item.id, sk=s_key: self._change_status(sid, sk))
         return menu
 
@@ -429,10 +437,24 @@ class AuszahlungenPanel(QWidget):
                 self._load_data()
 
     def _change_status(self, abrechnung_id: int, status: str):
-        if self._backend.update_abrechnung_status(abrechnung_id, status):
+        if hasattr(self, '_status_worker') and self._status_worker and self._status_worker.isRunning():
+            return
+        self._status_worker = AbrechnungStatusWorker(
+            self._backend, abrechnung_id, status, parent=self)
+        self._status_worker.finished.connect(self._on_status_changed)
+        self._status_worker.start()
+
+    def _on_status_changed(self, ok: bool, status: str, error_msg: str):
+        if ok:
             if self._toast_manager:
                 label = STATUS_LABELS.get(status, status)
                 self._toast_manager.show_success(texts.PROVISION_TOAST_STATUS_CHANGED.format(status=label))
+            self._load_data()
+        else:
+            msg = error_msg or texts.PROVISION_TOAST_STATUS_ERROR
+            logger.warning(f"Statusaenderung fehlgeschlagen: {msg}")
+            if self._toast_manager:
+                self._toast_manager.show_error(msg)
             self._load_data()
 
     def _export_csv(self):

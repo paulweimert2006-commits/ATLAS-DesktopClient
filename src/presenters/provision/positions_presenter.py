@@ -120,6 +120,16 @@ class PositionsPresenter:
                         force_override: bool = False):
         return self._repo.assign_contract(commission_id, contract_id, force_override)
 
+    def set_commission_override(self, commission_id: int, amount_settled: float,
+                                reason: str = None) -> dict:
+        return self._repo.set_commission_override(commission_id, amount_settled, reason)
+
+    def reset_commission_override(self, commission_id: int) -> dict:
+        return self._repo.reset_commission_override(commission_id)
+
+    def save_commission_note(self, commission_id: int, note: str) -> bool:
+        return self._repo.save_commission_note(commission_id, note)
+
     def refresh(self) -> None:
         """Aktuelle Ansicht neu laden."""
         self.load_positions(**self._current_filters)
