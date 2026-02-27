@@ -476,6 +476,22 @@ class AuszahlungenPositionenWorker(QThread):
             self.error.emit(str(e))
 
 
+class AbrechnungGenerateWorker(QThread):
+    finished = Signal(object, str)
+
+    def __init__(self, api, monat: str, parent=None):
+        super().__init__(parent)
+        self._api = api
+        self._monat = monat
+
+    def run(self):
+        try:
+            resp = self._api.generate_abrechnung(self._monat)
+            self.finished.emit(resp, "")
+        except Exception as e:
+            self.finished.emit(None, str(e))
+
+
 class AbrechnungStatusWorker(QThread):
     finished = Signal(bool, str, str)
     error = Signal(str)

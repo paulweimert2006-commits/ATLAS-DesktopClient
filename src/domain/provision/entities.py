@@ -393,10 +393,16 @@ class BeraterAbrechnung:
     tl_abzug: float = 0.0
     netto_provision: float = 0.0
     rueckbelastungen: float = 0.0
+    korrektur_vormonat: float = 0.0
+    korrektur_details: Optional[str] = None
     auszahlung: float = 0.0
     anzahl_provisionen: int = 0
     status: str = 'berechnet'
     is_locked: bool = False
+
+    @property
+    def has_korrektur(self) -> bool:
+        return abs(self.korrektur_vormonat) > 0.005
 
     @classmethod
     def from_dict(cls, d: Dict) -> 'BeraterAbrechnung':
@@ -411,6 +417,8 @@ class BeraterAbrechnung:
             tl_abzug=float(d.get('tl_abzug', 0)),
             netto_provision=float(d.get('netto_provision', 0)),
             rueckbelastungen=float(d.get('rueckbelastungen', 0)),
+            korrektur_vormonat=float(d.get('korrektur_vormonat', 0)),
+            korrektur_details=d.get('korrektur_details'),
             auszahlung=float(d.get('auszahlung', 0)),
             anzahl_provisionen=int(d.get('anzahl_provisionen', 0)),
             status=d.get('status', 'berechnet'),

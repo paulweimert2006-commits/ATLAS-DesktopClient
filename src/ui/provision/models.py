@@ -7,7 +7,7 @@ Models nutzen i18n-Texte, Design-Tokens und format_eur aus widgets.
 """
 
 from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QFont
 from typing import List, Dict, Optional
 from datetime import datetime
 
@@ -805,11 +805,12 @@ class AuszahlungenModel(QAbstractTableModel):
     COL_TL = 3
     COL_NETTO = 4
     COL_RUECK = 5
-    COL_AUSZAHLUNG = 6
-    COL_POS = 7
-    COL_STATUS = 8
-    COL_VERSION = 9
-    COL_MENU = 10
+    COL_KORREKTUR = 6
+    COL_AUSZAHLUNG = 7
+    COL_POS = 8
+    COL_STATUS = 9
+    COL_VERSION = 10
+    COL_MENU = 11
 
     COLUMNS = [
         texts.PROVISION_PAY_COL_BERATER,
@@ -818,6 +819,7 @@ class AuszahlungenModel(QAbstractTableModel):
         texts.PROVISION_PAY_COL_TL,
         texts.PROVISION_PAY_COL_NETTO,
         texts.PROVISION_PAY_COL_RUECK,
+        texts.PM_PAY_COL_KORREKTUR,
         texts.PROVISION_PAY_COL_AUSZAHLUNG,
         texts.PROVISION_PAY_COL_POSITIONS,
         texts.PROVISION_PAY_COL_STATUS,
@@ -873,6 +875,8 @@ class AuszahlungenModel(QAbstractTableModel):
                 return format_eur(a.netto_provision)
             elif col == self.COL_RUECK:
                 return format_eur(a.rueckbelastungen)
+            elif col == self.COL_KORREKTUR:
+                return format_eur(a.korrektur_vormonat) if a.has_korrektur else ""
             elif col == self.COL_AUSZAHLUNG:
                 return format_eur(a.auszahlung)
             elif col == self.COL_POS:
@@ -884,7 +888,26 @@ class AuszahlungenModel(QAbstractTableModel):
             elif col == self.COL_MENU:
                 return ""
 
-        if role == Qt.TextAlignmentRole and col in (2, 3, 4, 5, 6, 7, 9):
+        if role == Qt.ToolTipRole and col == self.COL_KORREKTUR and a.has_korrektur:
+            try:
+                import json
+                details = json.loads(a.korrektur_details) if a.korrektur_details else []
+                lines = [texts.PM_KORREKTUR_TOOLTIP_HEADER]
+                for k in details:
+                    lines.append(texts.PM_KORREKTUR_TOOLTIP_LINE.format(
+                        monat=k.get('source_abrechnungsmonat', '?'),
+                        diff=format_eur(float(k.get('differenz_netto', 0))),
+                    ))
+                return '\n'.join(lines)
+            except Exception:
+                return None
+
+        _right_cols = {
+            self.COL_BRUTTO, self.COL_TL, self.COL_NETTO, self.COL_RUECK,
+            self.COL_KORREKTUR, self.COL_AUSZAHLUNG, self.COL_POS,
+            self.COL_VERSION,
+        }
+        if role == Qt.TextAlignmentRole and col in _right_cols:
             return Qt.AlignRight | Qt.AlignVCenter
 
         if role == Qt.ForegroundRole:
@@ -892,6 +915,13 @@ class AuszahlungenModel(QAbstractTableModel):
                 return QColor(ERROR)
             if col == self.COL_TL and a.tl_abzug < 0:
                 return QColor(ERROR)
+            if col == self.COL_KORREKTUR and a.has_korrektur:
+                return QColor(WARNING)
+
+        if role == Qt.FontRole and col == self.COL_KORREKTUR and a.has_korrektur:
+            font = QFont()
+            font.setItalic(True)
+            return font
 
         return None
 

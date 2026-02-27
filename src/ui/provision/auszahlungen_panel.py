@@ -34,7 +34,10 @@ from ui.provision.widgets import (
     PaginationBar, ThreeDotMenuDelegate, ProvisionLoadingOverlay,
     format_eur, get_secondary_button_style, get_combo_style,
 )
-from ui.provision.workers import AuszahlungenLoadWorker, AuszahlungenPositionenWorker, AbrechnungStatusWorker
+from ui.provision.workers import (
+    AuszahlungenLoadWorker, AuszahlungenPositionenWorker,
+    AbrechnungGenerateWorker, AbrechnungStatusWorker,
+)
 from ui.provision.models import AuszahlungenModel, STATUS_LABELS, STATUS_PILL_MAP
 from i18n import de as texts
 import logging
@@ -159,6 +162,7 @@ class AuszahlungenPanel(QWidget):
         self._table.horizontalHeader().setStretchLastSection(False)
         self._table.setStyleSheet(get_provision_table_style())
         self._table.setMinimumHeight(350)
+        self._table.setMinimumWidth(1100)
         self._table.selectionModel().selectionChanged.connect(self._on_selection)
 
         # Delegates
@@ -324,16 +328,24 @@ class AuszahlungenPanel(QWidget):
 
     def _resize_columns(self):
         h = self._table.horizontalHeader()
-        for i in range(self._model.columnCount()):
-            if i == self._model.COL_MENU:
+        m = self._model
+        fixed = {
+            m.COL_ROLE: 130,
+            m.COL_BRUTTO: 110,
+            m.COL_TL: 100,
+            m.COL_NETTO: 110,
+            m.COL_RUECK: 110,
+            m.COL_KORREKTUR: 100,
+            m.COL_AUSZAHLUNG: 115,
+            m.COL_POS: 50,
+            m.COL_STATUS: 140,
+            m.COL_VERSION: 50,
+            m.COL_MENU: 48,
+        }
+        for i in range(m.columnCount()):
+            if i in fixed:
                 h.setSectionResizeMode(i, QHeaderView.Fixed)
-                self._table.setColumnWidth(i, 48)
-            elif i == self._model.COL_STATUS:
-                h.setSectionResizeMode(i, QHeaderView.Fixed)
-                self._table.setColumnWidth(i, 140)
-            elif i == self._model.COL_ROLE:
-                h.setSectionResizeMode(i, QHeaderView.Fixed)
-                self._table.setColumnWidth(i, 130)
+                self._table.setColumnWidth(i, fixed[i])
             else:
                 h.setSectionResizeMode(i, QHeaderView.Stretch)
 
@@ -350,6 +362,12 @@ class AuszahlungenPanel(QWidget):
         self._statement.add_line(texts.PROVISION_PAY_DETAIL_BRUTTO, format_eur(item.brutto_provision))
         self._statement.add_line(texts.PROVISION_PAY_DETAIL_TL, format_eur(item.tl_abzug), color=ERROR if item.tl_abzug < 0 else "")
         self._statement.add_line(texts.PROVISION_PAY_DETAIL_RUECK, format_eur(item.rueckbelastungen), color=ERROR if item.rueckbelastungen < 0 else "")
+        if item.has_korrektur:
+            self._statement.add_line(
+                texts.PM_KORREKTUR_DETAIL_HEADER,
+                format_eur(item.korrektur_vormonat),
+                color=WARNING,
+            )
         self._statement.add_separator()
         self._statement.add_line(texts.PROVISION_PAY_DETAIL_NETTO, format_eur(item.auszahlung), bold=True)
 
@@ -429,12 +447,27 @@ class AuszahlungenPanel(QWidget):
             texts.PROVISION_PAY_GENERATE,
             texts.PROVISION_PAY_CONFIRM.format(monat=monat),
         )
-        if result == QMessageBox.Yes:
-            resp = self._backend.generate_abrechnung(monat)
-            if resp:
-                if self._toast_manager:
-                    self._toast_manager.show_success(texts.PROVISION_TOAST_GENERATE_DONE.format(monat=monat))
-                self._load_data()
+        if result != QMessageBox.Yes:
+            return
+        if hasattr(self, '_gen_worker') and self._gen_worker and self._gen_worker.isRunning():
+            return
+        self._loading_overlay.setVisible(True)
+        self._gen_worker = AbrechnungGenerateWorker(self._backend, monat, parent=self)
+        self._gen_worker.finished.connect(self._on_generate_finished)
+        self._gen_worker.start()
+
+    def _on_generate_finished(self, resp, error_msg: str):
+        self._loading_overlay.setVisible(False)
+        if error_msg:
+            logger.warning(f"Abrechnung-Generierung fehlgeschlagen: {error_msg}")
+            if self._toast_manager:
+                self._toast_manager.show_error(error_msg)
+            return
+        if resp:
+            monat = self._monat_combo.currentData() or datetime.now().strftime('%Y-%m')
+            if self._toast_manager:
+                self._toast_manager.show_success(texts.PROVISION_TOAST_GENERATE_DONE.format(monat=monat))
+            self._load_data()
 
     def _change_status(self, abrechnung_id: int, status: str):
         if hasattr(self, '_status_worker') and self._status_worker and self._status_worker.isRunning():

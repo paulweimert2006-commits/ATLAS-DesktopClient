@@ -1688,6 +1688,15 @@ PM_NOTE_TOAST_SAVED = "Notiz gespeichert"
 PM_NOTE_TOAST_DELETED = "Notiz geloescht"
 PM_NOTE_TOAST_ERROR = "Fehler beim Speichern der Notiz"
 
+# ── Abrechnungskorrekturen ──
+
+PM_PAY_COL_KORREKTUR = "Korrektur"
+PM_KORREKTUR_TOOLTIP_HEADER = "Korrekturen aus Vormonaten:"
+PM_KORREKTUR_TOOLTIP_LINE = "  Monat {monat}: {diff}"
+PM_KORREKTUR_DETAIL_HEADER = "Korrektur Vormonat"
+PM_KORREKTUR_DETAIL_SUMME = "Summe: {betrag}"
+PM_KORREKTUR_DETAIL_QUELLE = "Quelle: Abrechnung {monat}"
+
 # ── Provisionspositionen-Panel ──
 
 PROVISION_POS_TITLE = "Provisionspositionen"
