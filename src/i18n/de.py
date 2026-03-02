@@ -1702,6 +1702,8 @@ PM_NOTE_TOAST_ERROR = "Fehler beim Speichern der Notiz"
 # ── Abrechnungskorrekturen ──
 
 PM_PAY_COL_KORREKTUR = "Korrektur"
+PM_PAY_COL_VU_ABZUG = "VU-Abzug"
+PM_PAY_VU_ABZUG_TOOLTIP = "Summe der VU-Abzuege (z.B. Allianz 2 Promille)"
 PM_KORREKTUR_TOOLTIP_HEADER = "Korrekturen aus Vormonaten:"
 PM_KORREKTUR_TOOLTIP_LINE = "  Monat {monat}: {diff}"
 PM_KORREKTUR_DETAIL_HEADER = "Korrektur Vormonat"

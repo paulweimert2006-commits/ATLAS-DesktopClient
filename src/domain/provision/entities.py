@@ -209,6 +209,7 @@ class Commission:
     berater_anteil: Optional[float] = None
     tl_anteil: Optional[float] = None
     ag_anteil: Optional[float] = None
+    company_deduction_amount: float = 0.0
     import_batch_id: Optional[int] = None
     import_source_type: Optional[str] = None
     import_vu_name: Optional[str] = None
@@ -284,6 +285,7 @@ class Commission:
             berater_anteil=float(d['berater_anteil']) if d.get('berater_anteil') is not None else None,
             tl_anteil=float(d['tl_anteil']) if d.get('tl_anteil') is not None else None,
             ag_anteil=float(d['ag_anteil']) if d.get('ag_anteil') is not None else None,
+            company_deduction_amount=float(d.get('company_deduction_amount', 0)),
             import_batch_id=int(d['import_batch_id']) if d.get('import_batch_id') else None,
             import_source_type=d.get('import_source_type'),
             import_vu_name=d.get('import_vu_name'),
@@ -411,6 +413,7 @@ class BeraterAbrechnung:
     rueckbelastungen: float = 0.0
     korrektur_vormonat: float = 0.0
     korrektur_details: Optional[str] = None
+    vu_abzug_summe: float = 0.0
     auszahlung: float = 0.0
     anzahl_provisionen: int = 0
     status: str = 'berechnet'
@@ -443,6 +446,7 @@ class BeraterAbrechnung:
             rueckbelastungen=float(d.get('rueckbelastungen', 0)),
             korrektur_vormonat=float(d.get('korrektur_vormonat', 0)),
             korrektur_details=d.get('korrektur_details'),
+            vu_abzug_summe=float(d.get('vu_abzug_summe', 0)),
             auszahlung=float(d.get('auszahlung', 0)),
             anzahl_provisionen=int(d.get('anzahl_provisionen', 0)),
             status=d.get('status', 'berechnet'),

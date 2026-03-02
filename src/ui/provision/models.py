@@ -878,12 +878,13 @@ class AuszahlungenModel(QAbstractTableModel):
     COL_NETTO = 4
     COL_RUECK = 5
     COL_KORREKTUR = 6
-    COL_AUSZAHLUNG = 7
-    COL_POS = 8
-    COL_STATUS = 9
-    COL_VERSION = 10
-    COL_EMAIL = 11
-    COL_MENU = 12
+    COL_VU_ABZUG = 7
+    COL_AUSZAHLUNG = 8
+    COL_POS = 9
+    COL_STATUS = 10
+    COL_VERSION = 11
+    COL_EMAIL = 12
+    COL_MENU = 13
 
     COLUMNS = [
         texts.PROVISION_PAY_COL_BERATER,
@@ -893,6 +894,7 @@ class AuszahlungenModel(QAbstractTableModel):
         texts.PROVISION_PAY_COL_NETTO,
         texts.PROVISION_PAY_COL_RUECK,
         texts.PM_PAY_COL_KORREKTUR,
+        texts.PM_PAY_COL_VU_ABZUG,
         texts.PROVISION_PAY_COL_AUSZAHLUNG,
         texts.PROVISION_PAY_COL_POSITIONS,
         texts.PROVISION_PAY_COL_STATUS,
@@ -951,6 +953,10 @@ class AuszahlungenModel(QAbstractTableModel):
                 return format_eur(a.rueckbelastungen)
             elif col == self.COL_KORREKTUR:
                 return format_eur(a.korrektur_vormonat) if a.has_korrektur else ""
+            elif col == self.COL_VU_ABZUG:
+                if a.vu_abzug_summe > 0:
+                    return format_eur(a.vu_abzug_summe)
+                return ""
             elif col == self.COL_AUSZAHLUNG:
                 return format_eur(a.auszahlung)
             elif col == self.COL_POS:
@@ -993,10 +999,13 @@ class AuszahlungenModel(QAbstractTableModel):
             except Exception:
                 return None
 
+        if role == Qt.ToolTipRole and col == self.COL_VU_ABZUG and a.vu_abzug_summe > 0:
+            return texts.PM_PAY_VU_ABZUG_TOOLTIP
+
         _right_cols = {
             self.COL_BRUTTO, self.COL_TL, self.COL_NETTO, self.COL_RUECK,
-            self.COL_KORREKTUR, self.COL_AUSZAHLUNG, self.COL_POS,
-            self.COL_VERSION,
+            self.COL_KORREKTUR, self.COL_VU_ABZUG, self.COL_AUSZAHLUNG,
+            self.COL_POS, self.COL_VERSION,
         }
         if role == Qt.TextAlignmentRole and col in _right_cols:
             return Qt.AlignRight | Qt.AlignVCenter

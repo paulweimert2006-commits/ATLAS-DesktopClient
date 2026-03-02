@@ -388,6 +388,7 @@ class AuszahlungenPanel(QWidget):
             m.COL_NETTO: 110,
             m.COL_RUECK: 110,
             m.COL_KORREKTUR: 100,
+            m.COL_VU_ABZUG: 100,
             m.COL_AUSZAHLUNG: 115,
             m.COL_POS: 50,
             m.COL_STATUS: 140,
@@ -598,7 +599,7 @@ class AuszahlungenPanel(QWidget):
             eur_cols = {
                 self._model.COL_BRUTTO, self._model.COL_TL,
                 self._model.COL_NETTO, self._model.COL_RUECK,
-                self._model.COL_AUSZAHLUNG,
+                self._model.COL_VU_ABZUG, self._model.COL_AUSZAHLUNG,
             }
 
             for row_idx in range(self._model.rowCount()):
@@ -612,6 +613,7 @@ class AuszahlungenPanel(QWidget):
                     item.tl_abzug,
                     item.netto_provision,
                     item.rueckbelastungen,
+                    item.vu_abzug_summe,
                     item.auszahlung,
                     item.anzahl_provisionen,
                     STATUS_LABELS.get(item.status, item.status),
