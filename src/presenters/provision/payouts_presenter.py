@@ -13,13 +13,19 @@ Kapselt:
 - Trennung der UI-Logik von den Backend-Services (Repository)
 """
 
+import calendar
 import logging
-from typing import Optional
+from typing import List, Optional
 
+from domain.provision.entities import BeraterAbrechnung, Commission
 from domain.provision.interfaces import IPayoutsView
 from infrastructure.api.provision_repository import ProvisionRepository
 from infrastructure.threading.provision_workers import (
     AuszahlungenLoadWorker, AuszahlungenPositionenWorker,
+)
+from services.statement_export import (
+    StatementData, build_statement_data, export_statement, export_batch,
+    get_statement_filename, EXTENSIONS, FILE_FILTERS,
 )
 
 logger = logging.getLogger(__name__)
@@ -177,10 +183,39 @@ class PayoutsPresenter:
         """
         return self._repo.update_abrechnung_status(abrechnung_id, status)
 
+    # ── Statement-Export ──
+
+    def build_statement(self, berater: BeraterAbrechnung) -> Optional[StatementData]:
+        monat = berater.abrechnungsmonat[:7]
+        try:
+            year, month = int(monat[:4]), int(monat[5:7])
+            _, last_day = calendar.monthrange(year, month)
+            von = f"{monat}-01"
+            bis = f"{monat}-{last_day:02d}"
+        except (ValueError, IndexError):
+            return None
+
+        comms, _ = self._repo.get_commissions(
+            berater_id=berater.berater_id, von=von, bis=bis, limit=5000)
+        return build_statement_data(berater, comms)
+
+    def export_single_statement(self, berater: BeraterAbrechnung,
+                                fmt: str, path: str) -> None:
+        data = self.build_statement(berater)
+        if not data:
+            raise ValueError("Keine Daten verfuegbar")
+        export_statement(data, fmt, path)
+
+    def build_all_statements(self, abrechnungen: List[BeraterAbrechnung]
+                             ) -> List[StatementData]:
+        results = []
+        for b in abrechnungen:
+            data = self.build_statement(b)
+            if data:
+                results.append(data)
+        return results
+
     def refresh(self) -> None:
-        """
-        Dummy/Platzhalter für spätere UI-Refreshes. Aktuell unbenutzt.
-        """
         pass
 
     def has_running_workers(self) -> bool:

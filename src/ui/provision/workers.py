@@ -812,3 +812,55 @@ class SaveModelWorker(QThread):
             self.finished.emit(success, summary)
         except Exception as e:
             self.error.emit(str(e))
+
+
+# =============================================================================
+# Statement-Export (Einzelabrechnung / Batch)
+# =============================================================================
+
+
+class StatementExportWorker(QThread):
+    """Exportiert eine einzelne Berater-Abrechnung als PDF/Excel/Word."""
+    finished = Signal(str)
+    error = Signal(str)
+
+    def __init__(self, presenter, berater, fmt: str, path: str):
+        super().__init__()
+        self._presenter = presenter
+        self._berater = berater
+        self._fmt = fmt
+        self._path = path
+
+    def run(self):
+        try:
+            self._presenter.export_single_statement(
+                self._berater, self._fmt, self._path)
+            self.finished.emit(self._path)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+class StatementBatchExportWorker(QThread):
+    """Exportiert alle Berater-Abrechnungen in einen Ordner."""
+    finished = Signal(int)
+    progress = Signal(int, int)
+    error = Signal(str)
+
+    def __init__(self, presenter, abrechnungen: list, fmt: str, folder: str):
+        super().__init__()
+        self._presenter = presenter
+        self._abrechnungen = abrechnungen
+        self._fmt = fmt
+        self._folder = folder
+
+    def run(self):
+        try:
+            from services.statement_export import export_batch
+            items = self._presenter.build_all_statements(self._abrechnungen)
+            count = export_batch(
+                items, self._fmt, self._folder,
+                progress_callback=lambda c, t: self.progress.emit(c, t),
+            )
+            self.finished.emit(count)
+        except Exception as e:
+            self.error.emit(str(e))

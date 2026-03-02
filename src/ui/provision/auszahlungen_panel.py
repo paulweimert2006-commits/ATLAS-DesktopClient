@@ -37,8 +37,10 @@ from ui.provision.widgets import (
 from ui.provision.workers import (
     AuszahlungenLoadWorker, AuszahlungenPositionenWorker,
     AbrechnungGenerateWorker, AbrechnungStatusWorker,
+    StatementExportWorker, StatementBatchExportWorker,
 )
 from ui.provision.models import AuszahlungenModel, STATUS_LABELS, STATUS_PILL_MAP
+from services.statement_export import FILE_FILTERS, get_statement_filename, EXTENSIONS
 from i18n import de as texts
 import logging
 
@@ -77,7 +79,12 @@ class AuszahlungenPanel(QWidget):
 
     def show_abrechnungen(self, abrechnungen: list) -> None:
         """View-Interface: Abrechnungen anzeigen."""
-        self._model.set_data(abrechnungen)
+        self._loading_overlay.setVisible(False)
+        self._all_data = abrechnungen
+        self._pagination.set_total(len(abrechnungen))
+        self._paginate()
+        self._resize_columns()
+        self._status.setText("")
 
     def show_loading(self, loading: bool) -> None:
         """View-Interface: Ladezustand."""
@@ -139,6 +146,20 @@ class AuszahlungenPanel(QWidget):
         xlsx_btn.setStyleSheet(get_secondary_button_style())
         xlsx_btn.clicked.connect(self._export_xlsx)
         toolbar.addWidget(xlsx_btn)
+
+        stmt_btn = QPushButton(texts.PM_STMT_EXPORT_MENU)
+        stmt_btn.setStyleSheet(get_secondary_button_style())
+        stmt_menu = QMenu(self)
+        stmt_menu.addAction(texts.PM_STMT_EXPORT_PDF, lambda: self._export_statement_selected('pdf'))
+        stmt_menu.addAction(texts.PM_STMT_EXPORT_XLSX, lambda: self._export_statement_selected('xlsx'))
+        stmt_menu.addAction(texts.PM_STMT_EXPORT_DOCX, lambda: self._export_statement_selected('docx'))
+        stmt_menu.addSeparator()
+        all_menu = stmt_menu.addMenu(texts.PM_STMT_EXPORT_ALL_MENU)
+        all_menu.addAction(texts.PM_STMT_EXPORT_PDF, lambda: self._export_all_statements('pdf'))
+        all_menu.addAction(texts.PM_STMT_EXPORT_XLSX, lambda: self._export_all_statements('xlsx'))
+        all_menu.addAction(texts.PM_STMT_EXPORT_DOCX, lambda: self._export_all_statements('docx'))
+        stmt_btn.setMenu(stmt_menu)
+        toolbar.addWidget(stmt_btn)
 
         toolbar.addStretch()
         layout.addLayout(toolbar)
@@ -276,6 +297,14 @@ class AuszahlungenPanel(QWidget):
             for s_key in transitions:
                 s_label = STATUS_LABELS.get(s_key, s_key)
                 status_menu.addAction(s_label, lambda sid=item.id, sk=s_key: self._change_status(sid, sk))
+
+        export_menu = menu.addMenu(texts.PM_STMT_EXPORT_MENU)
+        export_menu.addAction(texts.PM_STMT_EXPORT_PDF,
+                              lambda b=item: self._export_statement_for_berater(b, 'pdf'))
+        export_menu.addAction(texts.PM_STMT_EXPORT_XLSX,
+                              lambda b=item: self._export_statement_for_berater(b, 'xlsx'))
+        export_menu.addAction(texts.PM_STMT_EXPORT_DOCX,
+                              lambda b=item: self._export_statement_for_berater(b, 'docx'))
         return menu
 
     def resizeEvent(self, event):
@@ -580,3 +609,85 @@ class AuszahlungenPanel(QWidget):
             logger.error(f"Excel-Export-Fehler: {e}")
             if self._toast_manager:
                 self._toast_manager.show_error(str(e))
+
+    # ── Statement-Export (Einzelabrechnung PDF/Excel/Word) ──
+
+    def _get_selected_berater(self) -> Optional['BeraterAbrechnung']:
+        indexes = self._table.selectionModel().selectedRows()
+        if not indexes:
+            return None
+        return self._model.get_item(indexes[0].row())
+
+    def _export_statement_selected(self, fmt: str):
+        item = self._get_selected_berater()
+        if not item:
+            if self._toast_manager:
+                self._toast_manager.show_warning(texts.PM_STMT_NO_DATA)
+            return
+        self._export_statement_for_berater(item, fmt)
+
+    def _export_statement_for_berater(self, berater: 'BeraterAbrechnung', fmt: str):
+        if not self._presenter:
+            if self._toast_manager:
+                self._toast_manager.show_error(texts.PM_STMT_NO_DATA)
+            return
+
+        default_name = get_statement_filename(berater, EXTENSIONS[fmt])
+        file_filter = FILE_FILTERS[fmt]
+        path, _ = QFileDialog.getSaveFileName(
+            self, texts.PM_STMT_EXPORT_MENU, default_name, file_filter)
+        if not path:
+            return
+
+        self._loading_overlay.setVisible(True)
+        self._stmt_worker = StatementExportWorker(
+            self._presenter, berater, fmt, path)
+        self._stmt_worker.finished.connect(self._on_stmt_export_done)
+        self._stmt_worker.error.connect(self._on_stmt_export_error)
+        self._stmt_worker.start()
+
+    def _on_stmt_export_done(self, path: str):
+        self._loading_overlay.setVisible(False)
+        if self._toast_manager:
+            self._toast_manager.show_success(
+                texts.PM_STMT_TOAST_SUCCESS.format(path=os.path.basename(path)))
+
+    def _on_stmt_export_error(self, error: str):
+        self._loading_overlay.setVisible(False)
+        logger.error(f"Statement-Export-Fehler: {error}")
+        if self._toast_manager:
+            self._toast_manager.show_error(
+                texts.PM_STMT_TOAST_ERROR.format(error=error))
+
+    def _export_all_statements(self, fmt: str):
+        if not self._presenter:
+            return
+        all_data = getattr(self, '_all_data', [])
+        if not all_data:
+            if self._toast_manager:
+                self._toast_manager.show_warning(texts.PM_STMT_NO_DATA)
+            return
+
+        folder = QFileDialog.getExistingDirectory(
+            self, texts.PM_STMT_FOLDER_TITLE)
+        if not folder:
+            return
+
+        self._loading_overlay.setVisible(True)
+        self._batch_worker = StatementBatchExportWorker(
+            self._presenter, all_data, fmt, folder)
+        self._batch_worker.finished.connect(
+            lambda count: self._on_batch_export_done(count, folder))
+        self._batch_worker.progress.connect(self._on_batch_progress)
+        self._batch_worker.error.connect(self._on_stmt_export_error)
+        self._batch_worker.start()
+
+    def _on_batch_export_done(self, count: int, folder: str):
+        self._loading_overlay.setVisible(False)
+        if self._toast_manager:
+            self._toast_manager.show_success(
+                texts.PM_STMT_TOAST_BATCH_SUCCESS.format(
+                    count=count, folder=os.path.basename(folder)))
+
+    def _on_batch_progress(self, current: int, total: int):
+        pass
