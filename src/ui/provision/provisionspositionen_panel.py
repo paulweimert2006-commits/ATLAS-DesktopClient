@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
     QDialog, QFormLayout, QDialogButtonBox, QDateEdit,
 )
 from PySide6.QtCore import (
-    Qt, Signal, QSortFilterProxyModel, QTimer, QDate, QModelIndex,
+    Qt, Signal, QTimer, QDate, QModelIndex,
 )
 from PySide6.QtGui import QColor
 from typing import List, Optional
@@ -32,14 +32,14 @@ from ui.styles.tokens import (
 )
 from ui.provision.widgets import (
     PillBadgeDelegate, FilterChipBar, SectionHeader, ThreeDotMenuDelegate,
-    PaginationBar, ActivityFeedWidget, ProvisionLoadingOverlay,
+    ActivityFeedWidget, ProvisionLoadingOverlay, ColumnFilterRow,
     format_eur, get_search_field_style,
 )
 from ui.provision.workers import (
     PositionsLoadWorker, AuditLoadWorker, IgnoreWorker, MappingCreateWorker,
     OverrideWorker, OverrideResetWorker, NoteWorker, RawDataLoadWorker,
 )
-from ui.provision.models import PositionsModel, status_label, status_pill_key, ART_LABELS
+from ui.provision.models import PositionsModel, PositionsFilterProxy, status_label, status_pill_key, ART_LABELS
 from ui.provision.dialogs import MatchContractDialog, OverrideDialog, NoteDialog
 from i18n import de as texts
 import logging
@@ -197,8 +197,17 @@ class ProvisionspositionenPanel(QWidget):
         self._search.setFixedWidth(220)
         self._search.setFixedHeight(32)
         self._search.setStyleSheet(get_search_field_style())
-        self._search.textChanged.connect(self._apply_filter)
         filter_row.addWidget(self._search)
+
+        self._clear_filter_btn = QPushButton(texts.PM_FILTER_CLEAR_ALL)
+        self._clear_filter_btn.setFixedHeight(32)
+        self._clear_filter_btn.setCursor(Qt.PointingHandCursor)
+        self._clear_filter_btn.setStyleSheet(
+            f"color: {PRIMARY_500}; background: transparent; border: none; "
+            f"font-size: {FONT_SIZE_CAPTION}; font-family: {FONT_BODY};")
+        self._clear_filter_btn.clicked.connect(self._clear_all_filters)
+        self._clear_filter_btn.setVisible(False)
+        filter_row.addWidget(self._clear_filter_btn)
 
         layout.addLayout(filter_row)
 
@@ -211,12 +220,14 @@ class ProvisionspositionenPanel(QWidget):
         table_layout.setContentsMargins(0, 0, 0, 0)
 
         self._model = PositionsModel()
-        self._proxy = QSortFilterProxyModel()
+        self._proxy = PositionsFilterProxy()
         self._proxy.setSourceModel(self._model)
-        self._proxy.setFilterCaseSensitivity(Qt.CaseInsensitive)
+
+        self._search.textChanged.connect(self._on_search_changed)
 
         self._table = QTableView()
         self._table.setModel(self._proxy)
+        self._table.setSortingEnabled(True)
         self._table.setAlternatingRowColors(True)
         self._table.setSelectionBehavior(QTableView.SelectRows)
         self._table.setSelectionMode(QTableView.SingleSelection)
@@ -238,11 +249,32 @@ class ProvisionspositionenPanel(QWidget):
         self._table.setItemDelegateForColumn(PositionsModel.COL_MENU, menu_delegate)
         self._menu_delegate = menu_delegate
 
+        # Spaltenfilter-Zeile (Excel-Stil)
+        status_options = [
+            texts.PROVISION_STATUS_ZUGEORDNET,
+            texts.PROVISION_STATUS_VERTRAG_GEFUNDEN,
+            texts.PROVISION_STATUS_OFFEN,
+            texts.PROVISION_STATUS_GESPERRT,
+            texts.PROVISION_STATUS_IGNORIERT,
+        ]
+        source_options = ["VU-Liste", "Xempus", "Sonderzahlung"]
+        self._col_filter_row = ColumnFilterRow(
+            column_count=self._model.columnCount(),
+            combo_options={
+                PositionsModel.COL_STATUS: status_options,
+                PositionsModel.COL_SOURCE: source_options,
+            },
+            skip_columns={PositionsModel.COL_MENU},
+        )
+        self._col_filter_row.column_filter_changed.connect(self._on_column_filter_changed)
+        table_layout.addWidget(self._col_filter_row)
+
         table_layout.addWidget(self._table)
 
-        self._pagination = PaginationBar(page_size=50)
-        self._pagination.page_changed.connect(self._on_page_changed)
-        table_layout.addWidget(self._pagination)
+        self._filter_info = QLabel("")
+        self._filter_info.setStyleSheet(
+            f"color: {PRIMARY_500}; font-size: {FONT_SIZE_CAPTION}; font-family: {FONT_BODY};")
+        table_layout.addWidget(self._filter_info)
 
         self._splitter.addWidget(table_widget)
 
@@ -419,6 +451,8 @@ class ProvisionspositionenPanel(QWidget):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._loading_overlay.setGeometry(self.rect())
+        if hasattr(self, '_col_filter_row'):
+            self._col_filter_row.sync_widths(self._table.horizontalHeader())
 
     def refresh(self):
         self._load_data()
@@ -540,7 +574,6 @@ class ProvisionspositionenPanel(QWidget):
 
     def _apply_filter(self, *args):
         key = self._chips.active_key()
-        search = self._search.text().strip().lower()
 
         filtered = self._all_data
         if key == "zugeordnet":
@@ -554,27 +587,37 @@ class ProvisionspositionenPanel(QWidget):
         elif key == "gesperrt":
             filtered = [c for c in filtered if c.match_status in ('gesperrt', 'ignored')]
 
-        if search:
-            filtered = [c for c in filtered if
-                        search in (c.versicherer or "").lower() or
-                        search in (c.vsnr or "").lower() or
-                        search in (c.versicherungsnehmer or "").lower() or
-                        search in (c.berater_name or "").lower() or
-                        search in (c.xempus_berater_name or "").lower()]
-
         self._filtered_data = filtered
-        self._pagination.set_total(len(filtered))
-        self._paginate()
+        self._model.set_data(filtered)
+        self._update_filter_info()
 
-    def _on_page_changed(self, page: int):
-        self._paginate()
+    def _on_search_changed(self, text: str) -> None:
+        self._proxy.set_global_filter(text)
+        self._update_filter_info()
+        self._clear_filter_btn.setVisible(bool(text.strip()))
 
-    def _paginate(self):
-        page = self._pagination.current_page
-        ps = self._pagination._page_size
-        start = page * ps
-        end = start + ps
-        self._model.set_data(self._filtered_data[start:end])
+    def _on_column_filter_changed(self, column: int, text: str) -> None:
+        self._proxy.set_column_filter(column, text)
+        self._update_filter_info()
+        has_any = bool(self._proxy._column_filters) or bool(self._search.text().strip())
+        self._clear_filter_btn.setVisible(has_any)
+
+    def _clear_all_filters(self) -> None:
+        self._search.clear()
+        self._col_filter_row.clear_all()
+        self._proxy.clear_all_filters()
+        self._update_filter_info()
+        self._clear_filter_btn.setVisible(False)
+
+    def _update_filter_info(self) -> None:
+        visible = self._proxy.rowCount()
+        total = self._model.rowCount()
+        if visible < total:
+            self._filter_info.setText(
+                texts.PM_FILTER_SHOWING.format(visible=visible, total=total))
+            self._filter_info.setVisible(True)
+        else:
+            self._filter_info.setVisible(False)
 
     def _resize_columns(self):
         header = self._table.horizontalHeader()
@@ -602,6 +645,7 @@ class ProvisionspositionenPanel(QWidget):
                 header.setSectionResizeMode(i, QHeaderView.ResizeToContents)
             else:
                 header.setSectionResizeMode(i, QHeaderView.ResizeToContents)
+        self._col_filter_row.sync_widths(header)
 
     def _on_selection_changed(self, selected, deselected):
         indexes = self._table.selectionModel().selectedRows()

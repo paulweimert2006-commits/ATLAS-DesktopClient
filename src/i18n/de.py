@@ -1708,6 +1708,13 @@ PM_KORREKTUR_DETAIL_HEADER = "Korrektur Vormonat"
 PM_KORREKTUR_DETAIL_SUMME = "Summe: {betrag}"
 PM_KORREKTUR_DETAIL_QUELLE = "Quelle: Abrechnung {monat}"
 
+# ── Positions-Filter ──
+
+PM_FILTER_ALL_OPTION = "Alle"
+PM_FILTER_COLUMN_PLACEHOLDER = "Filter..."
+PM_FILTER_SHOWING = "{visible} von {total} Positionen"
+PM_FILTER_CLEAR_ALL = "Alle Filter zuruecksetzen"
+
 # ── Provisionspositionen-Panel ──
 
 PROVISION_POS_TITLE = "Provisionspositionen"

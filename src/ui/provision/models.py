@@ -6,7 +6,7 @@ Extrahiert aus den Panel-Dateien fuer bessere Wartbarkeit.
 Models nutzen i18n-Texte, Design-Tokens und format_eur aus widgets.
 """
 
-from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex
+from PySide6.QtCore import Qt, QAbstractTableModel, QSortFilterProxyModel, QModelIndex
 from PySide6.QtGui import QColor, QFont
 from typing import List, Dict, Optional
 from datetime import datetime
@@ -487,6 +487,61 @@ class PositionsModel(QAbstractTableModel):
             return getattr(c, 'is_relevant', True)
 
         return None
+
+
+class PositionsFilterProxy(QSortFilterProxyModel):
+    """Proxy mit globalem Freitext-Filter und pro-Spalte Column-Filtern.
+
+    global_filter  – durchsucht ALLE Spalten (OR); mindestens eine muss matchen.
+    column_filters – Dict[col_index, text]; JEDE gesetzte Spalte muss matchen (AND).
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._global_filter: str = ""
+        self._column_filters: Dict[int, str] = {}
+        self.setFilterCaseSensitivity(Qt.CaseInsensitive)
+
+    def set_global_filter(self, text: str) -> None:
+        self._global_filter = text.strip().lower()
+        self.invalidateFilter()
+
+    def set_column_filter(self, column: int, text: str) -> None:
+        cleaned = text.strip().lower()
+        if cleaned:
+            self._column_filters[column] = cleaned
+        else:
+            self._column_filters.pop(column, None)
+        self.invalidateFilter()
+
+    def clear_all_filters(self) -> None:
+        self._global_filter = ""
+        self._column_filters.clear()
+        self.invalidateFilter()
+
+    def filterAcceptsRow(self, source_row: int, source_parent: QModelIndex) -> bool:
+        model = self.sourceModel()
+        if model is None:
+            return True
+
+        if self._global_filter:
+            found = False
+            for col in range(model.columnCount()):
+                idx = model.index(source_row, col, source_parent)
+                val = model.data(idx, Qt.DisplayRole)
+                if val is not None and self._global_filter in str(val).lower():
+                    found = True
+                    break
+            if not found:
+                return False
+
+        for col, text in self._column_filters.items():
+            idx = model.index(source_row, col, source_parent)
+            val = model.data(idx, Qt.DisplayRole)
+            if val is None or text not in str(val).lower():
+                return False
+
+        return True
 
 
 # =============================================================================
