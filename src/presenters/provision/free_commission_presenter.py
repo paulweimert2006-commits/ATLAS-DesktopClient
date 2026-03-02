@@ -59,7 +59,8 @@ class FreeCommissionPresenter:
         if self._view:
             if result.get('success'):
                 from i18n import de as texts
-                msg = texts.PM_FREE_TOAST_UPDATED if 'id' not in result else texts.PM_FREE_TOAST_CREATED
+                # create returns {'success': True, 'id': …}, update returns {'success': True}
+                msg = texts.PM_FREE_TOAST_CREATED if 'id' in result else texts.PM_FREE_TOAST_UPDATED
                 self._view.show_success(msg)
                 self.refresh()
             else:
