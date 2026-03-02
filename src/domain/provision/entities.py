@@ -51,12 +51,18 @@ class Employee:
     model_name: Optional[str] = None
     model_rate: Optional[float] = None
     teamleiter_name: Optional[str] = None
+    user_username: Optional[str] = None
+    user_email: Optional[str] = None
 
     @property
     def effective_rate(self) -> float:
         if self.commission_rate_override is not None:
             return self.commission_rate_override
         return self.model_rate or 0.0
+
+    @property
+    def has_user(self) -> bool:
+        return self.user_id is not None
 
     @classmethod
     def from_dict(cls, d: Dict) -> 'Employee':
@@ -75,6 +81,8 @@ class Employee:
             model_name=d.get('model_name'),
             model_rate=float(d['model_rate']) if d.get('model_rate') is not None else None,
             teamleiter_name=d.get('teamleiter_name'),
+            user_username=d.get('user_username'),
+            user_email=d.get('user_email'),
         )
 
 
@@ -407,10 +415,18 @@ class BeraterAbrechnung:
     anzahl_provisionen: int = 0
     status: str = 'berechnet'
     is_locked: bool = False
+    berater_email: Optional[str] = None
+    email_status: Optional[str] = None
+    email_sent_at: Optional[str] = None
+    email_error: Optional[str] = None
 
     @property
     def has_korrektur(self) -> bool:
         return abs(self.korrektur_vormonat) > 0.005
+
+    @property
+    def has_email(self) -> bool:
+        return bool(self.berater_email)
 
     @classmethod
     def from_dict(cls, d: Dict) -> 'BeraterAbrechnung':
@@ -431,6 +447,10 @@ class BeraterAbrechnung:
             anzahl_provisionen=int(d.get('anzahl_provisionen', 0)),
             status=d.get('status', 'berechnet'),
             is_locked=bool(int(d.get('is_locked', 0))),
+            berater_email=d.get('berater_email'),
+            email_status=d.get('email_status'),
+            email_sent_at=d.get('email_sent_at'),
+            email_error=d.get('email_error'),
         )
 
 

@@ -9,20 +9,21 @@ from PySide6.QtWidgets import (
     QHeaderView, QFrame, QPushButton, QDialog, QComboBox,
     QLineEdit, QFormLayout, QDialogButtonBox, QDoubleSpinBox,
     QTextEdit, QScrollArea, QSizePolicy, QMenu, QMessageBox,
-    QDateEdit,
+    QDateEdit, QGroupBox, QCheckBox,
 )
 from PySide6.QtCore import (
     Qt, Signal, QTimer, QModelIndex, QDate,
 )
 from typing import List, Optional
 
-from api.client import APIError
+from api.client import APIClient, APIError
+from api.admin import AdminAPI
 from api.provision import ProvisionAPI
 from domain.provision.entities import Employee, CommissionModel
 from ui.styles.tokens import (
     PRIMARY_100, PRIMARY_500, PRIMARY_900, ACCENT_500,
     BG_PRIMARY, BG_SECONDARY, BORDER_DEFAULT,
-    ERROR,
+    ERROR, SUCCESS,
     FONT_BODY, FONT_SIZE_BODY, FONT_SIZE_CAPTION,
     ROLE_BADGE_COLORS, build_rich_tooltip, get_provision_table_style,
 )
@@ -47,9 +48,10 @@ class VerteilschluesselPanel(QWidget):
     navigate_to_panel = Signal(int)
     data_changed = Signal()
 
-    def __init__(self, api: ProvisionAPI = None):
+    def __init__(self, api: ProvisionAPI = None, api_client: APIClient = None):
         super().__init__()
         self._api = api
+        self._admin_api = AdminAPI(api_client) if api_client else None
         self._presenter = None
         self._worker = None
         self._save_worker = None
@@ -527,6 +529,9 @@ class VerteilschluesselPanel(QWidget):
         gueltig_ab.setToolTip(texts.PROVISION_GUELTIG_AB_HINT)
         form.addRow(texts.PROVISION_GUELTIG_AB + ":", gueltig_ab)
 
+        user_section = self._build_user_account_section(dlg, emp)
+        form.addRow(user_section)
+
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(dlg.accept)
         buttons.rejected.connect(dlg.reject)
@@ -548,10 +553,253 @@ class VerteilschluesselPanel(QWidget):
                 'teamleiter_id': tl_combo.currentData(),
                 'gueltig_ab': gueltig_ab.date().toString("yyyy-MM-dd"),
             }
+            pending_user_id = user_section.property('pending_user_id')
+            if pending_user_id is not None:
+                data['user_id'] = pending_user_id
             self._save_worker = SaveEmployeeWorker(self._backend, emp.id, data)
             self._save_worker.finished.connect(self._on_save_finished)
             self._save_worker.error.connect(self._on_save_error)
             self._save_worker.start()
+
+    # ── Nutzerkonto-Abschnitt im Edit-Dialog ──
+
+    def _build_user_account_section(self, parent_dlg: QDialog, emp: Employee) -> QGroupBox:
+        """Baut den Nutzerkonto-Abschnitt fuer den Employee-Edit-Dialog."""
+        group = QGroupBox(texts.PM_EMP_USER_SECTION)
+        layout = QVBoxLayout(group)
+        layout.setSpacing(8)
+
+        group.setProperty('pending_user_id', None)
+
+        if emp.has_user:
+            self._build_user_linked_view(layout, parent_dlg, group, emp)
+        else:
+            self._build_user_unlinked_view(layout, parent_dlg, group, emp)
+
+        return group
+
+    def _build_user_linked_view(self, layout: QVBoxLayout, parent_dlg: QDialog,
+                                group: QGroupBox, emp: Employee):
+        email_display = emp.user_email or ''
+        if email_display:
+            info_text = texts.PM_EMP_USER_LINKED.format(
+                username=emp.user_username or '?', email=email_display)
+        else:
+            info_text = texts.PM_EMP_USER_LINKED_NO_EMAIL.format(
+                username=emp.user_username or '?')
+
+        info_label = QLabel(info_text)
+        info_label.setStyleSheet(f"color: {SUCCESS}; font-size: {FONT_SIZE_BODY};")
+        layout.addWidget(info_label)
+
+        unlink_btn = QPushButton(texts.PM_EMP_USER_UNLINK)
+        unlink_btn.setStyleSheet(get_secondary_button_style())
+        unlink_btn.clicked.connect(
+            lambda: self._on_unlink_user(group, layout, parent_dlg, emp))
+        layout.addWidget(unlink_btn)
+
+    def _on_unlink_user(self, group: QGroupBox, layout: QVBoxLayout,
+                        parent_dlg: QDialog, emp: Employee):
+        reply = QMessageBox.question(
+            parent_dlg,
+            texts.PM_EMP_USER_SECTION,
+            texts.PM_EMP_USER_UNLINK_CONFIRM,
+        )
+        if reply == QMessageBox.Yes:
+            group.setProperty('pending_user_id', 0)
+            self._clear_layout(layout)
+            done_label = QLabel(texts.PM_EMP_USER_UNLINK_SUCCESS)
+            done_label.setStyleSheet(f"color: {PRIMARY_500}; font-style: italic;")
+            layout.addWidget(done_label)
+
+    def _build_user_unlinked_view(self, layout: QVBoxLayout, parent_dlg: QDialog,
+                                  group: QGroupBox, emp: Employee):
+        info_label = QLabel(texts.PM_EMP_USER_NONE)
+        info_label.setStyleSheet(f"color: {PRIMARY_500}; font-size: {FONT_SIZE_BODY};")
+        layout.addWidget(info_label)
+
+        btn_row = QHBoxLayout()
+        link_btn = QPushButton(texts.PM_EMP_USER_LINK_EXISTING)
+        link_btn.setStyleSheet(get_secondary_button_style())
+        link_btn.clicked.connect(
+            lambda: self._on_link_existing_user(group, layout, parent_dlg))
+        btn_row.addWidget(link_btn)
+
+        create_btn = QPushButton(texts.PM_EMP_USER_CREATE_NEW)
+        create_btn.setStyleSheet(get_secondary_button_style())
+        create_btn.clicked.connect(
+            lambda: self._on_create_new_user(group, layout, parent_dlg, emp))
+        btn_row.addWidget(create_btn)
+
+        if not self._admin_api:
+            link_btn.setEnabled(False)
+            link_btn.setToolTip("AdminAPI nicht verfuegbar")
+            create_btn.setEnabled(False)
+            create_btn.setToolTip("AdminAPI nicht verfuegbar")
+
+        layout.addLayout(btn_row)
+
+    def _on_link_existing_user(self, group: QGroupBox, layout: QVBoxLayout,
+                               parent_dlg: QDialog):
+        if not self._admin_api:
+            return
+        try:
+            users = self._admin_api.get_users()
+        except Exception as e:
+            logger.error(f"Fehler beim Laden der Nutzer: {e}")
+            if self._toast_manager:
+                self._toast_manager.show_error(str(e))
+            return
+
+        linked_ids = {e.user_id for e in self._employees if e.user_id}
+        available = [u for u in users if u.get('id') not in linked_ids
+                     and u.get('is_active', True)]
+
+        if not available:
+            if self._toast_manager:
+                self._toast_manager.show_info(texts.PM_EMP_USER_NONE)
+            return
+
+        self._clear_layout(layout)
+        select_label = QLabel(texts.PM_EMP_USER_LINK_EXISTING)
+        select_label.setStyleSheet(f"font-weight: bold; font-size: {FONT_SIZE_BODY};")
+        layout.addWidget(select_label)
+
+        combo = QComboBox()
+        combo.addItem(texts.PM_EMP_USER_SELECT, None)
+        for u in available:
+            display = u.get('username', '')
+            email = u.get('email', '')
+            if email:
+                display += f" ({email})"
+            combo.addItem(display, u.get('id'))
+        layout.addWidget(combo)
+
+        def _on_selected():
+            uid = combo.currentData()
+            if uid:
+                group.setProperty('pending_user_id', uid)
+
+        combo.currentIndexChanged.connect(_on_selected)
+
+    def _on_create_new_user(self, group: QGroupBox, layout: QVBoxLayout,
+                            parent_dlg: QDialog, emp: Employee):
+        if not self._admin_api:
+            return
+
+        self._clear_layout(layout)
+        create_label = QLabel(texts.PM_EMP_USER_CREATE_NEW)
+        create_label.setStyleSheet(f"font-weight: bold; font-size: {FONT_SIZE_BODY};")
+        layout.addWidget(create_label)
+
+        create_form = QFormLayout()
+        create_form.setSpacing(6)
+
+        suggested_username = emp.name.lower().replace(' ', '.').replace('ue', 'ue').replace('ae', 'ae').replace('oe', 'oe')
+        username_edit = QLineEdit(suggested_username)
+        username_edit.setPlaceholderText(texts.PM_EMP_USER_USERNAME)
+        create_form.addRow(texts.PM_EMP_USER_USERNAME + ":", username_edit)
+
+        email_edit = QLineEdit()
+        email_edit.setPlaceholderText(texts.PM_EMP_USER_EMAIL)
+        create_form.addRow(texts.PM_EMP_USER_EMAIL + ":", email_edit)
+
+        password_edit = QLineEdit()
+        password_edit.setPlaceholderText(texts.PM_EMP_USER_PASSWORD)
+        password_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        create_form.addRow(texts.PM_EMP_USER_PASSWORD + ":", password_edit)
+
+        layout.addLayout(create_form)
+
+        perm_group_box = QGroupBox(texts.PM_EMP_USER_PERMISSIONS)
+        perm_layout = QVBoxLayout(perm_group_box)
+        perm_layout.setSpacing(4)
+        perm_checkboxes = {}
+        for perm_key, perm_name in texts.PERMISSION_NAMES.items():
+            cb = QCheckBox(perm_name)
+            cb.setChecked(False)
+            perm_checkboxes[perm_key] = cb
+            perm_layout.addWidget(cb)
+        layout.addWidget(perm_group_box)
+
+        confirm_btn = QPushButton(texts.PM_EMP_USER_CREATE_NEW)
+        confirm_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {ACCENT_500};
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 6px 16px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{ background-color: #e88a2d; }}
+        """)
+
+        status_label = QLabel()
+        layout.addWidget(status_label)
+
+        def _do_create():
+            uname = username_edit.text().strip()
+            if len(uname) < 3:
+                status_label.setText(texts.PM_EMP_USER_NAME_TOO_SHORT)
+                status_label.setStyleSheet(f"color: {ERROR};")
+                return
+            pw = password_edit.text()
+            if len(pw) < 8:
+                status_label.setText(texts.PM_EMP_USER_PW_TOO_SHORT)
+                status_label.setStyleSheet(f"color: {ERROR};")
+                return
+            email = email_edit.text().strip()
+            perms = [k for k, cb in perm_checkboxes.items() if cb.isChecked()]
+            try:
+                new_user = self._admin_api.create_user(
+                    username=uname,
+                    password=pw,
+                    email=email,
+                    account_type='user',
+                    permissions=perms,
+                )
+                new_user_id = new_user.get('id')
+                if new_user_id:
+                    group.setProperty('pending_user_id', new_user_id)
+                    status_label.setText(texts.PM_EMP_USER_CREATE_SUCCESS)
+                    status_label.setStyleSheet(f"color: {SUCCESS};")
+                    confirm_btn.setEnabled(False)
+                    username_edit.setReadOnly(True)
+                    email_edit.setReadOnly(True)
+                    password_edit.setReadOnly(True)
+                    for cb in perm_checkboxes.values():
+                        cb.setEnabled(False)
+                else:
+                    status_label.setText(texts.PM_EMP_USER_CREATE_ERROR.format(
+                        error="Keine User-ID erhalten"))
+                    status_label.setStyleSheet(f"color: {ERROR};")
+            except Exception as e:
+                status_label.setText(texts.PM_EMP_USER_CREATE_ERROR.format(error=str(e)))
+                status_label.setStyleSheet(f"color: {ERROR};")
+
+        confirm_btn.clicked.connect(_do_create)
+        layout.addWidget(confirm_btn)
+
+    @staticmethod
+    def _clear_layout(layout: QVBoxLayout):
+        while layout.count():
+            item = layout.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
+            elif item.layout():
+                VerteilschluesselPanel._clear_sub_layout(item.layout())
+
+    @staticmethod
+    def _clear_sub_layout(layout):
+        while layout.count():
+            item = layout.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
+            elif item.layout():
+                VerteilschluesselPanel._clear_sub_layout(item.layout())
 
     def _deactivate_employee(self, emp: Employee):
         try:

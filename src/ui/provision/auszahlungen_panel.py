@@ -38,6 +38,7 @@ from ui.provision.workers import (
     AuszahlungenLoadWorker, AuszahlungenPositionenWorker,
     AbrechnungGenerateWorker, AbrechnungStatusWorker,
     StatementExportWorker, StatementBatchExportWorker,
+    StatementEmailWorker, StatementBatchEmailWorker,
 )
 from ui.provision.models import AuszahlungenModel, STATUS_LABELS, STATUS_PILL_MAP
 from services.statement_export import FILE_FILTERS, get_statement_filename, EXTENSIONS
@@ -160,6 +161,15 @@ class AuszahlungenPanel(QWidget):
         all_menu.addAction(texts.PM_STMT_EXPORT_DOCX, lambda: self._export_all_statements('docx'))
         stmt_btn.setMenu(stmt_menu)
         toolbar.addWidget(stmt_btn)
+
+        email_btn = QPushButton(texts.PM_STMT_EMAIL_SEND)
+        email_btn.setStyleSheet(get_secondary_button_style())
+        email_menu = QMenu(self)
+        email_menu.addAction(texts.PM_STMT_EMAIL_SEND_SELECTED, self._send_email_selected)
+        email_menu.addSeparator()
+        email_menu.addAction(texts.PM_STMT_EMAIL_SEND_ALL, self._send_email_all)
+        email_btn.setMenu(email_menu)
+        toolbar.addWidget(email_btn)
 
         toolbar.addStretch()
         layout.addLayout(toolbar)
@@ -305,6 +315,19 @@ class AuszahlungenPanel(QWidget):
                               lambda b=item: self._export_statement_for_berater(b, 'xlsx'))
         export_menu.addAction(texts.PM_STMT_EXPORT_DOCX,
                               lambda b=item: self._export_statement_for_berater(b, 'docx'))
+
+        menu.addSeparator()
+        email_action = menu.addAction(
+            texts.PM_STMT_EMAIL_SEND,
+            lambda b=item: self._send_email_for_berater(b))
+        email_action.setEnabled(item.has_email)
+        if not item.has_email:
+            email_action.setToolTip(texts.PM_STMT_EMAIL_TOOLTIP_NO_ADDR)
+
+        if item.email_status == 'failed':
+            menu.addAction(
+                texts.PM_STMT_EMAIL_RESEND,
+                lambda b=item: self._send_email_for_berater(b))
         return menu
 
     def resizeEvent(self, event):
@@ -369,6 +392,7 @@ class AuszahlungenPanel(QWidget):
             m.COL_POS: 50,
             m.COL_STATUS: 140,
             m.COL_VERSION: 50,
+            m.COL_EMAIL: 110,
             m.COL_MENU: 48,
         }
         for i in range(m.columnCount()):
@@ -691,3 +715,94 @@ class AuszahlungenPanel(QWidget):
 
     def _on_batch_progress(self, current: int, total: int):
         pass
+
+    # ── E-Mail-Versand ──
+
+    def _send_email_selected(self):
+        item = self._get_selected_berater()
+        if not item:
+            if self._toast_manager:
+                self._toast_manager.show_warning(texts.PM_STMT_NO_DATA)
+            return
+        self._send_email_for_berater(item)
+
+    def _send_email_for_berater(self, berater: 'BeraterAbrechnung'):
+        if not self._presenter:
+            return
+        if not berater.has_email:
+            if self._toast_manager:
+                self._toast_manager.show_warning(
+                    texts.PM_STMT_EMAIL_TOAST_NO_ADDR.format(name=berater.berater_name))
+            return
+
+        self._loading_overlay.setVisible(True)
+        self._email_worker = StatementEmailWorker(self._presenter, berater)
+        self._email_worker.finished.connect(
+            lambda result, b=berater: self._on_email_done(result, b))
+        self._email_worker.error.connect(self._on_email_error)
+        self._email_worker.start()
+
+    def _on_email_done(self, result: dict, berater: 'BeraterAbrechnung'):
+        self._loading_overlay.setVisible(False)
+        if result.get('success'):
+            if self._toast_manager:
+                self._toast_manager.show_success(
+                    texts.PM_STMT_EMAIL_TOAST_SUCCESS.format(
+                        email=result.get('recipient', berater.berater_email or '')))
+            self._load_data()
+        else:
+            error = result.get('error', '')
+            if self._toast_manager:
+                self._toast_manager.show_error(
+                    texts.PM_STMT_EMAIL_TOAST_ERROR.format(error=error))
+
+    def _on_email_error(self, error: str):
+        self._loading_overlay.setVisible(False)
+        logger.error(f"E-Mail-Versand-Fehler: {error}")
+        if self._toast_manager:
+            self._toast_manager.show_error(
+                texts.PM_STMT_EMAIL_TOAST_ERROR.format(error=error))
+
+    def _send_email_all(self):
+        if not self._presenter:
+            return
+        all_data = getattr(self, '_all_data', [])
+        if not all_data:
+            if self._toast_manager:
+                self._toast_manager.show_warning(texts.PM_STMT_NO_DATA)
+            return
+
+        eligible = [b for b in all_data if b.has_email]
+        if not eligible:
+            if self._toast_manager:
+                self._toast_manager.show_warning(texts.PM_STMT_EMAIL_NO_ELIGIBLE)
+            return
+
+        result = QMessageBox.question(
+            self,
+            texts.PM_STMT_EMAIL_SEND_ALL,
+            texts.PM_STMT_EMAIL_CONFIRM_BATCH,
+        )
+        if result != QMessageBox.Yes:
+            return
+
+        self._loading_overlay.setVisible(True)
+        self._batch_email_worker = StatementBatchEmailWorker(
+            self._presenter, all_data)
+        self._batch_email_worker.finished.connect(self._on_batch_email_done)
+        self._batch_email_worker.progress.connect(self._on_batch_email_progress)
+        self._batch_email_worker.error.connect(self._on_email_error)
+        self._batch_email_worker.start()
+
+    def _on_batch_email_done(self, sent: int, failed: int):
+        self._loading_overlay.setVisible(False)
+        if self._toast_manager:
+            self._toast_manager.show_success(
+                texts.PM_STMT_EMAIL_TOAST_BATCH.format(sent=sent, failed=failed))
+        self._load_data()
+
+    def _on_batch_email_progress(self, current: int, total: int):
+        if self._toast_manager:
+            self._toast_manager.show_info(
+                texts.PM_STMT_EMAIL_TOAST_BATCH_PROGRESS.format(
+                    current=current, total=total))

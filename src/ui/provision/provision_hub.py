@@ -293,7 +293,7 @@ class ProvisionHub(QWidget):
                 panel.set_presenter(self._presenters['clearance'])
             elif index == self.PANEL_DISTRIBUTION:
                 from ui.provision.verteilschluessel_panel import VerteilschluesselPanel
-                panel = VerteilschluesselPanel()
+                panel = VerteilschluesselPanel(api_client=self._api_client)
                 panel.set_presenter(self._presenters['distribution'])
             elif index == self.PANEL_PAYOUTS:
                 from ui.provision.auszahlungen_panel import AuszahlungenPanel

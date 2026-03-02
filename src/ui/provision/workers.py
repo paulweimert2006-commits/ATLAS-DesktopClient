@@ -864,3 +864,52 @@ class StatementBatchExportWorker(QThread):
             self.finished.emit(count)
         except Exception as e:
             self.error.emit(str(e))
+
+
+class StatementEmailWorker(QThread):
+    """Sendet eine Abrechnung per E-Mail (generiert PDF, base64, API-Call)."""
+    finished = Signal(dict)
+    error = Signal(str)
+
+    def __init__(self, presenter, berater):
+        super().__init__()
+        self._presenter = presenter
+        self._berater = berater
+
+    def run(self):
+        try:
+            result = self._presenter.send_statement_email(self._berater)
+            self.finished.emit(result)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+class StatementBatchEmailWorker(QThread):
+    """Sendet alle Abrechnungen per E-Mail (nur Berater mit hinterlegter E-Mail)."""
+    finished = Signal(int, int)
+    progress = Signal(int, int)
+    error = Signal(str)
+
+    def __init__(self, presenter, abrechnungen: list):
+        super().__init__()
+        self._presenter = presenter
+        self._abrechnungen = abrechnungen
+
+    def run(self):
+        try:
+            eligible = [b for b in self._abrechnungen if b.has_email]
+            sent = 0
+            failed = 0
+            for i, berater in enumerate(eligible):
+                try:
+                    result = self._presenter.send_statement_email(berater)
+                    if result.get('success'):
+                        sent += 1
+                    else:
+                        failed += 1
+                except Exception:
+                    failed += 1
+                self.progress.emit(i + 1, len(eligible))
+            self.finished.emit(sent, failed)
+        except Exception as e:
+            self.error.emit(str(e))

@@ -215,6 +215,33 @@ class PayoutsPresenter:
                 results.append(data)
         return results
 
+    # ── Statement-E-Mail ──
+
+    def send_statement_email(self, berater: BeraterAbrechnung) -> dict:
+        import base64
+        import tempfile
+        import os
+
+        data = self.build_statement(berater)
+        if not data:
+            return {'success': False, 'error': 'Keine Daten verfuegbar'}
+
+        tmp = tempfile.NamedTemporaryFile(suffix='.pdf', delete=False)
+        tmp_path = tmp.name
+        tmp.close()
+
+        try:
+            from services.statement_export import generate_pdf, get_statement_filename
+            generate_pdf(data, tmp_path)
+            with open(tmp_path, 'rb') as f:
+                pdf_bytes = f.read()
+            pdf_b64 = base64.b64encode(pdf_bytes).decode('ascii')
+            filename = get_statement_filename(berater, 'pdf')
+            return self._repo.send_statement_email(berater.id, pdf_b64, filename)
+        finally:
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+
     def refresh(self) -> None:
         pass
 

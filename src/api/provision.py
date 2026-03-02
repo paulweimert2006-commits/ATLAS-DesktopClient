@@ -428,6 +428,22 @@ class ProvisionAPI:
         )
         return resp.get('success', False)
 
+    def send_statement_email(self, abrechnung_id: int, pdf_base64: str,
+                             filename: str) -> dict:
+        try:
+            resp = self.client.post(
+                f'/pm/abrechnungen/{abrechnung_id}/send-email',
+                json_data={
+                    'pdf_base64': pdf_base64,
+                    'filename': filename,
+                })
+            if resp.get('success'):
+                return {'success': True, **resp.get('data', {})}
+            return {'success': False, 'error': resp.get('message', '')}
+        except APIError as e:
+            logger.error(f"Fehler beim E-Mail-Versand (Abrechnung {abrechnung_id}): {e}")
+            return {'success': False, 'error': str(e)}
+
     # ── Models ──
 
     def get_models(self) -> List[CommissionModel]:
