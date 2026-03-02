@@ -219,6 +219,11 @@ class Commission:
     note_updated_at: Optional[str] = None
     note_updated_by: Optional[int] = None
     note_updater_name: Optional[str] = None
+    free_commission_id: Optional[int] = None
+
+    @property
+    def is_free(self) -> bool:
+        return self.free_commission_id is not None
 
     @property
     def effective_amount(self) -> float:
@@ -234,6 +239,8 @@ class Commission:
 
     @property
     def source_label(self) -> str:
+        if self.free_commission_id is not None:
+            return "Sonderzahlung"
         if self.import_source_type == 'xempus':
             return "Xempus"
         if self.import_source_type == 'vu_liste':
@@ -287,6 +294,7 @@ class Commission:
             note_updated_at=d.get('note_updated_at'),
             note_updated_by=int(d['note_updated_by']) if d.get('note_updated_by') else None,
             note_updater_name=d.get('note_updater_name'),
+            free_commission_id=int(d['free_commission_id']) if d.get('free_commission_id') else None,
         )
 
 
@@ -445,4 +453,60 @@ class VermittlerMapping:
             berater_id=int(d.get('berater_id', 0)),
             berater_name=d.get('berater_name'),
             created_at=d.get('created_at'),
+        )
+
+
+@dataclass
+class FreeCommissionSplit:
+    """Einzelner Verteilungseintrag einer freien Provision."""
+    berater_id: int = 0
+    berater_name: str = ''
+    anteil_prozent: float = 0.0
+    anteil_euro: float = 0.0
+    commission_id: Optional[int] = None
+
+    @classmethod
+    def from_dict(cls, d: Dict) -> 'FreeCommissionSplit':
+        return cls(
+            berater_id=int(d.get('berater_id', 0)),
+            berater_name=d.get('berater_name', ''),
+            anteil_prozent=float(d.get('anteil_prozent', 0)),
+            anteil_euro=float(d.get('anteil_euro', 0)),
+            commission_id=int(d['commission_id']) if d.get('commission_id') else None,
+        )
+
+
+@dataclass
+class FreeCommission:
+    """Freie Provision / Sonderzahlung (Kopfdaten)."""
+    id: int = 0
+    datum: str = ''
+    gesamtbetrag: float = 0.0
+    beschreibung: str = ''
+    kostenstelle: Optional[str] = None
+    created_by: Optional[int] = None
+    created_by_name: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    verteilung_text: Optional[str] = None
+    can_edit: bool = True
+    splits: List[FreeCommissionSplit] = field(default_factory=list)
+
+    @classmethod
+    def from_dict(cls, d: Dict) -> 'FreeCommission':
+        splits_raw = d.get('splits', [])
+        splits = [FreeCommissionSplit.from_dict(s) for s in splits_raw] if splits_raw else []
+        return cls(
+            id=int(d.get('id', 0)),
+            datum=d.get('datum', ''),
+            gesamtbetrag=float(d.get('gesamtbetrag', 0)),
+            beschreibung=d.get('beschreibung', ''),
+            kostenstelle=d.get('kostenstelle'),
+            created_by=int(d['created_by']) if d.get('created_by') else None,
+            created_by_name=d.get('created_by_name'),
+            created_at=d.get('created_at'),
+            updated_at=d.get('updated_at'),
+            verteilung_text=d.get('verteilung_text'),
+            can_edit=bool(d.get('can_edit', True)),
+            splits=splits,
         )

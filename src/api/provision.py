@@ -581,6 +581,61 @@ class ProvisionAPI:
             logger.error(f"Fehler beim Laden des PM-Audit-Logs: {e}")
         return []
 
+    # ── Freie Provisionen / Sonderzahlungen ──
+
+    def get_free_commissions(self, von: str = None, bis: str = None) -> List[Dict]:
+        try:
+            params = {}
+            if von:
+                params['von'] = von
+            if bis:
+                params['bis'] = bis
+            resp = self.client.get('/pm/free-commissions', params=params)
+            if resp.get('success'):
+                return resp.get('data', {}).get('free_commissions', [])
+        except APIError as e:
+            logger.error(f"Fehler beim Laden der freien Provisionen: {e}")
+        return []
+
+    def get_free_commission(self, fc_id: int) -> Dict:
+        try:
+            resp = self.client.get(f'/pm/free-commissions/{fc_id}')
+            if resp.get('success'):
+                return resp.get('data', {})
+        except APIError as e:
+            logger.error(f"Fehler beim Laden der freien Provision {fc_id}: {e}")
+        return {}
+
+    def create_free_commission(self, data: Dict) -> Dict:
+        try:
+            resp = self.client.post('/pm/free-commissions', json_data=data)
+            if resp.get('success'):
+                return {'success': True, 'id': resp.get('data', {}).get('id')}
+            return {'success': False, 'message': resp.get('message', '')}
+        except APIError as e:
+            logger.error(f"Fehler beim Erstellen der freien Provision: {e}")
+        return {'success': False}
+
+    def update_free_commission(self, fc_id: int, data: Dict) -> Dict:
+        try:
+            resp = self.client.put(f'/pm/free-commissions/{fc_id}', json_data=data)
+            if resp.get('success'):
+                return {'success': True}
+            return {'success': False, 'message': resp.get('message', '')}
+        except APIError as e:
+            logger.error(f"Fehler beim Aktualisieren der freien Provision {fc_id}: {e}")
+        return {'success': False}
+
+    def delete_free_commission(self, fc_id: int) -> Dict:
+        try:
+            resp = self.client.delete(f'/pm/free-commissions/{fc_id}')
+            if resp.get('success'):
+                return {'success': True}
+            return {'success': False, 'message': resp.get('message', '')}
+        except APIError as e:
+            logger.error(f"Fehler beim Loeschen der freien Provision {fc_id}: {e}")
+        return {'success': False}
+
     # ── Reset (Gefahrenzone) ──
 
     def reset_provision_data(self) -> Dict:

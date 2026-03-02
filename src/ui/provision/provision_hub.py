@@ -21,6 +21,7 @@ from presenters.provision.import_presenter import ImportPresenter
 from presenters.provision.clearance_presenter import ClearancePresenter
 from presenters.provision.distribution_presenter import DistributionPresenter
 from presenters.provision.payouts_presenter import PayoutsPresenter
+from presenters.provision.free_commission_presenter import FreeCommissionPresenter
 from ui.styles.tokens import (
     SIDEBAR_BG, SIDEBAR_TEXT, SIDEBAR_HOVER, SIDEBAR_WIDTH_INT,
     ACCENT_500, PRIMARY_500, PRIMARY_0, PRIMARY_900,
@@ -78,7 +79,7 @@ class ProvisionNavButton(QPushButton):
 
 
 class ProvisionHub(QWidget):
-    """Provisionsmanagement-Hauptansicht mit eigener Sidebar und 7 Panels."""
+    """Provisionsmanagement-Hauptansicht mit eigener Sidebar und 9 Panels."""
 
     back_requested = Signal()
 
@@ -86,10 +87,11 @@ class ProvisionHub(QWidget):
     PANEL_IMPORT = 1
     PANEL_VU = 2
     PANEL_XEMPUS = 3
-    PANEL_CLEARANCE = 4
-    PANEL_DISTRIBUTION = 5
-    PANEL_PAYOUTS = 6
-    PANEL_SETTINGS = 7
+    PANEL_FREE = 4
+    PANEL_CLEARANCE = 5
+    PANEL_DISTRIBUTION = 6
+    PANEL_PAYOUTS = 7
+    PANEL_SETTINGS = 8
 
     PANEL_RUNS = PANEL_IMPORT
     PANEL_POSITIONS = PANEL_VU
@@ -111,6 +113,7 @@ class ProvisionHub(QWidget):
             'clearance': ClearancePresenter(self._repository),
             'distribution': DistributionPresenter(self._repository),
             'payouts': PayoutsPresenter(self._repository),
+            'free_commission': FreeCommissionPresenter(self._repository),
         }
 
         user = self._auth_api.current_user
@@ -182,6 +185,7 @@ class ProvisionHub(QWidget):
         add_nav("\u203A", texts.PROVISION_PANEL_IMPORT, texts.PROVISION_PANEL_IMPORT_DESC, self.PANEL_IMPORT)
         add_nav("\u203A", texts.PROVISION_PANEL_VU, texts.PROVISION_PANEL_VU_DESC, self.PANEL_VU)
         add_nav("\u203A", texts.PROVISION_PANEL_XEMPUS, texts.PROVISION_PANEL_XEMPUS_DESC, self.PANEL_XEMPUS)
+        add_nav("\u203A", texts.PM_FREE_PANEL_TITLE, texts.PM_FREE_PANEL_DESC, self.PANEL_FREE)
 
         sep = QFrame()
         sep.setFixedHeight(1)
@@ -235,7 +239,7 @@ class ProvisionHub(QWidget):
         root.addWidget(sidebar)
 
         self._content_stack = QStackedWidget()
-        for i in range(8):
+        for i in range(9):
             self._content_stack.addWidget(self._create_panel_placeholder(i))
         root.addWidget(self._content_stack)
 
@@ -279,6 +283,10 @@ class ProvisionHub(QWidget):
             elif index == self.PANEL_XEMPUS:
                 from ui.provision.xempus_insight_panel import XempusInsightPanel
                 panel = XempusInsightPanel(self._provision_api)
+            elif index == self.PANEL_FREE:
+                from ui.provision.free_commission_panel import FreeCommissionPanel
+                panel = FreeCommissionPanel()
+                panel.set_presenter(self._presenters['free_commission'])
             elif index == self.PANEL_CLEARANCE:
                 from ui.provision.zuordnung_panel import ZuordnungPanel
                 panel = ZuordnungPanel()

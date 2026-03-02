@@ -205,7 +205,7 @@ class DashboardPanel(QWidget):
         self._lbl_clear_no_model = self._card_clearance.add_extra_label("")
         self._card_clearance.add_action_button(
             texts.PROVISION_DASH_CLEARANCE_BTN,
-            lambda: self.navigate_to_panel.emit(4),
+            lambda: self.navigate_to_panel.emit(5),
         )
         kpi_grid.addWidget(self._card_clearance, 1, 0)
 
@@ -217,7 +217,7 @@ class DashboardPanel(QWidget):
         self._lbl_pay_done = self._card_payouts.add_extra_label("")
         self._card_payouts.add_action_button(
             texts.PROVISION_DASH_PAYOUTS_BTN,
-            lambda: self.navigate_to_panel.emit(6),
+            lambda: self.navigate_to_panel.emit(7),
         )
         kpi_grid.addWidget(self._card_payouts, 1, 1)
 

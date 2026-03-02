@@ -496,3 +496,63 @@ class AuszahlungenPositionenWorker(QThread):
             self.finished.emit(self._berater_id, comms)
         except Exception as e:
             self.error.emit(str(e))
+
+
+# ═══════════════════════════════════════════════════════
+# Freie Provisionen / Sonderzahlungen
+# ═══════════════════════════════════════════════════════
+
+class FreeCommissionLoadWorker(QThread):
+    finished = Signal(list)
+    error = Signal(str)
+
+    def __init__(self, repo: ProvisionRepository, von: str = None, bis: str = None):
+        super().__init__()
+        self._repo = repo
+        self._von = von
+        self._bis = bis
+
+    def run(self):
+        try:
+            data = self._repo.get_free_commissions(von=self._von, bis=self._bis)
+            self.finished.emit(data)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+class FreeCommissionSaveWorker(QThread):
+    finished = Signal(dict)
+    error = Signal(str)
+
+    def __init__(self, repo: ProvisionRepository, data: dict, fc_id: int = None):
+        super().__init__()
+        self._repo = repo
+        self._data = data
+        self._fc_id = fc_id
+
+    def run(self):
+        try:
+            if self._fc_id:
+                result = self._repo.update_free_commission(self._fc_id, self._data)
+            else:
+                result = self._repo.create_free_commission(self._data)
+            self.finished.emit(result)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+class FreeCommissionDeleteWorker(QThread):
+    finished = Signal(dict)
+    error = Signal(str)
+
+    def __init__(self, repo: ProvisionRepository, fc_id: int):
+        super().__init__()
+        self._repo = repo
+        self._fc_id = fc_id
+
+    def run(self):
+        try:
+            result = self._repo.delete_free_commission(self._fc_id)
+            self.finished.emit(result)
+        except Exception as e:
+            self.error.emit(str(e))
