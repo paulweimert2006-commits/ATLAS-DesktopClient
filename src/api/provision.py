@@ -581,6 +581,25 @@ class ProvisionAPI:
             logger.error(f"Fehler beim Laden des PM-Audit-Logs: {e}")
         return []
 
+    # ── PM Settings ──
+
+    def get_pm_settings(self) -> Dict:
+        try:
+            resp = self.client.get('/pm/settings')
+            if resp.get('success'):
+                return resp.get('data', {}).get('settings', {})
+        except APIError as e:
+            logger.error(f"Fehler beim Laden der PM-Einstellungen: {e}")
+        return {}
+
+    def update_pm_settings(self, settings: Dict) -> bool:
+        try:
+            resp = self.client.put('/pm/settings', json_data={'settings': settings})
+            return resp.get('success', False)
+        except APIError as e:
+            logger.error(f"Fehler beim Speichern der PM-Einstellungen: {e}")
+        return False
+
     # ── Freie Provisionen / Sonderzahlungen ──
 
     def get_free_commissions(self, von: str = None, bis: str = None) -> List[Dict]:

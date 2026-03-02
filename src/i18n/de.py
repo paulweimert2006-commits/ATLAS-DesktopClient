@@ -1442,6 +1442,17 @@ PROVISION_SETTINGS_RESET_CANCEL = "Abbrechen"
 PROVISION_SETTINGS_RESET_SUCCESS = "{commissions} Provisionen, {contracts} Verträge, {batches} Import-Batches gelöscht"
 PROVISION_SETTINGS_RESET_ERROR = "Fehler beim Zurücksetzen: {error}"
 
+# ── PM Einstellungen (allgemein) ──
+
+PM_SETTINGS_SECTION_GENERAL = "Allgemeine Einstellungen"
+PM_SETTINGS_DEFAULT_BERATER = "Standard-Vermittler (Xempus ohne Berater)"
+PM_SETTINGS_DEFAULT_BERATER_HINT = "Wird automatisch zugewiesen, wenn im Xempus-Export kein Berater angegeben ist."
+PM_SETTINGS_DEFAULT_BERATER_NONE = "-- Kein Standard-Vermittler --"
+PM_SETTINGS_SAVED = "Einstellungen gespeichert"
+PM_SETTINGS_SAVE_ERROR = "Fehler beim Speichern der Einstellungen"
+PM_SETTINGS_SAVE_BTN = "Speichern"
+PM_SETTINGS_LOADING = "Lade Einstellungen..."
+
 # Legacy-Aliase (Abwaertskompatibilitaet)
 PROVISION_PANEL_RUNS = PROVISION_PANEL_IMPORT
 PROVISION_PANEL_RUNS_DESC = PROVISION_PANEL_IMPORT_DESC
