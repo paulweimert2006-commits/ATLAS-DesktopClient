@@ -23,6 +23,7 @@ from infrastructure.api.provision_repository import ProvisionRepository
 from infrastructure.threading.provision_workers import (
     VuBatchesLoadWorker, VuParseFileWorker, VuImportWorker,
 )
+from infrastructure.threading.worker_utils import detach_worker
 
 logger = logging.getLogger(__name__)
 
@@ -201,5 +202,5 @@ class ImportPresenter:
         for w in (self._import_worker, self._parse_worker, self._batches_worker):
             if w and w.isRunning():
                 logger.info(f"Warte auf Worker {w.__class__.__name__}...")
-                w.quit()
+                detach_worker(w)
                 w.wait(10000)

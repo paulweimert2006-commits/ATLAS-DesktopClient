@@ -15,6 +15,8 @@ from api.client import APIClient
 from api.auth import AuthAPI
 from api.provision import ProvisionAPI
 from infrastructure.api.provision_repository import ProvisionRepository
+from infrastructure.cache.provision_cache import ProvisionCache
+from infrastructure.threading.freeze_detector import FreezeDetector
 from presenters.provision.positions_presenter import PositionsPresenter
 from presenters.provision.dashboard_presenter import DashboardPresenter
 from presenters.provision.import_presenter import ImportPresenter
@@ -108,6 +110,9 @@ class ProvisionHub(QWidget):
         self._nav_buttons = []
         self._panels_loaded = set()
 
+        self._freeze_detector = FreezeDetector(self)
+        self._refresh_guard = False
+
         self._repository = ProvisionRepository(api_client)
         self._presenters = {
             'positions': PositionsPresenter(self._repository),
@@ -126,6 +131,8 @@ class ProvisionHub(QWidget):
             return
 
         self._setup_ui()
+        self._freeze_detector.start()
+        self._freeze_detector.set_context("provision_hub:init")
 
     def _setup_ui(self):
         root = QHBoxLayout(self)
@@ -260,9 +267,17 @@ class ProvisionHub(QWidget):
         layout.addWidget(lbl)
         return w
 
+    _PANEL_NAMES = {
+        0: "overview", 1: "performance", 2: "import", 3: "positions",
+        4: "xempus", 5: "free_commission", 6: "clearance",
+        7: "distribution", 8: "payouts", 9: "settings",
+    }
+
     def _navigate_to(self, index: int):
         for i, btn in enumerate(self._nav_buttons):
             btn.setChecked(i == index)
+        panel_name = self._PANEL_NAMES.get(index, f"panel_{index}")
+        self._freeze_detector.set_context(f"provision:{panel_name}")
         self._ensure_panel_loaded(index)
         self._content_stack.setCurrentIndex(index)
 
@@ -331,6 +346,7 @@ class ProvisionHub(QWidget):
 
     def _on_panel_data_changed(self):
         """Daten in einem Panel haben sich geaendert - alle anderen Panels aktualisieren."""
+        ProvisionCache.instance().invalidate_all()
         for index in list(self._panels_loaded):
             panel = self._content_stack.widget(index)
             if panel and hasattr(panel, 'refresh'):
@@ -340,7 +356,13 @@ class ProvisionHub(QWidget):
                     logger.debug(f"Refresh Panel {index} nach data_changed: {e}")
 
     def _refresh_all(self):
-        """Alle geladenen Panels neu laden."""
+        """Alle geladenen Panels neu laden (mit Guard gegen Rapid-Fire)."""
+        if self._refresh_guard:
+            return
+        self._refresh_guard = True
+        QTimer.singleShot(1500, self._release_refresh_guard)
+
+        ProvisionCache.instance().invalidate_all()
         for index in list(self._panels_loaded):
             panel = self._content_stack.widget(index)
             if panel and hasattr(panel, 'refresh'):
@@ -350,6 +372,9 @@ class ProvisionHub(QWidget):
                     logger.debug(f"Refresh Panel {index}: {e}")
         if self._toast_manager:
             self._toast_manager.show_success(texts.PROVISION_HUB_REFRESH_DONE)
+
+    def _release_refresh_guard(self):
+        self._refresh_guard = False
 
     def get_blocking_operations(self) -> list:
         """Laufende Operationen die das Schliessen blockieren."""
@@ -377,6 +402,7 @@ class ProvisionHub(QWidget):
 
     def cleanup(self) -> None:
         """Alle laufenden Worker sicher beenden."""
+        self._freeze_detector.stop()
         for presenter in self._presenters.values():
             if presenter and hasattr(presenter, 'cleanup'):
                 presenter.cleanup()

@@ -205,7 +205,7 @@ class DashboardPanel(QWidget):
         self._lbl_clear_no_model = self._card_clearance.add_extra_label("")
         self._card_clearance.add_action_button(
             texts.PROVISION_DASH_CLEARANCE_BTN,
-            lambda: self.navigate_to_panel.emit(5),
+            lambda: self.navigate_to_panel.emit(6),
         )
         kpi_grid.addWidget(self._card_clearance, 1, 0)
 

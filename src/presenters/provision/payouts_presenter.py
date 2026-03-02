@@ -23,6 +23,7 @@ from infrastructure.api.provision_repository import ProvisionRepository
 from infrastructure.threading.provision_workers import (
     AuszahlungenLoadWorker, AuszahlungenPositionenWorker,
 )
+from infrastructure.threading.worker_utils import detach_worker
 from services.statement_export import (
     StatementData, build_statement_data, export_statement, export_batch,
     get_statement_filename, EXTENSIONS, FILE_FILTERS,
@@ -260,5 +261,5 @@ class PayoutsPresenter:
     def cleanup(self) -> None:
         for w in (self._load_worker, self._pos_worker):
             if w and w.isRunning():
-                w.quit()
-                w.wait(5000)
+                detach_worker(w)
+                w.wait(3000)

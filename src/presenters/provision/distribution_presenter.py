@@ -23,6 +23,7 @@ from infrastructure.api.provision_repository import ProvisionRepository
 from infrastructure.threading.provision_workers import (
     VerteilschluesselLoadWorker, SaveEmployeeWorker, SaveModelWorker,
 )
+from infrastructure.threading.worker_utils import detach_worker
 
 logger = logging.getLogger(__name__)
 
@@ -245,5 +246,5 @@ class DistributionPresenter:
     def cleanup(self) -> None:
         for w in (self._load_worker, self._save_emp_worker, self._save_model_worker):
             if w and w.isRunning():
-                w.quit()
-                w.wait(5000)
+                detach_worker(w)
+                w.wait(3000)

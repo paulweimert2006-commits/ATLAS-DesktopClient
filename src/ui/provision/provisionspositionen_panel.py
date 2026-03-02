@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
     QDialog, QFormLayout, QDialogButtonBox, QDateEdit,
 )
 from PySide6.QtCore import (
-    Qt, Signal, QTimer, QDate, QModelIndex,
+    Qt, Signal, QTimer, QDate, QModelIndex, QObject,
 )
 from PySide6.QtGui import QColor
 from typing import List, Optional
@@ -21,7 +21,6 @@ import calendar
 
 from api.provision import ProvisionAPI
 from domain.provision.entities import Commission, Employee, ContractSearchResult, PaginationInfo
-from api.client import APIError
 from ui.styles.tokens import (
     PRIMARY_100, PRIMARY_500, PRIMARY_900, ACCENT_500,
     BG_PRIMARY, BG_SECONDARY, BG_TERTIARY, BORDER_DEFAULT,
@@ -32,7 +31,7 @@ from ui.styles.tokens import (
 )
 from ui.provision.widgets import (
     PillBadgeDelegate, FilterChipBar, SectionHeader, ThreeDotMenuDelegate,
-    ActivityFeedWidget, ProvisionLoadingOverlay, ColumnFilterRow,
+    ActivityFeedWidget, ProvisionLoadingOverlay, ColumnFilterRow, PaginationBar,
     format_eur, get_search_field_style,
 )
 from ui.provision.workers import (
@@ -41,6 +40,7 @@ from ui.provision.workers import (
 )
 from ui.provision.models import PositionsModel, PositionsFilterProxy, status_label, status_pill_key, ART_LABELS
 from ui.provision.dialogs import MatchContractDialog, OverrideDialog, NoteDialog
+from infrastructure.threading.worker_utils import run_worker
 from i18n import de as texts
 import logging
 
@@ -65,6 +65,7 @@ class ProvisionspositionenPanel(QWidget):
         self._toast_manager = None
         self._current_detail_comm: Optional[Commission] = None
         self._employees_cache: List[Employee] = []
+        self._filter_ctx = QObject(self)
         self._setup_ui()
         if api:
             QTimer.singleShot(100, self._load_data)
@@ -86,8 +87,7 @@ class ProvisionspositionenPanel(QWidget):
         """View-Interface: Provisionen anzeigen."""
         self._loading_overlay.setVisible(False)
         self._all_data = commissions
-        self._update_chips()
-        self._apply_filter()
+        self._schedule_filter(debounce_ms=0)
         self._resize_columns()
 
     def show_loading(self, loading: bool) -> None:
@@ -181,7 +181,7 @@ class ProvisionspositionenPanel(QWidget):
         # FilterChips + Suche
         filter_row = QHBoxLayout()
         self._chips = FilterChipBar()
-        self._chips.filter_changed.connect(self._apply_filter)
+        self._chips.filter_changed.connect(lambda: self._schedule_filter(debounce_ms=300))
         filter_row.addWidget(self._chips)
 
         self._relevance_cb = QCheckBox(texts.PROVISION_RELEVANCE_TOGGLE)
@@ -275,6 +275,10 @@ class ProvisionspositionenPanel(QWidget):
         self._filter_info.setStyleSheet(
             f"color: {PRIMARY_500}; font-size: {FONT_SIZE_CAPTION}; font-family: {FONT_BODY};")
         table_layout.addWidget(self._filter_info)
+
+        self._pagination = PaginationBar(page_size=200)
+        self._pagination.page_changed.connect(self._on_page_changed)
+        table_layout.addWidget(self._pagination)
 
         self._splitter.addWidget(table_widget)
 
@@ -543,11 +547,10 @@ class ProvisionspositionenPanel(QWidget):
         self._worker.error.connect(self._on_error)
         self._worker.start()
 
-    def _on_loaded(self, data: List[Commission]):
+    def _on_loaded(self, data: List[Commission], pagination=None):
         self._loading_overlay.setVisible(False)
         self._all_data = data
-        self._update_chips()
-        self._apply_filter()
+        self._schedule_filter(debounce_ms=0)
         self._resize_columns()
         self._status.setText("")
 
@@ -556,14 +559,47 @@ class ProvisionspositionenPanel(QWidget):
         self._status.setText(texts.PROVISION_DASH_ERROR)
         logger.error(f"Positionen-Ladefehler: {msg}")
 
-    def _update_chips(self):
-        total = len(self._all_data)
-        zugeordnet = sum(1 for c in self._all_data
-                         if c.match_status in ('auto_matched', 'manual_matched', 'matched') and c.berater_id)
-        vertrag_gef = sum(1 for c in self._all_data
-                          if c.match_status in ('auto_matched', 'manual_matched', 'matched') and not c.berater_id)
-        unmatched = sum(1 for c in self._all_data if c.match_status == 'unmatched')
-        locked = sum(1 for c in self._all_data if c.match_status in ('gesperrt', 'ignored'))
+    def _schedule_filter(self, debounce_ms: int = 0):
+        """Chip-Zaehler und Statusfilter im Worker mit optionalem Debounce."""
+        chip_key = self._chips.active_key()
+        all_data = self._all_data
+
+        def compute(worker):
+            if worker.is_cancelled():
+                return None
+            total = len(all_data)
+            zugeordnet = sum(1 for c in all_data
+                             if c.match_status in ('auto_matched', 'manual_matched', 'matched') and c.berater_id)
+            vertrag_gef = sum(1 for c in all_data
+                              if c.match_status in ('auto_matched', 'manual_matched', 'matched') and not c.berater_id)
+            unmatched = sum(1 for c in all_data if c.match_status == 'unmatched')
+            locked = sum(1 for c in all_data if c.match_status in ('gesperrt', 'ignored'))
+            if worker.is_cancelled():
+                return None
+            filtered = all_data
+            if chip_key == "zugeordnet":
+                filtered = [c for c in filtered
+                            if c.match_status in ('auto_matched', 'manual_matched', 'matched') and c.berater_id]
+            elif chip_key == "vertrag_gefunden":
+                filtered = [c for c in filtered
+                            if c.match_status in ('auto_matched', 'manual_matched', 'matched') and not c.berater_id]
+            elif chip_key == "offen":
+                filtered = [c for c in filtered if c.match_status == 'unmatched']
+            elif chip_key == "gesperrt":
+                filtered = [c for c in filtered if c.match_status in ('gesperrt', 'ignored')]
+            return ([total, zugeordnet, vertrag_gef, unmatched, locked], filtered)
+
+        run_worker(
+            self._filter_ctx, compute, self._on_filter_computed,
+            debounce_ms=debounce_ms,
+        )
+
+    def _on_filter_computed(self, result):
+        if result is None:
+            return
+        counts, filtered = result
+        total, zugeordnet, vertrag_gef, unmatched, locked = counts
+        self._chips.blockSignals(True)
         self._chips.set_chips([
             ("alle", texts.PROVISION_POS_FILTER_ALL, total),
             ("zugeordnet", texts.PROVISION_POS_FILTER_MATCHED, zugeordnet),
@@ -571,25 +607,22 @@ class ProvisionspositionenPanel(QWidget):
             ("offen", texts.PROVISION_POS_FILTER_UNMATCHED, unmatched),
             ("gesperrt", texts.PROVISION_POS_FILTER_LOCKED, locked),
         ])
-
-    def _apply_filter(self, *args):
-        key = self._chips.active_key()
-
-        filtered = self._all_data
-        if key == "zugeordnet":
-            filtered = [c for c in filtered
-                        if c.match_status in ('auto_matched', 'manual_matched', 'matched') and c.berater_id]
-        elif key == "vertrag_gefunden":
-            filtered = [c for c in filtered
-                        if c.match_status in ('auto_matched', 'manual_matched', 'matched') and not c.berater_id]
-        elif key == "offen":
-            filtered = [c for c in filtered if c.match_status == 'unmatched']
-        elif key == "gesperrt":
-            filtered = [c for c in filtered if c.match_status in ('gesperrt', 'ignored')]
-
+        self._chips.blockSignals(False)
         self._filtered_data = filtered
-        self._model.set_data(filtered)
+        self._pagination.set_total(len(filtered))
+        self._paginate()
         self._update_filter_info()
+
+    def _on_page_changed(self, page: int):
+        self._paginate()
+
+    def _paginate(self):
+        data = self._filtered_data
+        page = self._pagination.current_page
+        ps = self._pagination._page_size
+        start = page * ps
+        end = start + ps
+        self._model.set_data(data[start:end])
 
     def _on_search_changed(self, text: str) -> None:
         self._proxy.set_global_filter(text)
@@ -937,12 +970,20 @@ class ProvisionspositionenPanel(QWidget):
             self._load_data()
 
     def _create_mapping_for(self, comm: Commission):
-        from ui.provision.zuordnung_panel import ZuordnungPanel
         xempus_name = comm.xempus_berater_name or ""
         vu_name = comm.vermittler_name or ""
         primary_name = xempus_name or vu_name
         if not primary_name:
             return
+        run_worker(
+            self, lambda w: self._backend.get_employees(),
+            lambda employees, c=comm: self._show_mapping_dialog(c, employees),
+        )
+
+    def _show_mapping_dialog(self, comm: Commission, employees):
+        xempus_name = comm.xempus_berater_name or ""
+        vu_name = comm.vermittler_name or ""
+        primary_name = xempus_name or vu_name
 
         dlg = QDialog(self)
         dlg.setWindowTitle(texts.PROVISION_MAP_DLG_CREATE_TITLE)
@@ -963,8 +1004,8 @@ class ProvisionspositionenPanel(QWidget):
 
         berater_combo = QComboBox()
         berater_combo.addItem("\u2014", None)
-        self._employees_cache = self._backend.get_employees()
-        for emp in self._employees_cache:
+        self._employees_cache = employees
+        for emp in employees:
             if emp.is_active and emp.role in ('consulter', 'teamleiter', 'geschaeftsfuehrer'):
                 berater_combo.addItem(emp.name, emp.id)
         form.addRow(texts.PROVISION_MAPPING_DLG_SELECT, berater_combo)

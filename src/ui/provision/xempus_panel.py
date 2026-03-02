@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
     QLineEdit, QPushButton, QSizePolicy,
 )
 from PySide6.QtCore import (
-    Qt, Signal, QSortFilterProxyModel, QTimer, QModelIndex,
+    Qt, Signal, QSortFilterProxyModel, QTimer, QModelIndex, QObject,
 )
 from PySide6.QtGui import QColor
 from typing import List, Optional
@@ -30,6 +30,7 @@ from ui.provision.widgets import (
 )
 from ui.provision.workers import XempusContractsLoadWorker, XempusDetailLoadWorker
 from ui.provision.models import XempusContractsModel, xempus_status_label
+from infrastructure.threading.worker_utils import run_worker, detach_worker
 from i18n import de as texts
 import logging
 
@@ -48,6 +49,7 @@ class XempusPanel(QWidget):
         self._employees: List[Employee] = []
         self._worker = None
         self._detail_worker = None
+        self._filter_ctx = QObject(self)
         self._setup_ui()
         QTimer.singleShot(100, self.refresh)
 
@@ -66,7 +68,7 @@ class XempusPanel(QWidget):
         self._search.setPlaceholderText(texts.PROVISION_SEARCH)
         self._search.setStyleSheet(get_search_field_style())
         self._search.setFixedWidth(260)
-        self._search.textChanged.connect(self._apply_filters)
+        self._search.textChanged.connect(lambda: self._schedule_filter(debounce_ms=300))
         toolbar.addWidget(self._search)
 
         self._filter_status = QComboBox()
@@ -75,13 +77,13 @@ class XempusPanel(QWidget):
         self._filter_status.addItem(texts.PROVISION_XEMPUS_FILTER_OPEN, 'open')
         self._filter_status.addItem(texts.PROVISION_XEMPUS_FILTER_APPLIED, 'applied')
         self._filter_status.setFixedWidth(140)
-        self._filter_status.currentIndexChanged.connect(self._apply_filters)
+        self._filter_status.currentIndexChanged.connect(lambda: self._schedule_filter())
         toolbar.addWidget(self._filter_status)
 
         self._filter_berater = QComboBox()
         self._filter_berater.addItem(texts.PROVISION_POS_FILTER_ALL, 0)
         self._filter_berater.setFixedWidth(180)
-        self._filter_berater.currentIndexChanged.connect(self._apply_filters)
+        self._filter_berater.currentIndexChanged.connect(lambda: self._schedule_filter())
         toolbar.addWidget(self._filter_berater)
 
         toolbar.addStretch()
@@ -146,8 +148,7 @@ class XempusPanel(QWidget):
         self._loading.hide()
 
     def refresh(self):
-        if self._worker and self._worker.isRunning():
-            return
+        detach_worker(self._worker)
         self._loading.show()
         self._worker = XempusContractsLoadWorker(self._api, limit=5000)
         self._worker.finished.connect(self._on_data_loaded)
@@ -172,40 +173,53 @@ class XempusPanel(QWidget):
                 self._filter_berater.setCurrentIndex(idx)
         self._filter_berater.blockSignals(False)
 
-        self._apply_filters()
+        self._schedule_filter()
 
     def _on_error(self, msg: str):
         self._loading.hide()
         logger.error(f"Xempus-Ladefehler: {msg}")
 
-    def _apply_filters(self):
+    def _schedule_filter(self, debounce_ms: int = 0):
+        """Filterung im Worker mit optionalem Debounce."""
         status_filter = self._filter_status.currentData()
         berater_filter = self._filter_berater.currentData()
         search = self._search.text().strip().lower()
+        all_data = self._all_data
+        employees = self._employees
 
-        filtered = self._all_data
-        if status_filter == 'paid':
-            filtered = [c for c in filtered if c.provision_count and c.provision_count > 0]
-        elif status_filter == 'open':
-            filtered = [c for c in filtered
-                        if (not c.provision_count or c.provision_count == 0) and c.status != 'beantragt']
-        elif status_filter == 'applied':
-            filtered = [c for c in filtered if c.status == 'beantragt']
+        def compute(worker):
+            if worker.is_cancelled():
+                return None
+            filtered = all_data
+            if status_filter == 'paid':
+                filtered = [c for c in filtered if c.provision_count and c.provision_count > 0]
+            elif status_filter == 'open':
+                filtered = [c for c in filtered
+                            if (not c.provision_count or c.provision_count == 0) and c.status != 'beantragt']
+            elif status_filter == 'applied':
+                filtered = [c for c in filtered if c.status == 'beantragt']
+            if berater_filter:
+                filtered = [c for c in filtered if c.berater_id == berater_filter]
+            if search:
+                filtered = [c for c in filtered if
+                            search in (c.vsnr or '').lower() or
+                            search in (c.versicherungsnehmer or '').lower() or
+                            search in (c.versicherer or '').lower() or
+                            search in (c.berater_name or '').lower() or
+                            search in (c.sparte or '').lower()]
+            return (filtered, employees)
 
-        if berater_filter:
-            filtered = [c for c in filtered if c.berater_id == berater_filter]
+        run_worker(
+            self._filter_ctx, compute, self._on_filter_computed,
+            debounce_ms=debounce_ms,
+        )
 
-        if search:
-            filtered = [c for c in filtered if
-                        search in (c.vsnr or '').lower() or
-                        search in (c.versicherungsnehmer or '').lower() or
-                        search in (c.versicherer or '').lower() or
-                        search in (c.berater_name or '').lower() or
-                        search in (c.sparte or '').lower()]
-
-        self._model.set_data(filtered, self._employees)
+    def _on_filter_computed(self, result):
+        if result is None:
+            return
+        filtered, employees = result
+        self._model.set_data(filtered, employees)
         self._count_label.setText(texts.PROVISION_XEMPUS_COUNT.format(count=len(filtered)))
-
         if self._table.model().rowCount() > 0:
             self._table.resizeColumnsToContents()
             h = self._table.horizontalHeader()
@@ -278,13 +292,16 @@ class XempusPanel(QWidget):
         self._detail_layout.addStretch()
 
     def _load_commissions_for(self, vsnr: str):
-        if self._detail_worker and self._detail_worker.isRunning():
-            return
+        self._current_detail_vsnr = vsnr
+        detach_worker(self._detail_worker)
         self._detail_worker = XempusDetailLoadWorker(self._api, vsnr)
-        self._detail_worker.finished.connect(self._on_detail_loaded)
+        self._detail_worker.finished.connect(
+            lambda comms, v=vsnr: self._on_detail_loaded(comms, v))
         self._detail_worker.start()
 
-    def _on_detail_loaded(self, commissions):
+    def _on_detail_loaded(self, commissions, vsnr: str):
+        if vsnr != getattr(self, '_current_detail_vsnr', None):
+            return
         if not isinstance(commissions, list):
             return
         scroll = QScrollArea()

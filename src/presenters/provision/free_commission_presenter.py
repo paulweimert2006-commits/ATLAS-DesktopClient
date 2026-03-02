@@ -14,6 +14,7 @@ from infrastructure.api.provision_repository import ProvisionRepository
 from infrastructure.threading.provision_workers import (
     FreeCommissionLoadWorker, FreeCommissionSaveWorker, FreeCommissionDeleteWorker,
 )
+from infrastructure.threading.worker_utils import detach_worker
 
 logger = logging.getLogger(__name__)
 
@@ -104,5 +105,5 @@ class FreeCommissionPresenter:
     def cleanup(self) -> None:
         for w in (self._load_worker, self._save_worker, self._delete_worker):
             if w and w.isRunning():
-                w.quit()
-                w.wait(5000)
+                detach_worker(w)
+                w.wait(3000)

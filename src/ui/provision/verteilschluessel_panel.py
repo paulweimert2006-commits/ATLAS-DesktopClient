@@ -16,7 +16,7 @@ from PySide6.QtCore import (
 )
 from typing import List, Optional
 
-from api.client import APIClient, APIError
+from api.client import APIClient
 from api.admin import AdminAPI
 from api.provision import ProvisionAPI
 from domain.provision.entities import Employee, CommissionModel
@@ -33,6 +33,7 @@ from ui.provision.widgets import (
 )
 from ui.provision.workers import VerteilschluesselLoadWorker, SaveEmployeeWorker, SaveModelWorker
 from ui.provision.models import DistEmployeeModel
+from infrastructure.threading.worker_utils import run_worker
 from i18n import de as texts
 import logging
 
@@ -313,14 +314,18 @@ class VerteilschluesselPanel(QWidget):
         if dlg.exec() == QDialog.Accepted:
             name = name_edit.text().strip()
             if name:
-                self._backend.create_model({
+                data = {
                     'name': name,
                     'commission_rate': rate_spin.value(),
                     'tl_rate': tl_rate_spin.value() if tl_rate_spin.value() > 0 else None,
                     'tl_basis': tl_basis_combo.currentData(),
                     'description': desc_edit.text().strip() or None,
-                })
-                self._load_data()
+                }
+                run_worker(
+                    self,
+                    lambda w, d=data: self._backend.create_model(d),
+                    lambda _: self._load_data(),
+                )
 
     def _get_model_map(self) -> dict:
         """Model-ID -> CommissionModel Lookup fuer Auto-Fill aller Felder."""
@@ -414,10 +419,16 @@ class VerteilschluesselPanel(QWidget):
                     'tl_override_basis': tl_basis_combo.currentData(),
                     'teamleiter_id': tl_combo.currentData(),
                 }
-                self._backend.create_employee(data)
-                if self._toast_manager:
-                    self._toast_manager.show_success(texts.PROVISION_TOAST_SAVED)
-                self._load_data()
+                run_worker(
+                    self,
+                    lambda w, d=data: self._backend.create_employee(d),
+                    self._on_employee_created,
+                )
+
+    def _on_employee_created(self, result):
+        if self._toast_manager:
+            self._toast_manager.show_success(texts.PROVISION_TOAST_SAVED)
+        self._load_data()
 
     # ── Employee context menu + edit/delete ──
 
@@ -559,6 +570,7 @@ class VerteilschluesselPanel(QWidget):
             pending_user_id = user_section.property('pending_user_id')
             if pending_user_id is not None:
                 data['user_id'] = pending_user_id
+            self.show_loading(True)
             self._save_worker = SaveEmployeeWorker(self._backend, emp.id, data)
             self._save_worker.finished.connect(self._on_save_finished)
             self._save_worker.error.connect(self._on_save_error)
@@ -646,14 +658,19 @@ class VerteilschluesselPanel(QWidget):
                                parent_dlg: QDialog):
         if not self._admin_api:
             return
-        try:
-            users = self._admin_api.get_users()
-        except Exception as e:
-            logger.error(f"Fehler beim Laden der Nutzer: {e}")
-            if self._toast_manager:
-                self._toast_manager.show_error(str(e))
-            return
+        run_worker(
+            self,
+            lambda w: self._admin_api.get_users(),
+            lambda users, g=group, l=layout: self._populate_user_combo(g, l, users),
+            on_error=lambda msg: self._on_link_user_error(msg),
+        )
 
+    def _on_link_user_error(self, msg):
+        logger.error(f"Fehler beim Laden der Nutzer: {msg}")
+        if self._toast_manager:
+            self._toast_manager.show_error(msg)
+
+    def _populate_user_combo(self, group: QGroupBox, layout: QVBoxLayout, users):
         linked_ids = {e.user_id for e in self._employees if e.user_id}
         available = [u for u in users if u.get('id') not in linked_ids
                      and u.get('is_active', True)]
@@ -754,32 +771,42 @@ class VerteilschluesselPanel(QWidget):
                 return
             email = email_edit.text().strip()
             perms = [k for k, cb in perm_checkboxes.items() if cb.isChecked()]
-            try:
-                new_user = self._admin_api.create_user(
-                    username=uname,
-                    password=pw,
-                    email=email,
-                    account_type='user',
-                    permissions=perms,
-                )
-                new_user_id = new_user.get('id')
-                if new_user_id:
-                    group.setProperty('pending_user_id', new_user_id)
-                    status_label.setText(texts.PM_EMP_USER_CREATE_SUCCESS)
-                    status_label.setStyleSheet(f"color: {SUCCESS};")
-                    confirm_btn.setEnabled(False)
-                    username_edit.setReadOnly(True)
-                    email_edit.setReadOnly(True)
-                    password_edit.setReadOnly(True)
-                    for cb in perm_checkboxes.values():
-                        cb.setEnabled(False)
-                else:
-                    status_label.setText(texts.PM_EMP_USER_CREATE_ERROR.format(
-                        error="Keine User-ID erhalten"))
-                    status_label.setStyleSheet(f"color: {ERROR};")
-            except Exception as e:
-                status_label.setText(texts.PM_EMP_USER_CREATE_ERROR.format(error=str(e)))
+            confirm_btn.setEnabled(False)
+            status_label.setText(texts.PM_EMP_USER_CREATE_NEW + "...")
+            status_label.setStyleSheet(f"color: {PRIMARY_500};")
+
+            run_worker(
+                self,
+                lambda w: self._admin_api.create_user(
+                    username=uname, password=pw, email=email,
+                    account_type='user', permissions=perms,
+                ),
+                lambda new_user: _on_user_created(new_user),
+                on_error=lambda msg: _on_user_create_error(msg),
+            )
+
+        def _on_user_created(new_user):
+            new_user_id = new_user.get('id') if new_user else None
+            if new_user_id:
+                group.setProperty('pending_user_id', new_user_id)
+                status_label.setText(texts.PM_EMP_USER_CREATE_SUCCESS)
+                status_label.setStyleSheet(f"color: {SUCCESS};")
+                confirm_btn.setEnabled(False)
+                username_edit.setReadOnly(True)
+                email_edit.setReadOnly(True)
+                password_edit.setReadOnly(True)
+                for cb in perm_checkboxes.values():
+                    cb.setEnabled(False)
+            else:
+                status_label.setText(texts.PM_EMP_USER_CREATE_ERROR.format(
+                    error="Keine User-ID erhalten"))
                 status_label.setStyleSheet(f"color: {ERROR};")
+                confirm_btn.setEnabled(True)
+
+        def _on_user_create_error(msg):
+            status_label.setText(texts.PM_EMP_USER_CREATE_ERROR.format(error=msg))
+            status_label.setStyleSheet(f"color: {ERROR};")
+            confirm_btn.setEnabled(True)
 
         confirm_btn.clicked.connect(_do_create)
         layout.addWidget(confirm_btn)
@@ -805,22 +832,29 @@ class VerteilschluesselPanel(QWidget):
                 VerteilschluesselPanel._clear_sub_layout(item.layout())
 
     def _deactivate_employee(self, emp: Employee):
-        try:
-            self._backend.delete_employee(emp.id, hard=False)
-            if self._toast_manager:
-                self._toast_manager.show_success(texts.PROVISION_TOAST_DEACTIVATED)
-            self._load_data()
-        except APIError:
-            pass
+        run_worker(
+            self,
+            lambda w, eid=emp.id: self._backend.delete_employee(eid, hard=False),
+            lambda _: self._on_emp_deactivated(),
+        )
+
+    def _on_emp_deactivated(self):
+        if self._toast_manager:
+            self._toast_manager.show_success(texts.PROVISION_TOAST_DEACTIVATED)
+        self._load_data()
 
     def _activate_employee(self, emp: Employee):
-        try:
-            success, _ = self._backend.update_employee(emp.id, {'is_active': True})
-            if success and self._toast_manager:
-                self._toast_manager.show_success(texts.PROVISION_TOAST_ACTIVATED)
-            self._load_data()
-        except APIError:
-            pass
+        run_worker(
+            self,
+            lambda w, eid=emp.id: self._backend.update_employee(eid, {'is_active': True}),
+            self._on_emp_activated,
+        )
+
+    def _on_emp_activated(self, result):
+        success = result[0] if isinstance(result, tuple) else result
+        if success and self._toast_manager:
+            self._toast_manager.show_success(texts.PROVISION_TOAST_ACTIVATED)
+        self._load_data()
 
     def _delete_employee(self, emp: Employee):
         answer = QMessageBox.question(
@@ -832,19 +866,25 @@ class VerteilschluesselPanel(QWidget):
         )
         if answer != QMessageBox.Yes:
             return
-        try:
-            self._backend.delete_employee(emp.id, hard=True)
+        run_worker(
+            self,
+            lambda w, eid=emp.id: self._backend.delete_employee(eid, hard=True),
+            lambda _: self._on_emp_hard_deleted(),
+            on_error=self._on_emp_delete_error,
+        )
+
+    def _on_emp_hard_deleted(self):
+        if self._toast_manager:
+            self._toast_manager.show_success(texts.PROVISION_TOAST_DELETED)
+        self._load_data()
+
+    def _on_emp_delete_error(self, error_msg):
+        if '409' in error_msg:
             if self._toast_manager:
-                self._toast_manager.show_success(texts.PROVISION_TOAST_DELETED)
-            self._load_data()
-        except APIError as e:
-            error_msg = str(e)
-            if '409' in error_msg:
-                if self._toast_manager:
-                    self._toast_manager.show_warning(texts.PROVISION_EMP_DELETE_HAS_REF)
-            else:
-                if self._toast_manager:
-                    self._toast_manager.show_error(error_msg)
+                self._toast_manager.show_warning(texts.PROVISION_EMP_DELETE_HAS_REF)
+        else:
+            if self._toast_manager:
+                self._toast_manager.show_error(error_msg)
 
     # ── Model context menu + edit/delete ──
 
@@ -909,12 +949,14 @@ class VerteilschluesselPanel(QWidget):
                 'description': desc_edit.text().strip() or None,
                 'gueltig_ab': gueltig_ab.date().toString("yyyy-MM-dd"),
             }
+            self.show_loading(True)
             self._save_worker = SaveModelWorker(self._backend, model.id, data)
             self._save_worker.finished.connect(self._on_save_finished)
             self._save_worker.error.connect(self._on_save_error)
             self._save_worker.start()
 
     def _on_save_finished(self, success: bool, summary):
+        self.show_loading(False)
         if success:
             if summary:
                 msg = texts.PROVISION_RECALC_TOAST.format(
@@ -931,11 +973,19 @@ class VerteilschluesselPanel(QWidget):
             self._load_data()
 
     def _on_save_error(self, error_msg: str):
+        self.show_loading(False)
         if self._toast_manager:
             self._toast_manager.show_error(error_msg)
 
     def _deactivate_model(self, model: CommissionModel):
-        if self._backend.delete_model(model.id):
+        run_worker(
+            self,
+            lambda w, mid=model.id: self._backend.delete_model(mid),
+            self._on_model_deactivated,
+        )
+
+    def _on_model_deactivated(self, success):
+        if success:
             if self._toast_manager:
                 self._toast_manager.show_success(texts.PROVISION_TOAST_DEACTIVATED)
             self._load_data()

@@ -6,15 +6,16 @@ Sonderzahlungen mit freier Verteilung an Berater.
 """
 
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTableWidget,
-    QTableWidgetItem, QHeaderView, QPushButton, QAbstractItemView,
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTableView,
+    QHeaderView, QPushButton, QAbstractItemView,
     QMessageBox,
 )
-from PySide6.QtCore import Qt, Signal, QTimer
+from PySide6.QtCore import Qt, Signal, QTimer, QObject
 from PySide6.QtGui import QColor
 from typing import List, Optional
 
 from domain.provision.entities import FreeCommission
+from infrastructure.threading.worker_utils import run_worker
 from ui.styles.tokens import (
     PRIMARY_100, PRIMARY_500, PRIMARY_900, ACCENT_500,
     BG_PRIMARY, BG_SECONDARY, BORDER_DEFAULT,
@@ -26,6 +27,7 @@ from ui.provision.widgets import (
     SectionHeader, ProvisionLoadingOverlay,
     format_eur, get_secondary_button_style,
 )
+from ui.provision.models import FreeCommissionModel
 from i18n import de as texts
 import logging
 
@@ -46,6 +48,7 @@ class FreeCommissionPanel(QWidget):
         self._presenter = None
         self._toast_manager = None
         self._items: List[FreeCommission] = []
+        self._dialog_ctx = QObject(self)
         self._setup_ui()
 
     def set_presenter(self, presenter) -> None:
@@ -102,27 +105,43 @@ class FreeCommissionPanel(QWidget):
         """)
         self._create_btn.clicked.connect(self._on_create)
         header._action_area.addWidget(self._create_btn)
+
+        self._edit_btn = QPushButton(texts.PM_FREE_DIALOG_TITLE_EDIT.split()[0])
+        self._edit_btn.setCursor(Qt.PointingHandCursor)
+        self._edit_btn.setStyleSheet(get_secondary_button_style())
+        self._edit_btn.setEnabled(False)
+        self._edit_btn.clicked.connect(self._on_edit_selected)
+        header._action_area.addWidget(self._edit_btn)
+
+        self._del_btn = QPushButton("\u2716")
+        self._del_btn.setCursor(Qt.PointingHandCursor)
+        self._del_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: transparent; color: {ERROR};
+                border: 1px solid {ERROR}; border-radius: 4px;
+                padding: 4px 12px; font-size: {FONT_SIZE_CAPTION};
+            }}
+            QPushButton:hover {{ background-color: #fde8e8; }}
+            QPushButton:disabled {{ color: #ccc; border-color: #ccc; }}
+        """)
+        self._del_btn.setEnabled(False)
+        self._del_btn.clicked.connect(self._on_delete_selected)
+        header._action_area.addWidget(self._del_btn)
+
         layout.addWidget(header)
 
-        self._table = QTableWidget()
+        self._fc_model = FreeCommissionModel()
+        self._table = QTableView()
+        self._table.setModel(self._fc_model)
         self._table.setAlternatingRowColors(True)
         self._table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self._table.setSelectionMode(QAbstractItemView.SingleSelection)
         self._table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self._table.verticalHeader().setVisible(False)
         self._table.setStyleSheet(get_provision_table_style())
-
-        cols = [
-            texts.PM_FREE_COL_DATUM,
-            texts.PM_FREE_COL_BETRAG,
-            texts.PM_FREE_COL_BESCHREIBUNG,
-            texts.PM_FREE_COL_KOSTENSTELLE,
-            texts.PM_FREE_COL_VERTEILUNG,
-            texts.PM_FREE_COL_ERSTELLT_VON,
-            texts.PM_FREE_COL_AKTIONEN,
-        ]
-        self._table.setColumnCount(len(cols))
-        self._table.setHorizontalHeaderLabels(cols)
+        self._table.doubleClicked.connect(lambda idx: self._on_edit(idx.row()))
+        self._table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self._table.customContextMenuRequested.connect(self._show_context_menu)
 
         hh = self._table.horizontalHeader()
         hh.setSectionResizeMode(0, QHeaderView.ResizeToContents)
@@ -131,9 +150,8 @@ class FreeCommissionPanel(QWidget):
         hh.setSectionResizeMode(3, QHeaderView.ResizeToContents)
         hh.setSectionResizeMode(4, QHeaderView.Stretch)
         hh.setSectionResizeMode(5, QHeaderView.ResizeToContents)
-        hh.setSectionResizeMode(6, QHeaderView.Fixed)
-        hh.resizeSection(6, 240)
 
+        self._table.selectionModel().selectionChanged.connect(self._on_selection_changed)
         layout.addWidget(self._table)
 
         self._empty_label = QLabel(texts.PM_FREE_EMPTY)
@@ -148,63 +166,55 @@ class FreeCommissionPanel(QWidget):
         self._loading_overlay.setVisible(False)
 
     def _populate_table(self):
-        self._table.setRowCount(0)
         has_data = bool(self._items)
         self._table.setVisible(has_data)
         self._empty_label.setVisible(not has_data)
-        if not has_data:
+        self._fc_model.set_data(self._items if has_data else [])
+
+    # ── Selection & Context Menu ──
+
+    def _on_selection_changed(self):
+        row = self._get_selected_row()
+        if row < 0 or row >= len(self._items):
+            self._edit_btn.setEnabled(False)
+            self._del_btn.setEnabled(False)
             return
+        fc = self._items[row]
+        self._edit_btn.setEnabled(fc.can_edit)
+        self._del_btn.setEnabled(fc.can_edit)
 
-        self._table.setRowCount(len(self._items))
-        for row, fc in enumerate(self._items):
-            datum_str = fc.datum[:10] if fc.datum else ''
-            self._table.setItem(row, 0, QTableWidgetItem(datum_str))
+    def _get_selected_row(self) -> int:
+        indexes = self._table.selectionModel().selectedRows()
+        if indexes:
+            return indexes[0].row()
+        return -1
 
-            betrag_item = QTableWidgetItem(format_eur(fc.gesamtbetrag))
-            betrag_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            self._table.setItem(row, 1, betrag_item)
+    def _on_edit_selected(self):
+        row = self._get_selected_row()
+        if row >= 0:
+            self._on_edit(row)
 
-            self._table.setItem(row, 2, QTableWidgetItem(fc.beschreibung))
-            self._table.setItem(row, 3, QTableWidgetItem(fc.kostenstelle or ''))
-            self._table.setItem(row, 4, QTableWidgetItem(fc.verteilung_text or ''))
-            self._table.setItem(row, 5, QTableWidgetItem(fc.created_by_name or ''))
+    def _on_delete_selected(self):
+        row = self._get_selected_row()
+        if row >= 0:
+            self._on_delete(row)
 
-            actions_widget = QWidget()
-            actions_layout = QHBoxLayout(actions_widget)
-            actions_layout.setContentsMargins(4, 2, 4, 2)
-            actions_layout.setSpacing(6)
-
-            if fc.can_edit:
-                edit_btn = QPushButton(texts.PM_FREE_DIALOG_TITLE_EDIT.split()[0])
-                edit_btn.setCursor(Qt.PointingHandCursor)
-                edit_btn.setStyleSheet(get_secondary_button_style())
-                edit_btn.setFixedHeight(28)
-                edit_btn.clicked.connect(lambda checked, r=row: self._on_edit(r))
-                actions_layout.addWidget(edit_btn)
-
-                del_btn = QPushButton("\u2716")
-                del_btn.setCursor(Qt.PointingHandCursor)
-                del_btn.setToolTip(texts.PM_FREE_DELETE_CONFIRM.format(beschreibung=''))
-                del_btn.setStyleSheet(f"""
-                    QPushButton {{
-                        background-color: transparent; color: {ERROR};
-                        border: 1px solid {ERROR}; border-radius: 4px;
-                        padding: 2px 8px; font-size: {FONT_SIZE_CAPTION};
-                    }}
-                    QPushButton:hover {{ background-color: #fde8e8; }}
-                """)
-                del_btn.setFixedHeight(28)
-                del_btn.clicked.connect(lambda checked, r=row: self._on_delete(r))
-                actions_layout.addWidget(del_btn)
-            else:
-                lock_lbl = QLabel("\U0001F512")
-                lock_lbl.setToolTip(texts.PM_FREE_EDIT_LOCKED)
-                actions_layout.addWidget(lock_lbl)
-
-            actions_layout.addStretch()
-            self._table.setCellWidget(row, 6, actions_widget)
-
-        self._table.resizeRowsToContents()
+    def _show_context_menu(self, pos):
+        from PySide6.QtWidgets import QMenu
+        idx = self._table.indexAt(pos)
+        if not idx.isValid():
+            return
+        row = idx.row()
+        if row < 0 or row >= len(self._items):
+            return
+        fc = self._items[row]
+        menu = QMenu(self)
+        if fc.can_edit:
+            menu.addAction(texts.PM_FREE_DIALOG_TITLE_EDIT.split()[0],
+                           lambda: self._on_edit(row))
+            menu.addAction(texts.PM_FREE_BTN_DELETE if hasattr(texts, 'PM_FREE_BTN_DELETE') else "\u2716",
+                           lambda: self._on_delete(row))
+        menu.exec(self._table.viewport().mapToGlobal(pos))
 
     # ── Actions ──
 
@@ -213,8 +223,19 @@ class FreeCommissionPanel(QWidget):
             self._presenter.load_free_commissions()
 
     def _on_create(self):
+        if not self._presenter:
+            return
+        self.show_loading(True)
+        run_worker(
+            self._dialog_ctx,
+            lambda w: self._presenter._repo.get_employees(),
+            self._open_create_dialog,
+            on_error=self._on_dialog_load_error,
+        )
+
+    def _open_create_dialog(self, employees):
+        self.show_loading(False)
         from ui.provision.free_commission_dialog import FreeCommissionDialog
-        employees = self._presenter.get_employees() if self._presenter else []
         dlg = FreeCommissionDialog(employees, parent=self)
         if dlg.exec():
             data = dlg.get_data()
@@ -229,22 +250,37 @@ class FreeCommissionPanel(QWidget):
             if self._toast_manager:
                 self._toast_manager.show_error(texts.PM_FREE_EDIT_LOCKED)
             return
+        if not self._presenter:
+            return
 
+        self.show_loading(True)
+        fc_id = fc.id
+        run_worker(
+            self._dialog_ctx,
+            lambda w: {
+                'employees': self._presenter._repo.get_employees(),
+                'detail': self._presenter._repo.get_free_commission(fc_id),
+            },
+            lambda result: self._open_edit_dialog(result, fc),
+            on_error=self._on_dialog_load_error,
+        )
+
+    def _open_edit_dialog(self, result, fc):
+        self.show_loading(False)
         from ui.provision.free_commission_dialog import FreeCommissionDialog
-        employees = self._presenter.get_employees() if self._presenter else []
-        detail = {}
-        if self._presenter:
-            detail = self._presenter._repo.get_free_commission(fc.id)
-        if detail:
-            fc_detail = FreeCommission.from_dict(detail)
-        else:
-            fc_detail = fc
-
+        employees = result.get('employees', [])
+        detail = result.get('detail', {})
+        fc_detail = FreeCommission.from_dict(detail) if detail else fc
         dlg = FreeCommissionDialog(employees, fc=fc_detail, parent=self)
         if dlg.exec():
             data = dlg.get_data()
             if self._presenter:
                 self._presenter.save_free_commission(data, fc_id=fc.id)
+
+    def _on_dialog_load_error(self, msg: str):
+        self.show_loading(False)
+        if self._toast_manager:
+            self._toast_manager.show_error(msg)
 
     def _on_delete(self, row: int):
         if row < 0 or row >= len(self._items):

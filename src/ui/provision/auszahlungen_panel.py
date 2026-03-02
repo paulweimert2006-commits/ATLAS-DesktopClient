@@ -42,6 +42,7 @@ from ui.provision.workers import (
 )
 from ui.provision.models import AuszahlungenModel, STATUS_LABELS, STATUS_PILL_MAP
 from services.statement_export import FILE_FILTERS, get_statement_filename, EXTENSIONS
+from infrastructure.threading.worker_utils import run_worker
 from i18n import de as texts
 import logging
 
@@ -548,6 +549,7 @@ class AuszahlungenPanel(QWidget):
         path, _ = QFileDialog.getSaveFileName(self, texts.PROVISION_PAY_EXPORT_CSV_TITLE, "", "CSV (*.csv)")
         if not path:
             return
+        headers = [self._model.COLUMNS[i] for i in range(self._model.columnCount() - 1)]
         data = []
         for row in range(self._model.rowCount()):
             row_data = []
@@ -555,22 +557,40 @@ class AuszahlungenPanel(QWidget):
                 val = self._model.data(self._model.index(row, col))
                 row_data.append(val or "")
             data.append(row_data)
-        try:
-            with open(path, 'w', newline='', encoding='utf-8-sig') as f:
+
+        self._loading_overlay.setVisible(True)
+
+        def _write_csv(w, p=path, h=headers, d=data):
+            with open(p, 'w', newline='', encoding='utf-8-sig') as f:
                 writer = csv.writer(f, delimiter=';')
-                writer.writerow([self._model.COLUMNS[i] for i in range(self._model.columnCount() - 1)])
-                writer.writerows(data)
-            if self._toast_manager:
-                self._toast_manager.show_success(texts.PROVISION_TOAST_EXPORT_DONE.format(path=os.path.basename(path)))
-        except Exception as e:
-            logger.error(f"CSV-Export-Fehler: {e}")
-            if self._toast_manager:
-                self._toast_manager.show_error(str(e))
+                writer.writerow(h)
+                writer.writerows(d)
+            return p
+
+        run_worker(
+            self, _write_csv,
+            lambda p: self._on_export_done(p),
+            on_error=self._on_export_error,
+        )
+
+    def _on_export_done(self, path):
+        self._loading_overlay.setVisible(False)
+        if self._toast_manager:
+            self._toast_manager.show_success(
+                texts.PROVISION_TOAST_EXPORT_DONE.format(path=os.path.basename(path)),
+                action_text=texts.PROVISION_TOAST_EXPORT_OPEN,
+                action_callback=lambda: os.startfile(path),
+            )
+
+    def _on_export_error(self, error_msg):
+        self._loading_overlay.setVisible(False)
+        logger.error(f"Export-Fehler: {error_msg}")
+        if self._toast_manager:
+            self._toast_manager.show_error(error_msg)
 
     def _export_xlsx(self):
         try:
-            import openpyxl
-            from openpyxl.styles import Font, PatternFill, Alignment, numbers
+            import openpyxl  # noqa: F401
         except ImportError:
             if self._toast_manager:
                 self._toast_manager.show_error(texts.PROVISION_PAY_OPENPYXL_MISSING)
@@ -580,32 +600,36 @@ class AuszahlungenPanel(QWidget):
         if not path:
             return
 
-        try:
+        self._loading_overlay.setVisible(True)
+
+        monat = self._monat_combo.currentData() or datetime.now().strftime('%Y-%m')
+        headers = [self._model.COLUMNS[i] for i in range(self._model.columnCount() - 1)]
+        eur_cols = {
+            self._model.COL_BRUTTO, self._model.COL_TL,
+            self._model.COL_NETTO, self._model.COL_RUECK,
+            self._model.COL_VU_ABZUG, self._model.COL_AUSZAHLUNG,
+        }
+        items = [self._model.get_item(r) for r in range(self._model.rowCount())]
+        items = [i for i in items if i is not None]
+
+        def _write_xlsx(w, p=path, m=monat, h=headers, ec=eur_cols, it=items):
+            import openpyxl
+            from openpyxl.styles import Font, PatternFill, Alignment
+
             wb = openpyxl.Workbook()
             ws = wb.active
-            monat = self._monat_combo.currentData() or datetime.now().strftime('%Y-%m')
-            ws.title = texts.PROVISION_PAY_EXCEL_SHEET.format(monat=monat)
+            ws.title = texts.PROVISION_PAY_EXCEL_SHEET.format(monat=m)
 
-            headers = [self._model.COLUMNS[i] for i in range(self._model.columnCount() - 1)]
             header_font = Font(bold=True, color="FFFFFF")
             header_fill = PatternFill(start_color="1e3a5f", end_color="1e3a5f", fill_type="solid")
 
-            for col_idx, header in enumerate(headers, 1):
+            for col_idx, header in enumerate(h, 1):
                 cell = ws.cell(row=1, column=col_idx, value=header)
                 cell.font = header_font
                 cell.fill = header_fill
                 cell.alignment = Alignment(horizontal="center")
 
-            eur_cols = {
-                self._model.COL_BRUTTO, self._model.COL_TL,
-                self._model.COL_NETTO, self._model.COL_RUECK,
-                self._model.COL_VU_ABZUG, self._model.COL_AUSZAHLUNG,
-            }
-
-            for row_idx in range(self._model.rowCount()):
-                item = self._model.get_item(row_idx)
-                if not item:
-                    continue
+            for row_idx, item in enumerate(it):
                 values = [
                     item.berater_name,
                     item.berater_role,
@@ -621,20 +645,21 @@ class AuszahlungenPanel(QWidget):
                 ]
                 for col_idx, val in enumerate(values):
                     cell = ws.cell(row=row_idx + 2, column=col_idx + 1, value=val)
-                    if col_idx in eur_cols:
+                    if col_idx in ec:
                         cell.number_format = '#,##0.00 €'
                         cell.alignment = Alignment(horizontal="right")
 
-            for col_idx in range(1, len(headers) + 1):
+            for col_idx in range(1, len(h) + 1):
                 ws.column_dimensions[openpyxl.utils.get_column_letter(col_idx)].width = 16
 
-            wb.save(path)
-            if self._toast_manager:
-                self._toast_manager.show_success(texts.PROVISION_TOAST_EXPORT_DONE.format(path=os.path.basename(path)))
-        except Exception as e:
-            logger.error(f"Excel-Export-Fehler: {e}")
-            if self._toast_manager:
-                self._toast_manager.show_error(str(e))
+            wb.save(p)
+            return p
+
+        run_worker(
+            self, _write_xlsx,
+            lambda p: self._on_export_done(p),
+            on_error=self._on_export_error,
+        )
 
     # ── Statement-Export (Einzelabrechnung PDF/Excel/Word) ──
 

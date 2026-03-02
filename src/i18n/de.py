@@ -1661,6 +1661,7 @@ PROVISION_TOAST_AUTOMATCH_DONE = "{matched} zugeordnet, {open} offen"
 PROVISION_TOAST_STATUS_CHANGED = "Status geaendert: {status}"
 PROVISION_TOAST_STATUS_ERROR = "Statusaenderung fehlgeschlagen"
 PROVISION_TOAST_EXPORT_DONE = "Export gespeichert: {path}"
+PROVISION_TOAST_EXPORT_OPEN = "Öffnen"
 PROVISION_TOAST_GENERATE_DONE = "Abrechnungen fuer {monat} generiert"
 
 PROVISION_GUELTIG_AB = "Gueltig ab"

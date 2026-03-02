@@ -24,6 +24,7 @@ from infrastructure.api.provision_repository import ProvisionRepository
 from infrastructure.threading.provision_workers import (
     PositionsLoadWorker, AuditLoadWorker, IgnoreWorker,
 )
+from infrastructure.threading.worker_utils import detach_worker
 
 logger = logging.getLogger(__name__)
 
@@ -93,10 +94,8 @@ class PositionsPresenter:
         if self._view:
             self._view.show_loading(True)  # Ladeindikator einblenden
 
-        # Eventuelle laufende Worker vor Start beenden (keine Konkurrenz zulassen)
         if self._load_worker and self._load_worker.isRunning():
-            self._load_worker.quit()
-            self._load_worker.wait(2000)
+            detach_worker(self._load_worker)
 
         # Starte neuen PositionsLoadWorker mit den derzeitigen Filterparametern
         self._load_worker = PositionsLoadWorker(
@@ -341,5 +340,5 @@ class PositionsPresenter:
     def cleanup(self) -> None:
         for w in (self._load_worker, self._audit_worker, self._ignore_worker):
             if w and w.isRunning():
-                w.quit()
-                w.wait(5000)
+                detach_worker(w)
+                w.wait(3000)

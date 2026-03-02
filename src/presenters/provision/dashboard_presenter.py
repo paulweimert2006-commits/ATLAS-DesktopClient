@@ -21,6 +21,7 @@ from infrastructure.api.provision_repository import ProvisionRepository
 from infrastructure.threading.provision_workers import (
     DashboardLoadWorker, BeraterDetailWorker,
 )
+from infrastructure.threading.worker_utils import detach_worker
 
 logger = logging.getLogger(__name__)
 
@@ -67,10 +68,8 @@ class DashboardPresenter:
         if self._view:
             self._view.show_loading(True)
 
-        # Parallel laufenden Worker ggf. beenden, um Doppelaufrufe zu vermeiden.
         if self._load_worker and self._load_worker.isRunning():
-            self._load_worker.quit()
-            self._load_worker.wait(2000)
+            detach_worker(self._load_worker)
 
         self._load_worker = DashboardLoadWorker(self._repo, von=von, bis=bis)
         self._load_worker.finished.connect(self._on_dashboard_loaded)
@@ -159,5 +158,5 @@ class DashboardPresenter:
     def cleanup(self) -> None:
         for w in (self._load_worker, self._detail_worker):
             if w and w.isRunning():
-                w.quit()
-                w.wait(5000)
+                detach_worker(w)
+                w.wait(3000)

@@ -8,7 +8,7 @@ Tab 3 – Fuehrungskraft: Team-Umsatz, Team-AG-Anteil, Berater-Tabelle
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
-    QTabWidget, QComboBox, QTableWidget, QTableWidgetItem,
+    QTabWidget, QComboBox, QTableView,
     QHeaderView, QFrame, QScrollArea, QSizePolicy, QDateEdit,
 )
 from PySide6.QtCore import Qt, Signal, QDate
@@ -29,6 +29,7 @@ from ui.styles.tokens import (
     get_provision_table_style,
 )
 from ui.provision.widgets import KpiCard, SectionHeader, format_eur, get_combo_style
+from ui.provision.models import FuehrungskraftModel
 from i18n import de as texts
 
 logger = logging.getLogger(__name__)
@@ -320,19 +321,12 @@ class PerformancePanel(QWidget):
 
         layout.addLayout(grid)
 
-        self._team_table = QTableWidget()
-        self._team_table.setColumnCount(6)
-        self._team_table.setHorizontalHeaderLabels([
-            texts.PM_PERF_TEAM_COL_NAME,
-            texts.PM_PERF_TEAM_COL_BRUTTO_MONAT,
-            texts.PM_PERF_TEAM_COL_NETTO_MONAT,
-            texts.PM_PERF_TEAM_COL_BRUTTO_YTD,
-            texts.PM_PERF_TEAM_COL_NETTO_YTD,
-            texts.PM_PERF_TEAM_COL_STORNOQUOTE,
-        ])
+        self._team_model = FuehrungskraftModel()
+        self._team_table = QTableView()
+        self._team_table.setModel(self._team_model)
         self._team_table.setStyleSheet(get_provision_table_style())
-        self._team_table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self._team_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self._team_table.setEditTriggers(QTableView.NoEditTriggers)
+        self._team_table.setSelectionBehavior(QTableView.SelectRows)
         self._team_table.setAlternatingRowColors(True)
         self._team_table.verticalHeader().setVisible(False)
         hh = self._team_table.horizontalHeader()
@@ -341,7 +335,14 @@ class PerformancePanel(QWidget):
         for col in range(1, 6):
             hh.setSectionResizeMode(col, QHeaderView.ResizeToContents)
 
+        self._team_empty = QLabel(texts.PM_PERF_NO_TEAM)
+        self._team_empty.setAlignment(Qt.AlignCenter)
+        self._team_empty.setStyleSheet(
+            f"color: {PRIMARY_500}; font-size: {FONT_SIZE_CAPTION}; padding: 20px;")
+        self._team_empty.setVisible(False)
+
         layout.addWidget(self._team_table, 1)
+        layout.addWidget(self._team_empty)
         scroll.setWidget(inner)
         return scroll
 
@@ -354,25 +355,7 @@ class PerformancePanel(QWidget):
         self._fk_rueck_ytd.set_value(format_eur(fk.team_rueckbelastung_ytd))
 
         members = fk.team_members
-        self._team_table.setRowCount(len(members))
-        for row, m in enumerate(members):
-            self._team_table.setItem(row, 0, QTableWidgetItem(m.name))
-
-            for col, val in enumerate([
-                m.brutto_monat, m.netto_monat,
-                m.brutto_ytd, m.netto_ytd,
-            ], start=1):
-                item = QTableWidgetItem(format_eur(val))
-                item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-                self._team_table.setItem(row, col, item)
-
-            sq_item = QTableWidgetItem(f"{m.stornoquote_betrag:.1f} %")
-            sq_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            self._team_table.setItem(row, 5, sq_item)
-
-        if not members:
-            self._team_table.setRowCount(1)
-            empty = QTableWidgetItem(texts.PM_PERF_NO_TEAM)
-            empty.setTextAlignment(Qt.AlignCenter)
-            self._team_table.setItem(0, 0, empty)
-            self._team_table.setSpan(0, 0, 1, 6)
+        self._team_model.set_data(members)
+        has_data = bool(members)
+        self._team_table.setVisible(has_data)
+        self._team_empty.setVisible(not has_data)

@@ -29,6 +29,7 @@ from ui.provision.widgets import (
 )
 from ui.provision.workers import MatchSearchWorker
 from ui.provision.models import SuggestionsModel
+from infrastructure.threading.worker_utils import run_worker
 from i18n import de as texts
 import logging
 
@@ -207,7 +208,11 @@ class MatchContractDialog(QDialog):
 
     def _run_search(self, q: str = None):
         if self._worker and self._worker.isRunning():
-            return
+            try:
+                self._worker.finished.disconnect()
+                self._worker.error.disconnect()
+            except (RuntimeError, TypeError):
+                pass
         self._worker = MatchSearchWorker(self._api, self._comm.id, q=q)
         self._worker.finished.connect(self._on_results)
         self._worker.error.connect(self._on_search_error)
@@ -262,18 +267,24 @@ class MatchContractDialog(QDialog):
             if reply != QMessageBox.Yes:
                 return
 
-        try:
-            self._api.assign_contract(
-                commission_id=self._comm.id,
-                contract_id=contract.id,
-                force_override=force,
-            )
-            self.accept()
-        except APIError as e:
-            self._status_label.setText(
-                texts.PROVISION_TOAST_ASSIGN_CONFLICT.format(msg=str(e))
-            )
-            self._status_label.setStyleSheet(f"color: {ERROR}; font-size: {FONT_SIZE_CAPTION};")
+        self._assign_btn.setEnabled(False)
+        self._status_label.setText(texts.PROVISION_MATCH_DLG_LOADING)
+        run_worker(
+            self,
+            lambda w, cid=self._comm.id, ctid=contract.id, f=force: (
+                self._api.assign_contract(
+                    commission_id=cid, contract_id=ctid, force_override=f)
+            ),
+            lambda _: self.accept(),
+            on_error=self._on_assign_error,
+        )
+
+    def _on_assign_error(self, error_msg):
+        self._assign_btn.setEnabled(True)
+        self._status_label.setText(
+            texts.PROVISION_TOAST_ASSIGN_CONFLICT.format(msg=error_msg)
+        )
+        self._status_label.setStyleSheet(f"color: {ERROR}; font-size: {FONT_SIZE_CAPTION};")
 
 
 # =============================================================================

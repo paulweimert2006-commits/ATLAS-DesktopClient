@@ -15,7 +15,6 @@ from PySide6.QtCore import (
 from typing import List, Optional, Dict
 from datetime import datetime
 import os
-import hashlib
 
 from api.provision import ProvisionAPI
 from domain.provision.entities import ImportBatch, ImportResult
@@ -32,6 +31,7 @@ from ui.provision.widgets import (
 )
 from ui.provision.workers import VuBatchesLoadWorker, VuParseFileWorker, VuImportWorker
 from ui.provision.models import VuBatchesModel
+from infrastructure.threading.worker_utils import run_worker
 from i18n import de as texts
 import logging
 
@@ -82,7 +82,10 @@ class AbrechnungslaeufPanel(QWidget):
 
     def show_loading(self, loading: bool) -> None:
         """View-Interface: Ladezustand."""
-        pass
+        self._loading_overlay.setVisible(loading)
+        if loading:
+            self._loading_overlay.setGeometry(self.rect())
+            self._loading_overlay.raise_()
 
     def show_error(self, message: str) -> None:
         """View-Interface: Fehler anzeigen."""
@@ -245,12 +248,26 @@ class AbrechnungslaeufPanel(QWidget):
         self._start_parse(path)
 
     def _start_parse(self, path: str):
-        from services.provision_import import compute_file_hash
-        self._parsed_hash = compute_file_hash(path)
         self._log.setVisible(True)
         self._log.setText(texts.PROVISION_IMPORT_PROGRESS_PARSING)
         self._file_btn.setEnabled(False)
         self._import_btn.setEnabled(False)
+
+        self._pending_parse_path = path
+        run_worker(
+            self,
+            lambda w, p=path: self._compute_hash_bg(p),
+            self._on_hash_computed,
+        )
+
+    @staticmethod
+    def _compute_hash_bg(path: str) -> str:
+        from services.provision_import import compute_file_hash
+        return compute_file_hash(path)
+
+    def _on_hash_computed(self, file_hash: str):
+        self._parsed_hash = file_hash
+        path = self._pending_parse_path
 
         if self._parse_worker and self._parse_worker.isRunning():
             self._parse_worker.quit()

@@ -28,6 +28,7 @@ from ui.provision.widgets import (
 from ui.provision.workers import ClearanceLoadWorker, MappingSyncWorker
 from ui.provision.models import UnmatchedModel, MappingsModel, clearance_type
 from ui.provision.dialogs import MatchContractDialog
+from infrastructure.threading.worker_utils import run_worker
 from i18n import de as texts
 import logging
 
@@ -237,7 +238,12 @@ class ZuordnungPanel(QWidget):
                                             if c.match_status in ('auto_matched', 'manual_matched') and not c.berater_id])
 
     def _trigger_auto_match(self):
-        stats = self._backend.trigger_auto_match()
+        run_worker(
+            self, lambda w: self._backend.trigger_auto_match(),
+            self._on_auto_match_done,
+        )
+
+    def _on_auto_match_done(self, stats):
         if stats:
             matched = stats.get('matched', 0)
             still_open = stats.get('still_unmatched', 0)
@@ -248,6 +254,12 @@ class ZuordnungPanel(QWidget):
             self._load_data()
 
     def _add_mapping(self):
+        run_worker(
+            self, lambda w: self._backend.get_employees(),
+            self._show_add_mapping_dialog,
+        )
+
+    def _show_add_mapping_dialog(self, employees):
         dlg = QDialog(self)
         dlg.setWindowTitle(texts.PROVISION_MAP_DLG_TITLE)
         dlg.setMinimumWidth(400)
@@ -258,7 +270,6 @@ class ZuordnungPanel(QWidget):
         form.addRow(texts.PROVISION_MAP_DLG_NAME, name_edit)
 
         berater_combo = QComboBox()
-        employees = self._backend.get_employees()
         for emp in employees:
             if emp.is_active:
                 berater_combo.addItem(emp.name, emp.id)
@@ -273,10 +284,16 @@ class ZuordnungPanel(QWidget):
             name = name_edit.text().strip()
             berater_id = berater_combo.currentData()
             if name and berater_id:
-                self._backend.create_mapping(name, berater_id)
-                if self._toast_manager:
-                    self._toast_manager.show_success(texts.PROVISION_TOAST_SAVED)
-                self._load_data()
+                run_worker(
+                    self,
+                    lambda w, n=name, b=berater_id: self._backend.create_mapping(n, b),
+                    lambda _: self._on_mapping_write_done(),
+                )
+
+    def _on_mapping_write_done(self):
+        if self._toast_manager:
+            self._toast_manager.show_success(texts.PROVISION_TOAST_SAVED)
+        self._load_data()
 
     def _mapping_context_menu(self, pos):
         idx = self._mappings_table.indexAt(pos)
@@ -291,6 +308,12 @@ class ZuordnungPanel(QWidget):
         menu.exec(self._mappings_table.viewport().mapToGlobal(pos))
 
     def _edit_mapping(self, mapping: VermittlerMapping):
+        run_worker(
+            self, lambda w: self._backend.get_employees(),
+            lambda employees, m=mapping: self._show_edit_mapping_dialog(m, employees),
+        )
+
+    def _show_edit_mapping_dialog(self, mapping: VermittlerMapping, employees):
         dlg = QDialog(self)
         dlg.setWindowTitle(texts.PROVISION_MENU_EDIT)
         dlg.setMinimumWidth(400)
@@ -301,7 +324,6 @@ class ZuordnungPanel(QWidget):
         form.addRow(texts.PROVISION_MAP_DLG_NAME, name_lbl)
 
         berater_combo = QComboBox()
-        employees = self._backend.get_employees()
         for emp in employees:
             if emp.is_active:
                 berater_combo.addItem(emp.name, emp.id)
@@ -317,14 +339,20 @@ class ZuordnungPanel(QWidget):
         if dlg.exec() == QDialog.Accepted:
             new_berater_id = berater_combo.currentData()
             if new_berater_id and new_berater_id != mapping.berater_id:
-                self._backend.delete_mapping(mapping.id)
-                self._backend.create_mapping(mapping.vermittler_name, new_berater_id)
-                if self._toast_manager:
-                    self._toast_manager.show_success(texts.PROVISION_TOAST_SAVED)
-                self._load_data()
+                def _update(w, mid=mapping.id, name=mapping.vermittler_name, bid=new_berater_id):
+                    self._backend.delete_mapping(mid)
+                    self._backend.create_mapping(name, bid)
+                run_worker(self, _update, lambda _: self._on_mapping_write_done())
 
     def _delete_mapping(self, mapping: VermittlerMapping):
-        if self._backend.delete_mapping(mapping.id):
+        run_worker(
+            self,
+            lambda w, mid=mapping.id: self._backend.delete_mapping(mid),
+            self._on_mapping_deleted,
+        )
+
+    def _on_mapping_deleted(self, success):
+        if success:
             if self._toast_manager:
                 self._toast_manager.show_success(texts.PROVISION_TOAST_DELETED)
             self._load_data()
@@ -372,6 +400,15 @@ class ZuordnungPanel(QWidget):
         primary_name = xempus_name or vu_name
         if not primary_name:
             return
+        run_worker(
+            self, lambda w: self._backend.get_employees(),
+            lambda employees, c=comm: self._show_create_mapping_dialog(c, employees),
+        )
+
+    def _show_create_mapping_dialog(self, comm: Commission, employees):
+        xempus_name = comm.xempus_berater_name or ""
+        vu_name = comm.vermittler_name or ""
+        primary_name = xempus_name or vu_name
 
         dlg = QDialog(self)
         dlg.setWindowTitle(texts.PROVISION_MAP_DLG_CREATE_TITLE)
@@ -392,7 +429,6 @@ class ZuordnungPanel(QWidget):
 
         berater_combo = QComboBox()
         berater_combo.addItem("\u2014", None)
-        employees = self._backend.get_employees()
         for emp in employees:
             if emp.is_active and emp.role in ('consulter', 'teamleiter', 'geschaeftsfuehrer'):
                 berater_combo.addItem(emp.name, emp.id)

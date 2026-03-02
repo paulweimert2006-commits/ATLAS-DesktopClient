@@ -6,6 +6,8 @@ Extrahiert aus den Panel-Dateien fuer bessere Wartbarkeit.
 Models nutzen i18n-Texte, Design-Tokens und format_eur aus widgets.
 """
 
+import json
+
 from PySide6.QtCore import Qt, QAbstractTableModel, QSortFilterProxyModel, QModelIndex
 from PySide6.QtGui import QColor, QFont
 from typing import List, Dict, Optional
@@ -14,7 +16,7 @@ from datetime import datetime
 from domain.provision.entities import (
     Commission, Employee, Contract, VermittlerMapping,
     ContractSearchResult, BeraterAbrechnung, ImportBatch,
-    DashboardSummary,
+    DashboardSummary, PerformanceTeamMember, FreeCommission,
 )
 from ui.styles.tokens import (
     PRIMARY_500, SUCCESS, ERROR, WARNING,
@@ -224,6 +226,65 @@ class BeraterRankingModel(QAbstractTableModel):
 
 
 # =============================================================================
+# Erfolgsauswertung / Performance
+# =============================================================================
+
+
+class FuehrungskraftModel(QAbstractTableModel):
+    """Team-Tabelle im Fuehrungskraft-Tab der Erfolgsauswertung."""
+
+    COLUMNS = [
+        texts.PM_PERF_TEAM_COL_NAME,
+        texts.PM_PERF_TEAM_COL_BRUTTO_MONAT,
+        texts.PM_PERF_TEAM_COL_NETTO_MONAT,
+        texts.PM_PERF_TEAM_COL_BRUTTO_YTD,
+        texts.PM_PERF_TEAM_COL_NETTO_YTD,
+        texts.PM_PERF_TEAM_COL_STORNOQUOTE,
+    ]
+
+    def __init__(self):
+        super().__init__()
+        self._data: List[PerformanceTeamMember] = []
+        self._display_cache: List[List[str]] = []
+
+    def set_data(self, data: List[PerformanceTeamMember]):
+        self.beginResetModel()
+        self._data = data
+        self._display_cache = []
+        for m in data:
+            self._display_cache.append([
+                m.name,
+                format_eur(m.brutto_monat),
+                format_eur(m.netto_monat),
+                format_eur(m.brutto_ytd),
+                format_eur(m.netto_ytd),
+                f"{m.stornoquote_betrag:.1f} %",
+            ])
+        self.endResetModel()
+
+    def rowCount(self, parent=QModelIndex()):
+        return len(self._data)
+
+    def columnCount(self, parent=QModelIndex()):
+        return len(self.COLUMNS)
+
+    def headerData(self, section, orientation, role=Qt.DisplayRole):
+        if orientation == Qt.Horizontal and role == Qt.DisplayRole:
+            return self.COLUMNS[section]
+        return None
+
+    def data(self, index, role=Qt.DisplayRole):
+        if not index.isValid():
+            return None
+        col = index.column()
+        if role == Qt.DisplayRole:
+            return self._display_cache[index.row()][col]
+        if role == Qt.TextAlignmentRole and col >= 1:
+            return Qt.AlignRight | Qt.AlignVCenter
+        return None
+
+
+# =============================================================================
 # Abrechnungslaeufe (VU-Import Batches)
 # =============================================================================
 
@@ -372,11 +433,63 @@ class PositionsModel(QAbstractTableModel):
     def __init__(self):
         super().__init__()
         self._data: List[Commission] = []
+        self._display_cache: List[List[str]] = []
+        self._tooltip_cache: List[Dict[int, str]] = []
 
     def set_data(self, data: List[Commission]):
         self.beginResetModel()
         self._data = data
+        self._build_cache()
         self.endResetModel()
+
+    def _build_cache(self):
+        display: List[List[str]] = []
+        tooltips: List[Dict[int, str]] = []
+        ncols = len(self.COLUMNS)
+        for c in self._data:
+            row = [''] * ncols
+            tips: Dict[int, str] = {}
+
+            d = c.auszahlungsdatum or ""
+            if len(d) >= 10:
+                try:
+                    dt = datetime.strptime(d[:10], "%Y-%m-%d")
+                    row[self.COL_DATUM] = dt.strftime("%d.%m.%Y")
+                except ValueError:
+                    row[self.COL_DATUM] = d
+            else:
+                row[self.COL_DATUM] = d
+
+            row[self.COL_VU] = c.vu_name or c.versicherer or ""
+            row[self.COL_VSNR] = c.vsnr or ""
+            row[self.COL_KUNDE] = c.versicherungsnehmer or ""
+
+            label = format_eur(c.effective_amount)
+            if c.is_overridden:
+                label += " *"
+            row[self.COL_BETRAG] = label
+            if c.is_overridden:
+                tips[self.COL_BETRAG] = texts.PM_OVERRIDE_TOOLTIP.format(
+                    original=format_eur(c.betrag),
+                    settled=format_eur(c.amount_settled),
+                )
+
+            row[self.COL_BUCHUNGSART] = c.buchungsart_raw or ART_LABELS.get(c.art, c.art)
+            row[self.COL_XEMPUS_BERATER] = c.xempus_berater_name or "\u2014"
+            row[self.COL_BERATER] = c.berater_name or "\u2014"
+            row[self.COL_STATUS] = status_label(c)
+            row[self.COL_BERATER_ANTEIL] = format_eur(c.berater_anteil) if c.berater_anteil is not None else ""
+            row[self.COL_SOURCE] = c.source_label
+            row[self.COL_MENU] = "\U0001f4dd" if c.has_note else ""
+            if c.has_note:
+                snippet = (c.note[:80] + "...") if len(c.note or '') > 80 else (c.note or '')
+                tips[self.COL_MENU] = snippet
+
+            display.append(row)
+            tooltips.append(tips)
+
+        self._display_cache = display
+        self._tooltip_cache = tooltips
 
     def get_commission(self, row: int) -> Optional[Commission]:
         if 0 <= row < len(self._data):
@@ -400,54 +513,16 @@ class PositionsModel(QAbstractTableModel):
     def data(self, index, role=Qt.DisplayRole):
         if not index.isValid():
             return None
-        c = self._data[index.row()]
+        row = index.row()
         col = index.column()
 
         if role == Qt.DisplayRole:
-            if col == self.COL_VU:
-                return c.vu_name or c.versicherer or ""
-            elif col == self.COL_DATUM:
-                d = c.auszahlungsdatum or ""
-                if len(d) >= 10:
-                    try:
-                        dt = datetime.strptime(d[:10], "%Y-%m-%d")
-                        return dt.strftime("%d.%m.%Y")
-                    except ValueError:
-                        pass
-                return d
-            elif col == self.COL_KUNDE:
-                return c.versicherungsnehmer or ""
-            elif col == self.COL_VSNR:
-                return c.vsnr or ""
-            elif col == self.COL_BETRAG:
-                label = format_eur(c.effective_amount)
-                if c.is_overridden:
-                    label += " *"
-                return label
-            elif col == self.COL_BUCHUNGSART:
-                return c.buchungsart_raw or ART_LABELS.get(c.art, c.art)
-            elif col == self.COL_BERATER_ANTEIL:
-                return format_eur(c.berater_anteil) if c.berater_anteil is not None else ""
-            elif col == self.COL_STATUS:
-                return status_label(c)
-            elif col == self.COL_BERATER:
-                return c.berater_name or "\u2014"
-            elif col == self.COL_XEMPUS_BERATER:
-                return c.xempus_berater_name or "\u2014"
-            elif col == self.COL_SOURCE:
-                return c.source_label
-            elif col == self.COL_MENU:
-                return "\U0001f4dd" if c.has_note else ""
+            return self._display_cache[row][col]
 
         if role == Qt.ToolTipRole:
-            if col == self.COL_BETRAG and c.is_overridden:
-                return texts.PM_OVERRIDE_TOOLTIP.format(
-                    original=format_eur(c.betrag),
-                    settled=format_eur(c.amount_settled),
-                )
-            if col == self.COL_MENU and c.has_note:
-                snippet = (c.note[:80] + "...") if len(c.note or '') > 80 else (c.note or '')
-                return snippet
+            return self._tooltip_cache[row].get(col)
+
+        c = self._data[row]
 
         if role == Qt.TextAlignmentRole:
             if col in (self.COL_BETRAG, self.COL_BERATER_ANTEIL):
@@ -459,9 +534,9 @@ class PositionsModel(QAbstractTableModel):
                     return QColor("#b45309")
                 if c.effective_amount < 0:
                     return QColor(ERROR)
+
         if role == Qt.FontRole:
             if col == self.COL_BETRAG and c.is_overridden:
-                from PySide6.QtGui import QFont
                 f = QFont()
                 f.setItalic(True)
                 return f
@@ -903,14 +978,87 @@ class AuszahlungenModel(QAbstractTableModel):
         "",
     ]
 
+    _RIGHT_COLS = None
+
     def __init__(self):
         super().__init__()
         self._data: List[BeraterAbrechnung] = []
+        self._display_cache: List[List[str]] = []
+        self._tooltip_cache: List[Dict[int, str]] = []
+        if AuszahlungenModel._RIGHT_COLS is None:
+            AuszahlungenModel._RIGHT_COLS = {
+                self.COL_BRUTTO, self.COL_TL, self.COL_NETTO, self.COL_RUECK,
+                self.COL_KORREKTUR, self.COL_VU_ABZUG, self.COL_AUSZAHLUNG,
+                self.COL_POS, self.COL_VERSION,
+            }
 
     def set_data(self, data: List[BeraterAbrechnung]):
         self.beginResetModel()
         self._data = data
+        self._build_cache()
         self.endResetModel()
+
+    def _build_cache(self):
+        display: List[List[str]] = []
+        tooltips: List[Dict[int, str]] = []
+        role_map = {
+            'consulter': texts.PROVISION_EMP_ROLE_CONSULTER,
+            'teamleiter': texts.PROVISION_EMP_ROLE_TEAMLEITER,
+            'backoffice': texts.PROVISION_EMP_ROLE_BACKOFFICE,
+        }
+        ncols = len(self.COLUMNS)
+        for a in self._data:
+            row = [''] * ncols
+            tips: Dict[int, str] = {}
+
+            row[self.COL_NAME] = a.berater_name
+            row[self.COL_ROLE] = role_map.get(a.berater_role, a.berater_role)
+            row[self.COL_BRUTTO] = format_eur(a.brutto_provision)
+            row[self.COL_TL] = format_eur(a.tl_abzug)
+            row[self.COL_NETTO] = format_eur(a.netto_provision)
+            row[self.COL_RUECK] = format_eur(a.rueckbelastungen)
+            row[self.COL_KORREKTUR] = format_eur(a.korrektur_vormonat) if a.has_korrektur else ""
+            row[self.COL_VU_ABZUG] = format_eur(a.vu_abzug_summe) if a.vu_abzug_summe > 0 else ""
+            row[self.COL_AUSZAHLUNG] = format_eur(a.auszahlung)
+            row[self.COL_POS] = str(a.anzahl_provisionen)
+            row[self.COL_STATUS] = STATUS_LABELS.get(a.status, a.status)
+            row[self.COL_VERSION] = str(a.revision)
+
+            if a.email_status == 'sent':
+                row[self.COL_EMAIL] = texts.PM_STMT_EMAIL_STATUS_SENT
+            elif a.email_status == 'failed':
+                row[self.COL_EMAIL] = texts.PM_STMT_EMAIL_STATUS_FAILED
+            elif not a.has_email:
+                row[self.COL_EMAIL] = texts.PM_STMT_EMAIL_NO_ADDR
+
+            if a.email_status == 'sent' and a.email_sent_at:
+                tips[self.COL_EMAIL] = texts.PM_STMT_EMAIL_TOOLTIP_SENT.format(date=a.email_sent_at)
+            elif a.email_status == 'failed' and a.email_error:
+                tips[self.COL_EMAIL] = texts.PM_STMT_EMAIL_TOOLTIP_FAILED.format(error=a.email_error)
+            elif not a.has_email:
+                tips[self.COL_EMAIL] = texts.PM_STMT_EMAIL_TOOLTIP_NO_ADDR
+
+            if a.has_korrektur and a.korrektur_details:
+                try:
+                    details = json.loads(a.korrektur_details)
+                    lines = [texts.PM_KORREKTUR_TOOLTIP_HEADER]
+                    for k in details:
+                        lines.append(texts.PM_KORREKTUR_TOOLTIP_LINE.format(
+                            monat=k.get('source_abrechnungsmonat', '?'),
+                            diff=format_eur(float(k.get('differenz_netto', 0))),
+                        ))
+                    tips[self.COL_KORREKTUR] = '\n'.join(lines)
+                except Exception:
+                    pass
+
+            if a.vu_abzug_summe > 0:
+                tips[self.COL_VU_ABZUG] = texts.PM_PAY_VU_ABZUG_TOOLTIP
+
+            display.append(row)
+            tooltips.append(tips)
+
+        self._display_cache = display
+        self._tooltip_cache = tooltips
 
     def get_item(self, row: int) -> Optional[BeraterAbrechnung]:
         if 0 <= row < len(self._data):
@@ -931,84 +1079,19 @@ class AuszahlungenModel(QAbstractTableModel):
     def data(self, index, role=Qt.DisplayRole):
         if not index.isValid():
             return None
-        a = self._data[index.row()]
+        row = index.row()
         col = index.column()
 
         if role == Qt.DisplayRole:
-            if col == self.COL_NAME:
-                return a.berater_name
-            elif col == self.COL_ROLE:
-                return {
-                    'consulter': texts.PROVISION_EMP_ROLE_CONSULTER,
-                    'teamleiter': texts.PROVISION_EMP_ROLE_TEAMLEITER,
-                    'backoffice': texts.PROVISION_EMP_ROLE_BACKOFFICE,
-                }.get(a.berater_role, a.berater_role)
-            elif col == self.COL_BRUTTO:
-                return format_eur(a.brutto_provision)
-            elif col == self.COL_TL:
-                return format_eur(a.tl_abzug)
-            elif col == self.COL_NETTO:
-                return format_eur(a.netto_provision)
-            elif col == self.COL_RUECK:
-                return format_eur(a.rueckbelastungen)
-            elif col == self.COL_KORREKTUR:
-                return format_eur(a.korrektur_vormonat) if a.has_korrektur else ""
-            elif col == self.COL_VU_ABZUG:
-                if a.vu_abzug_summe > 0:
-                    return format_eur(a.vu_abzug_summe)
-                return ""
-            elif col == self.COL_AUSZAHLUNG:
-                return format_eur(a.auszahlung)
-            elif col == self.COL_POS:
-                return str(a.anzahl_provisionen)
-            elif col == self.COL_STATUS:
-                return STATUS_LABELS.get(a.status, a.status)
-            elif col == self.COL_VERSION:
-                return str(a.revision)
-            elif col == self.COL_EMAIL:
-                if a.email_status == 'sent':
-                    return texts.PM_STMT_EMAIL_STATUS_SENT
-                elif a.email_status == 'failed':
-                    return texts.PM_STMT_EMAIL_STATUS_FAILED
-                elif not a.has_email:
-                    return texts.PM_STMT_EMAIL_NO_ADDR
-                return ""
-            elif col == self.COL_MENU:
-                return ""
+            return self._display_cache[row][col]
 
-        if role == Qt.ToolTipRole and col == self.COL_EMAIL:
-            if a.email_status == 'sent' and a.email_sent_at:
-                return texts.PM_STMT_EMAIL_TOOLTIP_SENT.format(date=a.email_sent_at)
-            elif a.email_status == 'failed' and a.email_error:
-                return texts.PM_STMT_EMAIL_TOOLTIP_FAILED.format(error=a.email_error)
-            elif not a.has_email:
-                return texts.PM_STMT_EMAIL_TOOLTIP_NO_ADDR
-            return None
+        if role == Qt.ToolTipRole:
+            return self._tooltip_cache[row].get(col)
 
-        if role == Qt.ToolTipRole and col == self.COL_KORREKTUR and a.has_korrektur:
-            try:
-                import json
-                details = json.loads(a.korrektur_details) if a.korrektur_details else []
-                lines = [texts.PM_KORREKTUR_TOOLTIP_HEADER]
-                for k in details:
-                    lines.append(texts.PM_KORREKTUR_TOOLTIP_LINE.format(
-                        monat=k.get('source_abrechnungsmonat', '?'),
-                        diff=format_eur(float(k.get('differenz_netto', 0))),
-                    ))
-                return '\n'.join(lines)
-            except Exception:
-                return None
-
-        if role == Qt.ToolTipRole and col == self.COL_VU_ABZUG and a.vu_abzug_summe > 0:
-            return texts.PM_PAY_VU_ABZUG_TOOLTIP
-
-        _right_cols = {
-            self.COL_BRUTTO, self.COL_TL, self.COL_NETTO, self.COL_RUECK,
-            self.COL_KORREKTUR, self.COL_VU_ABZUG, self.COL_AUSZAHLUNG,
-            self.COL_POS, self.COL_VERSION,
-        }
-        if role == Qt.TextAlignmentRole and col in _right_cols:
+        if role == Qt.TextAlignmentRole and col in self._RIGHT_COLS:
             return Qt.AlignRight | Qt.AlignVCenter
+
+        a = self._data[row]
 
         if role == Qt.ForegroundRole:
             if col == self.COL_RUECK and a.rueckbelastungen < 0:
@@ -1030,6 +1113,79 @@ class AuszahlungenModel(QAbstractTableModel):
             font.setItalic(True)
             return font
 
+        return None
+
+
+# =============================================================================
+# Freie Provisionen / Sonderzahlungen
+# =============================================================================
+
+
+class FreeCommissionModel(QAbstractTableModel):
+    """Tabellen-Model fuer die Freien Provisionen (Sonderzahlungen)."""
+
+    COL_DATUM = 0
+    COL_BETRAG = 1
+    COL_BESCHREIBUNG = 2
+    COL_KOSTENSTELLE = 3
+    COL_VERTEILUNG = 4
+    COL_ERSTELLT_VON = 5
+
+    COLUMNS = [
+        texts.PM_FREE_COL_DATUM,
+        texts.PM_FREE_COL_BETRAG,
+        texts.PM_FREE_COL_BESCHREIBUNG,
+        texts.PM_FREE_COL_KOSTENSTELLE,
+        texts.PM_FREE_COL_VERTEILUNG,
+        texts.PM_FREE_COL_ERSTELLT_VON,
+    ]
+
+    def __init__(self):
+        super().__init__()
+        self._data: List[FreeCommission] = []
+        self._display_cache: List[List[str]] = []
+
+    def set_data(self, data: List[FreeCommission]):
+        self.beginResetModel()
+        self._data = data
+        self._display_cache = []
+        for fc in data:
+            self._display_cache.append([
+                fc.datum[:10] if fc.datum else '',
+                format_eur(fc.gesamtbetrag),
+                fc.beschreibung,
+                fc.kostenstelle or '',
+                fc.verteilung_text or '',
+                fc.created_by_name or '',
+            ])
+        self.endResetModel()
+
+    def get_item(self, row: int) -> Optional[FreeCommission]:
+        if 0 <= row < len(self._data):
+            return self._data[row]
+        return None
+
+    def rowCount(self, parent=QModelIndex()):
+        return len(self._data)
+
+    def columnCount(self, parent=QModelIndex()):
+        return len(self.COLUMNS)
+
+    def headerData(self, section, orientation, role=Qt.DisplayRole):
+        if orientation == Qt.Horizontal and role == Qt.DisplayRole:
+            return self.COLUMNS[section]
+        return None
+
+    def data(self, index, role=Qt.DisplayRole):
+        if not index.isValid():
+            return None
+        col = index.column()
+        if role == Qt.DisplayRole:
+            return self._display_cache[index.row()][col]
+        if role == Qt.TextAlignmentRole and col == self.COL_BETRAG:
+            return Qt.AlignRight | Qt.AlignVCenter
+        if role == Qt.UserRole:
+            return self._data[index.row()]
         return None
 
 

@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Signal, Qt, QTimer, QThread
 
 from api.provision import ProvisionAPI
+from infrastructure.cache.provision_cache import ProvisionCache
 from ui.styles.tokens import (
     PRIMARY_0, PRIMARY_500, PRIMARY_900, ACCENT_500,
     FONT_BODY, FONT_HEADLINE, FONT_SIZE_H2, FONT_SIZE_BODY, FONT_SIZE_CAPTION,
@@ -208,6 +209,8 @@ class ResetConfirmDialog(QDialog):
 
 class SettingsPanel(QWidget):
     """Einstellungen-Panel: Default-Vermittler + Gefahrenzone."""
+
+    data_changed = Signal()
 
     def __init__(self, api: ProvisionAPI):
         super().__init__()
@@ -547,6 +550,8 @@ class SettingsPanel(QWidget):
         self._reset_btn.setEnabled(True)
         self._reset_btn.setText(texts.PROVISION_SETTINGS_RESET_BTN)
 
+        ProvisionCache.instance().invalidate_all()
+
         deleted = result.get('deleted', {})
         msg = texts.PROVISION_SETTINGS_RESET_SUCCESS.format(
             commissions=deleted.get('pm_commissions', 0),
@@ -556,6 +561,7 @@ class SettingsPanel(QWidget):
         if self._toast_manager:
             self._toast_manager.show_success(msg)
         logger.info(f"Provision-Reset erfolgreich: {result}")
+        self.data_changed.emit()
 
     def _on_reset_error(self, error: str):
         self._reset_btn.setEnabled(True)

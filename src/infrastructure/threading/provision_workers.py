@@ -192,9 +192,11 @@ class VuImportWorker(QThread):
 
             vu_groups = defaultdict(list)
             for row in self._rows:
-                vu = row.pop('_vu_name', self._vu_name)
-                sheet = row.pop('_sheet_name', self._sheet_name)
-                vu_groups[(vu, sheet)].append(row)
+                vu = row.get('_vu_name', self._vu_name)
+                sheet = row.get('_sheet_name', self._sheet_name)
+                clean_row = {k: v for k, v in row.items()
+                             if k not in ('_vu_name', '_sheet_name')}
+                vu_groups[(vu, sheet)].append(clean_row)
 
             accumulated = ImportResult()
             chunk_size = 2000
@@ -573,5 +575,412 @@ class FreeCommissionDeleteWorker(QThread):
         try:
             result = self._repo.delete_free_commission(self._fc_id)
             self.finished.emit(result)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+# ═══════════════════════════════════════════════════════
+# Provisions-Detail-Aktionen (Override, Note, Mapping)
+# ═══════════════════════════════════════════════════════
+
+
+class OverrideWorker(QThread):
+    finished = Signal(object)
+    error = Signal(str)
+
+    def __init__(self, repo, comm_id: int, amount_settled: float,
+                 reason: str = None):
+        super().__init__()
+        self._repo = repo
+        self._comm_id = comm_id
+        self._amount_settled = amount_settled
+        self._reason = reason
+
+    def run(self):
+        try:
+            result = self._repo.set_commission_override(
+                self._comm_id, self._amount_settled, self._reason)
+            self.finished.emit(result)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+class OverrideResetWorker(QThread):
+    finished = Signal(object)
+    error = Signal(str)
+
+    def __init__(self, repo, comm_id: int):
+        super().__init__()
+        self._repo = repo
+        self._comm_id = comm_id
+
+    def run(self):
+        try:
+            result = self._repo.reset_commission_override(self._comm_id)
+            self.finished.emit(result)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+class NoteWorker(QThread):
+    finished = Signal(bool)
+    error = Signal(str)
+
+    def __init__(self, repo, comm_id: int, note: str):
+        super().__init__()
+        self._repo = repo
+        self._comm_id = comm_id
+        self._note = note
+
+    def run(self):
+        try:
+            ok = self._repo.save_commission_note(self._comm_id, self._note)
+            self.finished.emit(ok)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+class MappingCreateWorker(QThread):
+    finished = Signal()
+    error = Signal(str)
+
+    def __init__(self, repo, name: str, berater_id: int):
+        super().__init__()
+        self._repo = repo
+        self._name = name
+        self._berater_id = berater_id
+
+    def run(self):
+        try:
+            self._repo.create_mapping(self._name, self._berater_id)
+            self._repo.trigger_auto_match()
+            self.finished.emit()
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+# ═══════════════════════════════════════════════════════
+# Abrechnungen generieren / Status
+# ═══════════════════════════════════════════════════════
+
+
+class AbrechnungGenerateWorker(QThread):
+    finished = Signal(object, str)
+
+    def __init__(self, repo, monat: str, parent=None):
+        super().__init__(parent)
+        self._repo = repo
+        self._monat = monat
+
+    def run(self):
+        try:
+            resp = self._repo.generate_abrechnung(self._monat)
+            self.finished.emit(resp, "")
+        except Exception as e:
+            self.finished.emit(None, str(e))
+
+
+class AbrechnungStatusWorker(QThread):
+    finished = Signal(bool, str, str)
+    error = Signal(str)
+
+    def __init__(self, repo, abrechnung_id: int, status: str, parent=None):
+        super().__init__(parent)
+        self._repo = repo
+        self._abrechnung_id = abrechnung_id
+        self._status = status
+
+    def run(self):
+        try:
+            ok = self._repo.update_abrechnung_status(self._abrechnung_id, self._status)
+            self.finished.emit(ok, self._status, "")
+        except Exception as e:
+            self.finished.emit(False, self._status, str(e))
+
+
+# ═══════════════════════════════════════════════════════
+# Xempus Contracts (ProvisionAPI-kompatibel)
+# ═══════════════════════════════════════════════════════
+
+
+class XempusContractsLoadWorker(QThread):
+    finished = Signal(object, object)
+    error = Signal(str)
+
+    def __init__(self, api, **kwargs):
+        super().__init__()
+        self._api = api
+        self._kwargs = kwargs
+
+    def run(self):
+        try:
+            contracts = self._api.get_contracts(**self._kwargs)
+            employees = self._api.get_employees()
+            self.finished.emit(contracts, employees)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+class XempusDetailLoadWorker(QThread):
+    finished = Signal(object)
+    error = Signal(str)
+
+    def __init__(self, api, vsnr: str):
+        super().__init__()
+        self._api = api
+        self._vsnr = vsnr
+
+    def run(self):
+        try:
+            comms, _ = self._api.get_commissions(q=self._vsnr, limit=200)
+            self.finished.emit(comms)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+# ═══════════════════════════════════════════════════════
+# Xempus Insight (XempusAPI)
+# ═══════════════════════════════════════════════════════
+
+
+class EmployerLoadWorker(QThread):
+    finished = Signal(list)
+    error = Signal(str)
+
+    def __init__(self, api):
+        super().__init__()
+        self._api = api
+
+    def run(self):
+        try:
+            employers = self._api.get_employers()
+            self.finished.emit(employers)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+class EmployerDetailWorker(QThread):
+    finished = Signal(object)
+    error = Signal(str)
+
+    def __init__(self, api, employer_id: str):
+        super().__init__()
+        self._api = api
+        self._employer_id = employer_id
+
+    def run(self):
+        try:
+            detail = self._api.get_employer_detail(self._employer_id)
+            self.finished.emit(detail)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+class XempusStatsLoadWorker(QThread):
+    finished = Signal(object)
+    error = Signal(str)
+
+    def __init__(self, api):
+        super().__init__()
+        self._api = api
+
+    def run(self):
+        try:
+            stats = self._api.get_stats()
+            self.finished.emit(stats)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+class XempusBatchesLoadWorker(QThread):
+    finished = Signal(list)
+    error = Signal(str)
+
+    def __init__(self, api):
+        super().__init__()
+        self._api = api
+
+    def run(self):
+        try:
+            batches = self._api.get_batches()
+            self.finished.emit(batches)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+class XempusImportWorker(QThread):
+    phase_changed = Signal(int, str)
+    finished = Signal(object)
+    error = Signal(str)
+
+    def __init__(self, api, filename: str, sheets: list):
+        super().__init__()
+        self._api = api
+        self._filename = filename
+        self._sheets = sheets
+
+    def run(self):
+        try:
+            self.phase_changed.emit(1, texts.XEMPUS_IMPORT_PHASE_RAW)
+
+            def on_progress(sent, total):
+                pct = int(sent / total * 100) if total else 100
+                self.phase_changed.emit(
+                    1, f"{texts.XEMPUS_IMPORT_PHASE_RAW} ({pct}%)"
+                )
+
+            raw_result = self._api.import_raw(
+                self._filename, self._sheets, on_progress=on_progress)
+            batch_id = raw_result.get('batch_id')
+            if not batch_id:
+                self.error.emit(texts.XEMPUS_IMPORT_ERROR.format(error="No batch_id returned"))
+                return
+
+            self.phase_changed.emit(2, texts.XEMPUS_IMPORT_PHASE_PARSE)
+
+            def on_parse_progress(parsed, total):
+                pct = int(parsed / total * 100) if total else 100
+                self.phase_changed.emit(
+                    2, f"{texts.XEMPUS_IMPORT_PHASE_PARSE} ({pct}%)"
+                )
+
+            self._api.parse_batch(batch_id, timeout=300,
+                                  on_progress=on_parse_progress)
+
+            self.phase_changed.emit(3, texts.XEMPUS_IMPORT_PHASE_SNAPSHOT)
+            finalize_result = self._api.finalize_batch(batch_id, timeout=300)
+
+            self.phase_changed.emit(4, texts.XEMPUS_IMPORT_PHASE_FINALIZE)
+            self.finished.emit(finalize_result)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+class XempusDiffLoadWorker(QThread):
+    finished = Signal(object)
+    error = Signal(str)
+
+    def __init__(self, api, batch_id: int):
+        super().__init__()
+        self._api = api
+        self._batch_id = batch_id
+
+    def run(self):
+        try:
+            diff = self._api.get_diff(self._batch_id)
+            self.finished.emit(diff)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+class StatusMappingLoadWorker(QThread):
+    finished = Signal(list)
+    error = Signal(str)
+
+    def __init__(self, api):
+        super().__init__()
+        self._api = api
+
+    def run(self):
+        try:
+            mappings = self._api.get_status_mappings()
+            self.finished.emit(mappings)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+# ═══════════════════════════════════════════════════════
+# Statement Export & E-Mail (Presenter-basiert)
+# ═══════════════════════════════════════════════════════
+
+
+class StatementExportWorker(QThread):
+    finished = Signal(str)
+    error = Signal(str)
+
+    def __init__(self, presenter, berater, fmt: str, path: str):
+        super().__init__()
+        self._presenter = presenter
+        self._berater = berater
+        self._fmt = fmt
+        self._path = path
+
+    def run(self):
+        try:
+            self._presenter.export_single_statement(
+                self._berater, self._fmt, self._path)
+            self.finished.emit(self._path)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+class StatementBatchExportWorker(QThread):
+    finished = Signal(int)
+    progress = Signal(int, int)
+    error = Signal(str)
+
+    def __init__(self, presenter, abrechnungen: list, fmt: str, folder: str):
+        super().__init__()
+        self._presenter = presenter
+        self._abrechnungen = abrechnungen
+        self._fmt = fmt
+        self._folder = folder
+
+    def run(self):
+        try:
+            from services.statement_export import export_batch
+            items = self._presenter.build_all_statements(self._abrechnungen)
+            count = export_batch(
+                items, self._fmt, self._folder,
+                progress_callback=lambda c, t: self.progress.emit(c, t),
+            )
+            self.finished.emit(count)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+class StatementEmailWorker(QThread):
+    finished = Signal(dict)
+    error = Signal(str)
+
+    def __init__(self, presenter, berater):
+        super().__init__()
+        self._presenter = presenter
+        self._berater = berater
+
+    def run(self):
+        try:
+            result = self._presenter.send_statement_email(self._berater)
+            self.finished.emit(result)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+class StatementBatchEmailWorker(QThread):
+    finished = Signal(int, int)
+    progress = Signal(int, int)
+    error = Signal(str)
+
+    def __init__(self, presenter, abrechnungen: list):
+        super().__init__()
+        self._presenter = presenter
+        self._abrechnungen = abrechnungen
+
+    def run(self):
+        try:
+            eligible = [b for b in self._abrechnungen if b.has_email]
+            sent = 0
+            failed = 0
+            for i, berater in enumerate(eligible):
+                try:
+                    result = self._presenter.send_statement_email(berater)
+                    if result.get('success'):
+                        sent += 1
+                    else:
+                        failed += 1
+                except Exception:
+                    failed += 1
+                self.progress.emit(i + 1, len(eligible))
+            self.finished.emit(sent, failed)
         except Exception as e:
             self.error.emit(str(e))

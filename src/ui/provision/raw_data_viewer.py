@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
     QPushButton, QLabel, QLineEdit, QHeaderView,
     QFileDialog, QAbstractItemView, QFrame,
 )
-from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex, QThread, Signal
+from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex, QThread, Signal, QObject
 from PySide6.QtGui import QColor
 from PySide6.QtPrintSupport import QPrinter, QPrintDialog
 
@@ -28,6 +28,7 @@ from ui.styles.tokens import (
     FONT_BODY, FONT_SIZE_BODY, FONT_SIZE_CAPTION,
     SUCCESS, WARNING,
 )
+from infrastructure.threading.worker_utils import run_worker
 from i18n import de as texts
 
 logger = logging.getLogger(__name__)
@@ -141,6 +142,7 @@ class RawDataViewerDialog(QDialog):
         self._sheet_name = sheet_name
         self._target_row = target_row
         self._load_worker = None
+        self._search_ctx = QObject(self)
         self._model = _ExcelTableModel()
         self._json_mode = headers is not None and rows_data is not None
 
@@ -281,18 +283,37 @@ class RawDataViewerDialog(QDialog):
             self._load_file(filepath)
 
     def _on_search(self, text: str):
+        self._pending_search_text = text
         if not text:
             return
-        text_lower = text.lower()
-        for row_idx in range(self._model.rowCount()):
-            for col_idx in range(self._model.columnCount()):
-                val = self._model.data(self._model.index(row_idx, col_idx))
-                if val and text_lower in str(val).lower():
-                    self._model.set_highlight_row(row_idx)
-                    idx = self._model.index(row_idx, col_idx)
-                    self._table.scrollTo(idx, QAbstractItemView.PositionAtCenter)
-                    self._table.selectRow(row_idx)
-                    return
+
+        def find_match(worker):
+            search_text = self._pending_search_text.lower()
+            rows = self._model.get_rows()
+            col_count = self._model.columnCount()
+            for row_idx in range(len(rows)):
+                if worker.is_cancelled():
+                    return None
+                row_data = rows[row_idx]
+                for col_idx in range(min(len(row_data), col_count)):
+                    val = row_data[col_idx]
+                    if val and search_text in str(val).lower():
+                        return (row_idx, col_idx)
+            return None
+
+        run_worker(
+            self._search_ctx, find_match, self._on_search_result,
+            debounce_ms=400,
+        )
+
+    def _on_search_result(self, result):
+        if result is None:
+            return
+        row_idx, col_idx = result
+        self._model.set_highlight_row(row_idx)
+        idx = self._model.index(row_idx, col_idx)
+        self._table.scrollTo(idx, QAbstractItemView.PositionAtCenter)
+        self._table.selectRow(row_idx)
 
     def _export_xlsx(self):
         try:

@@ -138,7 +138,7 @@ class ProvisionAPI:
 
     def get_commissions(self, berater_id: int = None, match_status: str = None,
                         von: str = None, bis: str = None, versicherer: str = None,
-                        q: str = None,
+                        q: str = None, is_relevant: bool = None,
                         page: int = None, per_page: int = None,
                         limit: int = 500) -> tuple:
         """Provisionen laden. Mit page/per_page: gibt (list, PaginationInfo) zurueck.
@@ -162,6 +162,8 @@ class ProvisionAPI:
             params['versicherer'] = versicherer
         if q:
             params['q'] = q
+        if is_relevant is not None:
+            params['is_relevant'] = '1' if is_relevant else '0'
         try:
             resp = self.client.get('/pm/commissions', params=params)
             if resp.get('success'):
@@ -315,7 +317,8 @@ class ProvisionAPI:
             data = {}
             if batch_id:
                 data['batch_id'] = batch_id
-            resp = self.client.post('/pm/import/match', json_data=data, timeout=120)
+            resp = self.client.post('/pm/import/match', json_data=data,
+                                    timeout=120, retries=1)
             if resp.get('success'):
                 return resp.get('data', {}).get('stats', {})
         except APIError as e:
@@ -699,7 +702,7 @@ class ProvisionAPI:
             Dict mit 'deleted' (Anzahl geloeschter Zeilen pro Tabelle) und 'kept' (erhaltene Zeilen).
         """
         try:
-            resp = self.client.post('/pm/reset', {})
+            resp = self.client.post('/pm/reset', {}, timeout=120, retries=1)
             if resp.get('success'):
                 return resp.get('data', {})
             raise APIError(resp.get('message', 'Reset fehlgeschlagen'))

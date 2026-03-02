@@ -26,6 +26,7 @@ from infrastructure.api.provision_repository import ProvisionRepository
 from infrastructure.threading.provision_workers import (
     ClearanceLoadWorker, MappingSyncWorker, MatchSearchWorker,
 )
+from infrastructure.threading.worker_utils import detach_worker
 
 logger = logging.getLogger(__name__)
 
@@ -73,8 +74,7 @@ class ClearancePresenter:
             self._view.show_loading(True)
 
         if self._load_worker and self._load_worker.isRunning():
-            self._load_worker.quit()
-            self._load_worker.wait(2000)
+            detach_worker(self._load_worker)
 
         self._load_worker = ClearanceLoadWorker(self._repo)
         self._load_worker.finished.connect(self._on_clearance_loaded)
@@ -286,5 +286,5 @@ class ClearancePresenter:
     def cleanup(self) -> None:
         for w in (self._load_worker, self._mapping_worker, self._match_worker):
             if w and w.isRunning():
-                w.quit()
-                w.wait(5000)
+                detach_worker(w)
+                w.wait(3000)

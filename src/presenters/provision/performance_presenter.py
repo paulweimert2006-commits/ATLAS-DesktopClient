@@ -13,6 +13,7 @@ from domain.provision.entities import PerformanceData
 from domain.provision.interfaces import IPerformanceView
 from infrastructure.api.provision_repository import ProvisionRepository
 from infrastructure.threading.provision_workers import PerformanceLoadWorker
+from infrastructure.threading.worker_utils import detach_worker
 
 logger = logging.getLogger(__name__)
 
@@ -33,8 +34,7 @@ class PerformancePresenter:
             self._view.show_loading(True)
 
         if self._worker and self._worker.isRunning():
-            self._worker.quit()
-            self._worker.wait(2000)
+            detach_worker(self._worker)
 
         self._worker = PerformanceLoadWorker(self._repo, von=von, bis=bis)
         self._worker.finished.connect(self._on_loaded)
@@ -54,3 +54,11 @@ class PerformancePresenter:
         if self._view:
             self._view.show_loading(False)
             self._view.show_error(error)
+
+    def has_running_workers(self) -> bool:
+        return bool(self._worker and self._worker.isRunning())
+
+    def cleanup(self) -> None:
+        if self._worker and self._worker.isRunning():
+            detach_worker(self._worker)
+            self._worker.wait(3000)

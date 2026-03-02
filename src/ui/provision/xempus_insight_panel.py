@@ -50,6 +50,7 @@ from ui.provision.models import (
     EmployerTableModel, XempusBatchTableModel, StatusMappingModel, fmt_date,
 )
 from ui.provision.dialogs import DiffDialog
+from infrastructure.threading.worker_utils import run_worker, detach_worker
 from i18n import de as texts
 import logging
 
@@ -69,6 +70,10 @@ class _EmployersTab(QWidget):
         self._api = xempus_api
         self._worker = None
         self._detail_worker = None
+        self._current_employer_id = None
+        self._search_timer = QTimer(self)
+        self._search_timer.setSingleShot(True)
+        self._search_timer.setInterval(250)
         self._setup_ui()
 
     def _setup_ui(self):
@@ -136,8 +141,7 @@ class _EmployersTab(QWidget):
         self._loading.hide()
 
     def refresh(self):
-        if self._worker and self._worker.isRunning():
-            return
+        detach_worker(self._worker)
         self._loading.show()
         self._worker = EmployerLoadWorker(self._api)
         self._worker.finished.connect(self._on_loaded)
@@ -160,7 +164,18 @@ class _EmployersTab(QWidget):
         logger.error(f"Employer load error: {msg}")
 
     def _on_search(self, text: str):
-        self._proxy.setFilterFixedString(text)
+        import warnings
+        self._pending_filter = text
+        self._search_timer.stop()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            try:
+                self._search_timer.timeout.disconnect()
+            except (RuntimeError, TypeError):
+                pass
+        self._search_timer.timeout.connect(
+            lambda: self._proxy.setFilterFixedString(self._pending_filter))
+        self._search_timer.start()
 
     def _on_row_selected(self, current: QModelIndex, previous: QModelIndex):
         if not current.isValid():
@@ -172,14 +187,17 @@ class _EmployersTab(QWidget):
         self._load_detail(employer.id)
 
     def _load_detail(self, employer_id: str):
-        if self._detail_worker and self._detail_worker.isRunning():
-            return
+        self._current_employer_id = employer_id
+        detach_worker(self._detail_worker)
         self._detail_worker = EmployerDetailWorker(self._api, employer_id)
-        self._detail_worker.finished.connect(self._show_detail)
+        self._detail_worker.finished.connect(
+            lambda d, eid=employer_id: self._show_detail(d, eid))
         self._detail_worker.error.connect(lambda msg: logger.error(f"Detail: {msg}"))
         self._detail_worker.start()
 
-    def _show_detail(self, detail: Optional[Dict]):
+    def _show_detail(self, detail: Optional[Dict], employer_id: str = None):
+        if employer_id and employer_id != self._current_employer_id:
+            return
         while self._detail_layout.count():
             item = self._detail_layout.takeAt(0)
             if item.widget():
@@ -333,8 +351,7 @@ class _StatsTab(QWidget):
         self._loading.hide()
 
     def refresh(self):
-        if self._worker and self._worker.isRunning():
-            return
+        detach_worker(self._worker)
         self._loading.show()
         self._worker = XempusStatsLoadWorker(self._api)
         self._worker.finished.connect(self._on_loaded)
@@ -512,8 +529,7 @@ class _ImportTab(QWidget):
         self._loading.hide()
 
     def refresh(self):
-        if self._batches_worker and self._batches_worker.isRunning():
-            return
+        detach_worker(self._batches_worker)
         self._batches_worker = XempusBatchesLoadWorker(self._api)
         self._batches_worker.finished.connect(self._on_batches_loaded)
         self._batches_worker.error.connect(lambda m: logger.error(f"Batches: {m}"))
@@ -537,29 +553,38 @@ class _ImportTab(QWidget):
             return
 
         import os
-        filename = os.path.basename(filepath)
+        self._pending_filename = os.path.basename(filepath)
 
         self._progress_label.setText(texts.XEMPUS_IMPORT_RUNNING)
         self._import_btn.setEnabled(False)
 
-        try:
-            result = parse_xempus_complete(filepath)
-            sheets = prepare_sheets_for_upload(result)
-        except Exception as e:
-            self._progress_label.setText(texts.XEMPUS_IMPORT_ERROR.format(error=str(e)))
-            self._import_btn.setEnabled(True)
-            return
+        run_worker(
+            self,
+            lambda w, fp=filepath: self._parse_file(fp),
+            self._on_parse_complete,
+            on_error=self._on_parse_error,
+        )
 
+    @staticmethod
+    def _parse_file(filepath: str):
+        result = parse_xempus_complete(filepath)
+        return prepare_sheets_for_upload(result)
+
+    def _on_parse_complete(self, sheets):
         if not sheets:
             self._progress_label.setText(texts.XEMPUS_IMPORT_ERROR.format(error="Keine Daten"))
             self._import_btn.setEnabled(True)
             return
 
-        self._import_worker = XempusImportWorker(self._api, filename, sheets)
+        self._import_worker = XempusImportWorker(self._api, self._pending_filename, sheets)
         self._import_worker.phase_changed.connect(self._on_phase_changed)
         self._import_worker.finished.connect(self._on_import_finished)
         self._import_worker.error.connect(self._on_import_error)
         self._import_worker.start()
+
+    def _on_parse_error(self, error_msg):
+        self._progress_label.setText(texts.XEMPUS_IMPORT_ERROR.format(error=error_msg))
+        self._import_btn.setEnabled(True)
 
     def _on_phase_changed(self, phase: int, desc: str):
         self._progress_label.setText(texts.XEMPUS_IMPORT_PROGRESS.format(phase=phase, desc=desc))
@@ -596,8 +621,7 @@ class _ImportTab(QWidget):
         self._show_diff(batch.id)
 
     def _show_diff(self, batch_id: int):
-        if self._diff_worker and self._diff_worker.isRunning():
-            return
+        detach_worker(self._diff_worker)
         self._diff_worker = XempusDiffLoadWorker(self._api, batch_id)
         self._diff_worker.finished.connect(self._show_diff_dialog)
         self._diff_worker.error.connect(lambda m: logger.error(f"Diff: {m}"))
@@ -655,8 +679,7 @@ class _StatusMappingTab(QWidget):
         self._loading.hide()
 
     def refresh(self):
-        if self._worker and self._worker.isRunning():
-            return
+        detach_worker(self._worker)
         self._loading.show()
         self._worker = StatusMappingLoadWorker(self._api)
         self._worker.finished.connect(self._on_loaded)
