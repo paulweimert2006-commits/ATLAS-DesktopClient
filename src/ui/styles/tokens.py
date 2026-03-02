@@ -133,11 +133,6 @@ ART_BADGE_COLORS = {
     "sonstige":        {"bg": "#f3f4f6", "text": "#374151"},
 }
 
-VU_BADGE_COLORS = {
-    "Allianz":   {"bg": "#dbeafe", "text": "#1e40af"},
-    "SwissLife": {"bg": "#dcfce7", "text": "#166534"},
-    "VB":        {"bg": "#fff7ed", "text": "#c2410c"},
-}
 
 # =============================================================================
 # TYPOGRAFIE - ACENCIA Fonts (OFFIZIELL)

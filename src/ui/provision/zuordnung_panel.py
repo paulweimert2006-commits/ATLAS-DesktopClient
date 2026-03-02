@@ -380,7 +380,7 @@ class ZuordnungPanel(QWidget):
 
         if vu_name:
             vu_lbl = QLabel(texts.PROVISION_MAPPING_DLG_VU_NAME.format(name=vu_name))
-            vu_lbl.setStyleSheet(f"color: {PRIMARY_500}; font-size: {FONT_SIZE_CAPTION};")
+            vu_lbl.setStyleSheet(f"font-size: {FONT_SIZE_CAPTION};")
             vu_lbl.setWordWrap(True)
             form.addRow(vu_lbl)
 

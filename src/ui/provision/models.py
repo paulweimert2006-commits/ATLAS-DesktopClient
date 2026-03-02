@@ -322,14 +322,6 @@ class VuBatchesModel(QAbstractTableModel):
 # =============================================================================
 
 
-VU_BADGE_COLORS = {
-    'Allianz': '#003781',
-    'SwissLife': '#E30613',
-    'VB': '#009640',
-    'Xempus': '#5b8def',
-}
-
-
 class PositionsModel(QAbstractTableModel):
     COL_DATUM = 0
     COL_VU = 1
@@ -467,12 +459,6 @@ class PositionsModel(QAbstractTableModel):
                     return QColor("#b45309")
                 if c.effective_amount < 0:
                     return QColor(ERROR)
-            if col == self.COL_VU:
-                vu = c.vu_name or c.versicherer or ''
-                color = VU_BADGE_COLORS.get(vu)
-                if color:
-                    return QColor(color)
-
         if role == Qt.FontRole:
             if col == self.COL_BETRAG and c.is_overridden:
                 from PySide6.QtGui import QFont
