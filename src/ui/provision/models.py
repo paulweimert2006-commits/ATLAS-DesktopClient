@@ -6,8 +6,8 @@ Extrahiert aus den Panel-Dateien fuer bessere Wartbarkeit.
 Models nutzen i18n-Texte, Design-Tokens und format_eur aus widgets.
 """
 
-from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex
-from PySide6.QtGui import QColor
+from PySide6.QtCore import Qt, QAbstractTableModel, QSortFilterProxyModel, QModelIndex
+from PySide6.QtGui import QColor, QFont
 from typing import List, Dict, Optional
 from datetime import datetime
 
@@ -322,14 +322,6 @@ class VuBatchesModel(QAbstractTableModel):
 # =============================================================================
 
 
-VU_BADGE_COLORS = {
-    'Allianz': '#003781',
-    'SwissLife': '#E30613',
-    'VB': '#009640',
-    'Xempus': '#5b8def',
-}
-
-
 class PositionsModel(QAbstractTableModel):
     COL_DATUM = 0
     COL_VU = 1
@@ -428,7 +420,10 @@ class PositionsModel(QAbstractTableModel):
             elif col == self.COL_VSNR:
                 return c.vsnr or ""
             elif col == self.COL_BETRAG:
-                return format_eur(c.betrag)
+                label = format_eur(c.effective_amount)
+                if c.is_overridden:
+                    label += " *"
+                return label
             elif col == self.COL_BUCHUNGSART:
                 return c.buchungsart_raw or ART_LABELS.get(c.art, c.art)
             elif col == self.COL_BERATER_ANTEIL:
@@ -442,20 +437,34 @@ class PositionsModel(QAbstractTableModel):
             elif col == self.COL_SOURCE:
                 return c.source_label
             elif col == self.COL_MENU:
-                return ""
+                return "\U0001f4dd" if c.has_note else ""
+
+        if role == Qt.ToolTipRole:
+            if col == self.COL_BETRAG and c.is_overridden:
+                return texts.PM_OVERRIDE_TOOLTIP.format(
+                    original=format_eur(c.betrag),
+                    settled=format_eur(c.amount_settled),
+                )
+            if col == self.COL_MENU and c.has_note:
+                snippet = (c.note[:80] + "...") if len(c.note or '') > 80 else (c.note or '')
+                return snippet
 
         if role == Qt.TextAlignmentRole:
             if col in (self.COL_BETRAG, self.COL_BERATER_ANTEIL):
                 return Qt.AlignRight | Qt.AlignVCenter
 
         if role == Qt.ForegroundRole:
-            if col == self.COL_BETRAG and c.betrag < 0:
-                return QColor(ERROR)
-            if col == self.COL_VU:
-                vu = c.vu_name or c.versicherer or ''
-                color = VU_BADGE_COLORS.get(vu)
-                if color:
-                    return QColor(color)
+            if col == self.COL_BETRAG:
+                if c.is_overridden:
+                    return QColor("#b45309")
+                if c.effective_amount < 0:
+                    return QColor(ERROR)
+        if role == Qt.FontRole:
+            if col == self.COL_BETRAG and c.is_overridden:
+                from PySide6.QtGui import QFont
+                f = QFont()
+                f.setItalic(True)
+                return f
 
         if role == Qt.UserRole:
             return c
@@ -464,6 +473,61 @@ class PositionsModel(QAbstractTableModel):
             return getattr(c, 'is_relevant', True)
 
         return None
+
+
+class PositionsFilterProxy(QSortFilterProxyModel):
+    """Proxy mit globalem Freitext-Filter und pro-Spalte Column-Filtern.
+
+    global_filter  – durchsucht ALLE Spalten (OR); mindestens eine muss matchen.
+    column_filters – Dict[col_index, text]; JEDE gesetzte Spalte muss matchen (AND).
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._global_filter: str = ""
+        self._column_filters: Dict[int, str] = {}
+        self.setFilterCaseSensitivity(Qt.CaseInsensitive)
+
+    def set_global_filter(self, text: str) -> None:
+        self._global_filter = text.strip().lower()
+        self.invalidateFilter()
+
+    def set_column_filter(self, column: int, text: str) -> None:
+        cleaned = text.strip().lower()
+        if cleaned:
+            self._column_filters[column] = cleaned
+        else:
+            self._column_filters.pop(column, None)
+        self.invalidateFilter()
+
+    def clear_all_filters(self) -> None:
+        self._global_filter = ""
+        self._column_filters.clear()
+        self.invalidateFilter()
+
+    def filterAcceptsRow(self, source_row: int, source_parent: QModelIndex) -> bool:
+        model = self.sourceModel()
+        if model is None:
+            return True
+
+        if self._global_filter:
+            found = False
+            for col in range(model.columnCount()):
+                idx = model.index(source_row, col, source_parent)
+                val = model.data(idx, Qt.DisplayRole)
+                if val is not None and self._global_filter in str(val).lower():
+                    found = True
+                    break
+            if not found:
+                return False
+
+        for col, text in self._column_filters.items():
+            idx = model.index(source_row, col, source_parent)
+            val = model.data(idx, Qt.DisplayRole)
+            if val is None or text not in str(val).lower():
+                return False
+
+        return True
 
 
 # =============================================================================
@@ -673,6 +737,16 @@ class SuggestionsModel(QAbstractTableModel):
 
 
 class DistEmployeeModel(QAbstractTableModel):
+    COL_NAME = 0
+    COL_ROLE = 1
+    COL_MODEL = 2
+    COL_RATE = 3
+    COL_TL_RATE = 4
+    COL_TL_BASIS = 5
+    COL_TEAM = 6
+    COL_ACTIVE = 7
+    COL_USER = 8
+
     COLUMNS = [
         texts.PROVISION_DIST_EMP_COL_NAME,
         texts.PROVISION_DIST_EMP_COL_ROLE,
@@ -682,6 +756,7 @@ class DistEmployeeModel(QAbstractTableModel):
         texts.PROVISION_DIST_EMP_COL_TL_BASIS,
         texts.PROVISION_DIST_EMP_COL_TEAM,
         texts.PROVISION_DIST_EMP_COL_ACTIVE,
+        texts.PM_EMP_USER_COL_HEADER,
     ]
 
     TOOLTIPS = [
@@ -697,6 +772,7 @@ class DistEmployeeModel(QAbstractTableModel):
             berechnung=texts.PROVISION_DIST_EMP_TIP_TL_RATE_CALC,
         ),
         texts.PROVISION_DIST_EMP_COL_TL_BASIS_TIP,
+        "",
         "",
         "",
     ]
@@ -736,36 +812,55 @@ class DistEmployeeModel(QAbstractTableModel):
         col = index.column()
 
         if role == Qt.DisplayRole:
-            if col == 0:
+            if col == self.COL_NAME:
                 return e.name
-            elif col == 1:
+            elif col == self.COL_ROLE:
                 return {
                     'consulter': texts.PROVISION_EMP_ROLE_CONSULTER,
                     'teamleiter': texts.PROVISION_EMP_ROLE_TEAMLEITER,
                     'backoffice': texts.PROVISION_EMP_ROLE_BACKOFFICE,
                 }.get(e.role, e.role)
-            elif col == 2:
+            elif col == self.COL_MODEL:
                 return e.model_name or "\u2014"
-            elif col == 3:
+            elif col == self.COL_RATE:
                 return f"{e.effective_rate:.1f}%"
-            elif col == 4:
+            elif col == self.COL_TL_RATE:
                 return f"{e.tl_override_rate:.1f}%" if e.tl_override_rate else "\u2014"
-            elif col == 5:
+            elif col == self.COL_TL_BASIS:
                 basis_labels = {
                     'berater_anteil': texts.PROVISION_EMP_DLG_TL_BASIS_BERATER,
                     'gesamt_courtage': texts.PROVISION_EMP_DLG_TL_BASIS_GESAMT,
                 }
                 return basis_labels.get(e.tl_override_basis, e.tl_override_basis)
-            elif col == 6:
+            elif col == self.COL_TEAM:
                 return e.teamleiter_name or "\u2014"
-            elif col == 7:
+            elif col == self.COL_ACTIVE:
                 return "\u2713" if e.is_active else "\u2717"
+            elif col == self.COL_USER:
+                if e.has_user:
+                    return e.user_email or e.user_username or "\u2713"
+                return "\u2014"
+
+        if role == Qt.ToolTipRole and col == self.COL_USER:
+            if e.has_user:
+                if e.user_email:
+                    return texts.PM_EMP_USER_LINKED.format(
+                        username=e.user_username or '?', email=e.user_email)
+                return texts.PM_EMP_USER_LINKED_NO_EMAIL.format(
+                    username=e.user_username or '?')
+            return texts.PM_EMP_USER_NONE
 
         if role == Qt.TextAlignmentRole:
-            if col in (3, 4):
+            if col in (self.COL_RATE, self.COL_TL_RATE):
                 return Qt.AlignRight | Qt.AlignVCenter
-            if col == 7:
+            if col in (self.COL_ACTIVE, self.COL_USER):
                 return Qt.AlignCenter
+
+        if role == Qt.ForegroundRole and col == self.COL_USER:
+            from PySide6.QtGui import QColor
+            if e.has_user:
+                return QColor(SUCCESS)
+            return QColor(PRIMARY_500)
 
         return None
 
@@ -782,11 +877,14 @@ class AuszahlungenModel(QAbstractTableModel):
     COL_TL = 3
     COL_NETTO = 4
     COL_RUECK = 5
-    COL_AUSZAHLUNG = 6
-    COL_POS = 7
-    COL_STATUS = 8
-    COL_VERSION = 9
-    COL_MENU = 10
+    COL_KORREKTUR = 6
+    COL_VU_ABZUG = 7
+    COL_AUSZAHLUNG = 8
+    COL_POS = 9
+    COL_STATUS = 10
+    COL_VERSION = 11
+    COL_EMAIL = 12
+    COL_MENU = 13
 
     COLUMNS = [
         texts.PROVISION_PAY_COL_BERATER,
@@ -795,10 +893,13 @@ class AuszahlungenModel(QAbstractTableModel):
         texts.PROVISION_PAY_COL_TL,
         texts.PROVISION_PAY_COL_NETTO,
         texts.PROVISION_PAY_COL_RUECK,
+        texts.PM_PAY_COL_KORREKTUR,
+        texts.PM_PAY_COL_VU_ABZUG,
         texts.PROVISION_PAY_COL_AUSZAHLUNG,
         texts.PROVISION_PAY_COL_POSITIONS,
         texts.PROVISION_PAY_COL_STATUS,
         texts.PROVISION_PAY_COL_VERSION,
+        texts.PM_STMT_EMAIL_COL_HEADER,
         "",
     ]
 
@@ -850,6 +951,12 @@ class AuszahlungenModel(QAbstractTableModel):
                 return format_eur(a.netto_provision)
             elif col == self.COL_RUECK:
                 return format_eur(a.rueckbelastungen)
+            elif col == self.COL_KORREKTUR:
+                return format_eur(a.korrektur_vormonat) if a.has_korrektur else ""
+            elif col == self.COL_VU_ABZUG:
+                if a.vu_abzug_summe > 0:
+                    return format_eur(a.vu_abzug_summe)
+                return ""
             elif col == self.COL_AUSZAHLUNG:
                 return format_eur(a.auszahlung)
             elif col == self.COL_POS:
@@ -858,10 +965,49 @@ class AuszahlungenModel(QAbstractTableModel):
                 return STATUS_LABELS.get(a.status, a.status)
             elif col == self.COL_VERSION:
                 return str(a.revision)
+            elif col == self.COL_EMAIL:
+                if a.email_status == 'sent':
+                    return texts.PM_STMT_EMAIL_STATUS_SENT
+                elif a.email_status == 'failed':
+                    return texts.PM_STMT_EMAIL_STATUS_FAILED
+                elif not a.has_email:
+                    return texts.PM_STMT_EMAIL_NO_ADDR
+                return ""
             elif col == self.COL_MENU:
                 return ""
 
-        if role == Qt.TextAlignmentRole and col in (2, 3, 4, 5, 6, 7, 9):
+        if role == Qt.ToolTipRole and col == self.COL_EMAIL:
+            if a.email_status == 'sent' and a.email_sent_at:
+                return texts.PM_STMT_EMAIL_TOOLTIP_SENT.format(date=a.email_sent_at)
+            elif a.email_status == 'failed' and a.email_error:
+                return texts.PM_STMT_EMAIL_TOOLTIP_FAILED.format(error=a.email_error)
+            elif not a.has_email:
+                return texts.PM_STMT_EMAIL_TOOLTIP_NO_ADDR
+            return None
+
+        if role == Qt.ToolTipRole and col == self.COL_KORREKTUR and a.has_korrektur:
+            try:
+                import json
+                details = json.loads(a.korrektur_details) if a.korrektur_details else []
+                lines = [texts.PM_KORREKTUR_TOOLTIP_HEADER]
+                for k in details:
+                    lines.append(texts.PM_KORREKTUR_TOOLTIP_LINE.format(
+                        monat=k.get('source_abrechnungsmonat', '?'),
+                        diff=format_eur(float(k.get('differenz_netto', 0))),
+                    ))
+                return '\n'.join(lines)
+            except Exception:
+                return None
+
+        if role == Qt.ToolTipRole and col == self.COL_VU_ABZUG and a.vu_abzug_summe > 0:
+            return texts.PM_PAY_VU_ABZUG_TOOLTIP
+
+        _right_cols = {
+            self.COL_BRUTTO, self.COL_TL, self.COL_NETTO, self.COL_RUECK,
+            self.COL_KORREKTUR, self.COL_VU_ABZUG, self.COL_AUSZAHLUNG,
+            self.COL_POS, self.COL_VERSION,
+        }
+        if role == Qt.TextAlignmentRole and col in _right_cols:
             return Qt.AlignRight | Qt.AlignVCenter
 
         if role == Qt.ForegroundRole:
@@ -869,6 +1015,20 @@ class AuszahlungenModel(QAbstractTableModel):
                 return QColor(ERROR)
             if col == self.COL_TL and a.tl_abzug < 0:
                 return QColor(ERROR)
+            if col == self.COL_KORREKTUR and a.has_korrektur:
+                return QColor(WARNING)
+            if col == self.COL_EMAIL:
+                if a.email_status == 'sent':
+                    return QColor(SUCCESS)
+                elif a.email_status == 'failed':
+                    return QColor(ERROR)
+                elif not a.has_email:
+                    return QColor(PRIMARY_500)
+
+        if role == Qt.FontRole and col == self.COL_KORREKTUR and a.has_korrektur:
+            font = QFont()
+            font.setItalic(True)
+            return font
 
         return None
 

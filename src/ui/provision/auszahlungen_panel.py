@@ -34,8 +34,14 @@ from ui.provision.widgets import (
     PaginationBar, ThreeDotMenuDelegate, ProvisionLoadingOverlay,
     format_eur, get_secondary_button_style, get_combo_style,
 )
-from ui.provision.workers import AuszahlungenLoadWorker, AuszahlungenPositionenWorker
+from ui.provision.workers import (
+    AuszahlungenLoadWorker, AuszahlungenPositionenWorker,
+    AbrechnungGenerateWorker, AbrechnungStatusWorker,
+    StatementExportWorker, StatementBatchExportWorker,
+    StatementEmailWorker, StatementBatchEmailWorker,
+)
 from ui.provision.models import AuszahlungenModel, STATUS_LABELS, STATUS_PILL_MAP
+from services.statement_export import FILE_FILTERS, get_statement_filename, EXTENSIONS
 from i18n import de as texts
 import logging
 
@@ -74,7 +80,12 @@ class AuszahlungenPanel(QWidget):
 
     def show_abrechnungen(self, abrechnungen: list) -> None:
         """View-Interface: Abrechnungen anzeigen."""
-        self._model.set_data(abrechnungen)
+        self._loading_overlay.setVisible(False)
+        self._all_data = abrechnungen
+        self._pagination.set_total(len(abrechnungen))
+        self._paginate()
+        self._resize_columns()
+        self._status.setText("")
 
     def show_loading(self, loading: bool) -> None:
         """View-Interface: Ladezustand."""
@@ -137,6 +148,29 @@ class AuszahlungenPanel(QWidget):
         xlsx_btn.clicked.connect(self._export_xlsx)
         toolbar.addWidget(xlsx_btn)
 
+        stmt_btn = QPushButton(texts.PM_STMT_EXPORT_MENU)
+        stmt_btn.setStyleSheet(get_secondary_button_style())
+        stmt_menu = QMenu(self)
+        stmt_menu.addAction(texts.PM_STMT_EXPORT_PDF, lambda: self._export_statement_selected('pdf'))
+        stmt_menu.addAction(texts.PM_STMT_EXPORT_XLSX, lambda: self._export_statement_selected('xlsx'))
+        stmt_menu.addAction(texts.PM_STMT_EXPORT_DOCX, lambda: self._export_statement_selected('docx'))
+        stmt_menu.addSeparator()
+        all_menu = stmt_menu.addMenu(texts.PM_STMT_EXPORT_ALL_MENU)
+        all_menu.addAction(texts.PM_STMT_EXPORT_PDF, lambda: self._export_all_statements('pdf'))
+        all_menu.addAction(texts.PM_STMT_EXPORT_XLSX, lambda: self._export_all_statements('xlsx'))
+        all_menu.addAction(texts.PM_STMT_EXPORT_DOCX, lambda: self._export_all_statements('docx'))
+        stmt_btn.setMenu(stmt_menu)
+        toolbar.addWidget(stmt_btn)
+
+        email_btn = QPushButton(texts.PM_STMT_EMAIL_SEND)
+        email_btn.setStyleSheet(get_secondary_button_style())
+        email_menu = QMenu(self)
+        email_menu.addAction(texts.PM_STMT_EMAIL_SEND_SELECTED, self._send_email_selected)
+        email_menu.addSeparator()
+        email_menu.addAction(texts.PM_STMT_EMAIL_SEND_ALL, self._send_email_all)
+        email_btn.setMenu(email_menu)
+        toolbar.addWidget(email_btn)
+
         toolbar.addStretch()
         layout.addLayout(toolbar)
 
@@ -159,6 +193,7 @@ class AuszahlungenPanel(QWidget):
         self._table.horizontalHeader().setStretchLastSection(False)
         self._table.setStyleSheet(get_provision_table_style())
         self._table.setMinimumHeight(350)
+        self._table.setMinimumWidth(1100)
         self._table.selectionModel().selectionChanged.connect(self._on_selection)
 
         # Delegates
@@ -260,10 +295,39 @@ class AuszahlungenPanel(QWidget):
             return None
         menu = QMenu(self)
         menu.addAction(texts.PROVISION_MENU_DETAILS, lambda: self._show_detail(item))
-        status_menu = menu.addMenu(texts.PROVISION_MENU_STATUS)
-        for s_key, s_label in STATUS_LABELS.items():
-            if s_key != item.status:
+        allowed = {
+            'berechnet':   ['geprueft'],
+            'geprueft':    ['berechnet', 'freigegeben'],
+            'freigegeben': ['geprueft', 'ausgezahlt'],
+            'ausgezahlt':  [],
+        }
+        transitions = allowed.get(item.status, [])
+        if transitions:
+            status_menu = menu.addMenu(texts.PROVISION_MENU_STATUS)
+            for s_key in transitions:
+                s_label = STATUS_LABELS.get(s_key, s_key)
                 status_menu.addAction(s_label, lambda sid=item.id, sk=s_key: self._change_status(sid, sk))
+
+        export_menu = menu.addMenu(texts.PM_STMT_EXPORT_MENU)
+        export_menu.addAction(texts.PM_STMT_EXPORT_PDF,
+                              lambda b=item: self._export_statement_for_berater(b, 'pdf'))
+        export_menu.addAction(texts.PM_STMT_EXPORT_XLSX,
+                              lambda b=item: self._export_statement_for_berater(b, 'xlsx'))
+        export_menu.addAction(texts.PM_STMT_EXPORT_DOCX,
+                              lambda b=item: self._export_statement_for_berater(b, 'docx'))
+
+        menu.addSeparator()
+        email_action = menu.addAction(
+            texts.PM_STMT_EMAIL_SEND,
+            lambda b=item: self._send_email_for_berater(b))
+        email_action.setEnabled(item.has_email)
+        if not item.has_email:
+            email_action.setToolTip(texts.PM_STMT_EMAIL_TOOLTIP_NO_ADDR)
+
+        if item.email_status == 'failed':
+            menu.addAction(
+                texts.PM_STMT_EMAIL_RESEND,
+                lambda b=item: self._send_email_for_berater(b))
         return menu
 
     def resizeEvent(self, event):
@@ -316,16 +380,26 @@ class AuszahlungenPanel(QWidget):
 
     def _resize_columns(self):
         h = self._table.horizontalHeader()
-        for i in range(self._model.columnCount()):
-            if i == self._model.COL_MENU:
+        m = self._model
+        fixed = {
+            m.COL_ROLE: 130,
+            m.COL_BRUTTO: 110,
+            m.COL_TL: 100,
+            m.COL_NETTO: 110,
+            m.COL_RUECK: 110,
+            m.COL_KORREKTUR: 100,
+            m.COL_VU_ABZUG: 100,
+            m.COL_AUSZAHLUNG: 115,
+            m.COL_POS: 50,
+            m.COL_STATUS: 140,
+            m.COL_VERSION: 50,
+            m.COL_EMAIL: 110,
+            m.COL_MENU: 48,
+        }
+        for i in range(m.columnCount()):
+            if i in fixed:
                 h.setSectionResizeMode(i, QHeaderView.Fixed)
-                self._table.setColumnWidth(i, 48)
-            elif i == self._model.COL_STATUS:
-                h.setSectionResizeMode(i, QHeaderView.Fixed)
-                self._table.setColumnWidth(i, 140)
-            elif i == self._model.COL_ROLE:
-                h.setSectionResizeMode(i, QHeaderView.Fixed)
-                self._table.setColumnWidth(i, 130)
+                self._table.setColumnWidth(i, fixed[i])
             else:
                 h.setSectionResizeMode(i, QHeaderView.Stretch)
 
@@ -342,6 +416,12 @@ class AuszahlungenPanel(QWidget):
         self._statement.add_line(texts.PROVISION_PAY_DETAIL_BRUTTO, format_eur(item.brutto_provision))
         self._statement.add_line(texts.PROVISION_PAY_DETAIL_TL, format_eur(item.tl_abzug), color=ERROR if item.tl_abzug < 0 else "")
         self._statement.add_line(texts.PROVISION_PAY_DETAIL_RUECK, format_eur(item.rueckbelastungen), color=ERROR if item.rueckbelastungen < 0 else "")
+        if item.has_korrektur:
+            self._statement.add_line(
+                texts.PM_KORREKTUR_DETAIL_HEADER,
+                format_eur(item.korrektur_vormonat),
+                color=WARNING,
+            )
         self._statement.add_separator()
         self._statement.add_line(texts.PROVISION_PAY_DETAIL_NETTO, format_eur(item.auszahlung), bold=True)
 
@@ -421,18 +501,47 @@ class AuszahlungenPanel(QWidget):
             texts.PROVISION_PAY_GENERATE,
             texts.PROVISION_PAY_CONFIRM.format(monat=monat),
         )
-        if result == QMessageBox.Yes:
-            resp = self._backend.generate_abrechnung(monat)
-            if resp:
-                if self._toast_manager:
-                    self._toast_manager.show_success(texts.PROVISION_TOAST_GENERATE_DONE.format(monat=monat))
-                self._load_data()
+        if result != QMessageBox.Yes:
+            return
+        if hasattr(self, '_gen_worker') and self._gen_worker and self._gen_worker.isRunning():
+            return
+        self._loading_overlay.setVisible(True)
+        self._gen_worker = AbrechnungGenerateWorker(self._backend, monat, parent=self)
+        self._gen_worker.finished.connect(self._on_generate_finished)
+        self._gen_worker.start()
+
+    def _on_generate_finished(self, resp, error_msg: str):
+        self._loading_overlay.setVisible(False)
+        if error_msg:
+            logger.warning(f"Abrechnung-Generierung fehlgeschlagen: {error_msg}")
+            if self._toast_manager:
+                self._toast_manager.show_error(error_msg)
+            return
+        if resp:
+            monat = self._monat_combo.currentData() or datetime.now().strftime('%Y-%m')
+            if self._toast_manager:
+                self._toast_manager.show_success(texts.PROVISION_TOAST_GENERATE_DONE.format(monat=monat))
+            self._load_data()
 
     def _change_status(self, abrechnung_id: int, status: str):
-        if self._backend.update_abrechnung_status(abrechnung_id, status):
+        if hasattr(self, '_status_worker') and self._status_worker and self._status_worker.isRunning():
+            return
+        self._status_worker = AbrechnungStatusWorker(
+            self._backend, abrechnung_id, status, parent=self)
+        self._status_worker.finished.connect(self._on_status_changed)
+        self._status_worker.start()
+
+    def _on_status_changed(self, ok: bool, status: str, error_msg: str):
+        if ok:
             if self._toast_manager:
                 label = STATUS_LABELS.get(status, status)
                 self._toast_manager.show_success(texts.PROVISION_TOAST_STATUS_CHANGED.format(status=label))
+            self._load_data()
+        else:
+            msg = error_msg or texts.PROVISION_TOAST_STATUS_ERROR
+            logger.warning(f"Statusaenderung fehlgeschlagen: {msg}")
+            if self._toast_manager:
+                self._toast_manager.show_error(msg)
             self._load_data()
 
     def _export_csv(self):
@@ -490,7 +599,7 @@ class AuszahlungenPanel(QWidget):
             eur_cols = {
                 self._model.COL_BRUTTO, self._model.COL_TL,
                 self._model.COL_NETTO, self._model.COL_RUECK,
-                self._model.COL_AUSZAHLUNG,
+                self._model.COL_VU_ABZUG, self._model.COL_AUSZAHLUNG,
             }
 
             for row_idx in range(self._model.rowCount()):
@@ -504,6 +613,7 @@ class AuszahlungenPanel(QWidget):
                     item.tl_abzug,
                     item.netto_provision,
                     item.rueckbelastungen,
+                    item.vu_abzug_summe,
                     item.auszahlung,
                     item.anzahl_provisionen,
                     STATUS_LABELS.get(item.status, item.status),
@@ -525,3 +635,176 @@ class AuszahlungenPanel(QWidget):
             logger.error(f"Excel-Export-Fehler: {e}")
             if self._toast_manager:
                 self._toast_manager.show_error(str(e))
+
+    # ── Statement-Export (Einzelabrechnung PDF/Excel/Word) ──
+
+    def _get_selected_berater(self) -> Optional['BeraterAbrechnung']:
+        indexes = self._table.selectionModel().selectedRows()
+        if not indexes:
+            return None
+        return self._model.get_item(indexes[0].row())
+
+    def _export_statement_selected(self, fmt: str):
+        item = self._get_selected_berater()
+        if not item:
+            if self._toast_manager:
+                self._toast_manager.show_warning(texts.PM_STMT_NO_DATA)
+            return
+        self._export_statement_for_berater(item, fmt)
+
+    def _export_statement_for_berater(self, berater: 'BeraterAbrechnung', fmt: str):
+        if not self._presenter:
+            if self._toast_manager:
+                self._toast_manager.show_error(texts.PM_STMT_NO_DATA)
+            return
+
+        default_name = get_statement_filename(berater, EXTENSIONS[fmt])
+        file_filter = FILE_FILTERS[fmt]
+        path, _ = QFileDialog.getSaveFileName(
+            self, texts.PM_STMT_EXPORT_MENU, default_name, file_filter)
+        if not path:
+            return
+
+        self._loading_overlay.setVisible(True)
+        self._stmt_worker = StatementExportWorker(
+            self._presenter, berater, fmt, path)
+        self._stmt_worker.finished.connect(self._on_stmt_export_done)
+        self._stmt_worker.error.connect(self._on_stmt_export_error)
+        self._stmt_worker.start()
+
+    def _on_stmt_export_done(self, path: str):
+        self._loading_overlay.setVisible(False)
+        if self._toast_manager:
+            self._toast_manager.show_success(
+                texts.PM_STMT_TOAST_SUCCESS.format(path=os.path.basename(path)))
+
+    def _on_stmt_export_error(self, error: str):
+        self._loading_overlay.setVisible(False)
+        logger.error(f"Statement-Export-Fehler: {error}")
+        if self._toast_manager:
+            self._toast_manager.show_error(
+                texts.PM_STMT_TOAST_ERROR.format(error=error))
+
+    def _export_all_statements(self, fmt: str):
+        if not self._presenter:
+            return
+        all_data = getattr(self, '_all_data', [])
+        if not all_data:
+            if self._toast_manager:
+                self._toast_manager.show_warning(texts.PM_STMT_NO_DATA)
+            return
+
+        folder = QFileDialog.getExistingDirectory(
+            self, texts.PM_STMT_FOLDER_TITLE)
+        if not folder:
+            return
+
+        self._loading_overlay.setVisible(True)
+        self._batch_worker = StatementBatchExportWorker(
+            self._presenter, all_data, fmt, folder)
+        self._batch_worker.finished.connect(
+            lambda count: self._on_batch_export_done(count, folder))
+        self._batch_worker.progress.connect(self._on_batch_progress)
+        self._batch_worker.error.connect(self._on_stmt_export_error)
+        self._batch_worker.start()
+
+    def _on_batch_export_done(self, count: int, folder: str):
+        self._loading_overlay.setVisible(False)
+        if self._toast_manager:
+            self._toast_manager.show_success(
+                texts.PM_STMT_TOAST_BATCH_SUCCESS.format(
+                    count=count, folder=os.path.basename(folder)))
+
+    def _on_batch_progress(self, current: int, total: int):
+        pass
+
+    # ── E-Mail-Versand ──
+
+    def _send_email_selected(self):
+        item = self._get_selected_berater()
+        if not item:
+            if self._toast_manager:
+                self._toast_manager.show_warning(texts.PM_STMT_NO_DATA)
+            return
+        self._send_email_for_berater(item)
+
+    def _send_email_for_berater(self, berater: 'BeraterAbrechnung'):
+        if not self._presenter:
+            return
+        if not berater.has_email:
+            if self._toast_manager:
+                self._toast_manager.show_warning(
+                    texts.PM_STMT_EMAIL_TOAST_NO_ADDR.format(name=berater.berater_name))
+            return
+
+        self._loading_overlay.setVisible(True)
+        self._email_worker = StatementEmailWorker(self._presenter, berater)
+        self._email_worker.finished.connect(
+            lambda result, b=berater: self._on_email_done(result, b))
+        self._email_worker.error.connect(self._on_email_error)
+        self._email_worker.start()
+
+    def _on_email_done(self, result: dict, berater: 'BeraterAbrechnung'):
+        self._loading_overlay.setVisible(False)
+        if result.get('success'):
+            if self._toast_manager:
+                self._toast_manager.show_success(
+                    texts.PM_STMT_EMAIL_TOAST_SUCCESS.format(
+                        email=result.get('recipient', berater.berater_email or '')))
+            self._load_data()
+        else:
+            error = result.get('error', '')
+            if self._toast_manager:
+                self._toast_manager.show_error(
+                    texts.PM_STMT_EMAIL_TOAST_ERROR.format(error=error))
+
+    def _on_email_error(self, error: str):
+        self._loading_overlay.setVisible(False)
+        logger.error(f"E-Mail-Versand-Fehler: {error}")
+        if self._toast_manager:
+            self._toast_manager.show_error(
+                texts.PM_STMT_EMAIL_TOAST_ERROR.format(error=error))
+
+    def _send_email_all(self):
+        if not self._presenter:
+            return
+        all_data = getattr(self, '_all_data', [])
+        if not all_data:
+            if self._toast_manager:
+                self._toast_manager.show_warning(texts.PM_STMT_NO_DATA)
+            return
+
+        eligible = [b for b in all_data if b.has_email]
+        if not eligible:
+            if self._toast_manager:
+                self._toast_manager.show_warning(texts.PM_STMT_EMAIL_NO_ELIGIBLE)
+            return
+
+        result = QMessageBox.question(
+            self,
+            texts.PM_STMT_EMAIL_SEND_ALL,
+            texts.PM_STMT_EMAIL_CONFIRM_BATCH,
+        )
+        if result != QMessageBox.Yes:
+            return
+
+        self._loading_overlay.setVisible(True)
+        self._batch_email_worker = StatementBatchEmailWorker(
+            self._presenter, all_data)
+        self._batch_email_worker.finished.connect(self._on_batch_email_done)
+        self._batch_email_worker.progress.connect(self._on_batch_email_progress)
+        self._batch_email_worker.error.connect(self._on_email_error)
+        self._batch_email_worker.start()
+
+    def _on_batch_email_done(self, sent: int, failed: int):
+        self._loading_overlay.setVisible(False)
+        if self._toast_manager:
+            self._toast_manager.show_success(
+                texts.PM_STMT_EMAIL_TOAST_BATCH.format(sent=sent, failed=failed))
+        self._load_data()
+
+    def _on_batch_email_progress(self, current: int, total: int):
+        if self._toast_manager:
+            self._toast_manager.show_info(
+                texts.PM_STMT_EMAIL_TOAST_BATCH_PROGRESS.format(
+                    current=current, total=total))

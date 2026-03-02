@@ -26,6 +26,7 @@ from domain.provision.entities import (  # noqa: F401 – Re-Export
     ImportBatch,
     BeraterAbrechnung,
     VermittlerMapping,
+    PerformanceData,
 )
 from infrastructure.api.provision_repository import ProvisionRepository
 
@@ -202,6 +203,42 @@ class ProvisionAPI:
             logger.error(f"Fehler bei Split-Neuberechnung: {e}")
         return 0
 
+    def set_commission_override(self, commission_id: int, amount_settled: float,
+                                reason: str = None) -> dict:
+        try:
+            data = {'amount_settled': amount_settled}
+            if reason:
+                data['reason'] = reason
+            resp = self.client.put(
+                f'/pm/commissions/{commission_id}/override', json_data=data)
+            if resp.get('success'):
+                return {'success': True, 'abrechnungen': resp.get('data', {}).get('abrechnungen')}
+            return {'success': False}
+        except APIError as e:
+            logger.error(f"Fehler beim Setzen des Overrides {commission_id}: {e}")
+        return {'success': False}
+
+    def reset_commission_override(self, commission_id: int) -> dict:
+        try:
+            resp = self.client.delete(
+                f'/pm/commissions/{commission_id}/override')
+            if resp.get('success'):
+                return {'success': True, 'abrechnungen': resp.get('data', {}).get('abrechnungen')}
+            return {'success': False}
+        except APIError as e:
+            logger.error(f"Fehler beim Zuruecksetzen des Overrides {commission_id}: {e}")
+        return {'success': False}
+
+    def save_commission_note(self, commission_id: int, note: str) -> bool:
+        try:
+            resp = self.client.put(
+                f'/pm/commissions/{commission_id}/note',
+                json_data={'note': note})
+            return resp.get('success', False)
+        except APIError as e:
+            logger.error(f"Fehler beim Speichern der Notiz {commission_id}: {e}")
+        return False
+
     # ── Import ──
 
     def import_vu_liste(self, rows: List[Dict], filename: str,
@@ -239,6 +276,39 @@ class ProvisionAPI:
             logger.error(f"Fehler beim Xempus-Import: {e}")
             raise
         return None
+
+    def upload_raw_data(self, batch_id: int, headers: list, rows: list,
+                        sheet_name: str = None, total_rows: int = 0,
+                        skipped_rows: int = 0) -> bool:
+        try:
+            resp = self.client.post(
+                f'/pm/import/{batch_id}/raw-data',
+                json_data={
+                    'headers': headers,
+                    'rows': rows,
+                    'sheet_name': sheet_name,
+                    'total_rows': total_rows,
+                    'skipped_rows': skipped_rows,
+                },
+                timeout=120,
+            )
+            return resp.get('success', False)
+        except APIError as e:
+            logger.error(f"Fehler beim Upload der Rohdaten (batch {batch_id}): {e}")
+        return False
+
+    def get_raw_data(self, batch_id: int, row: int = None) -> dict:
+        try:
+            params = {}
+            if row is not None:
+                params['row'] = row
+            resp = self.client.get(
+                f'/pm/import/{batch_id}/raw-data', params=params)
+            if resp.get('success'):
+                return resp.get('data', {})
+        except APIError as e:
+            logger.error(f"Fehler beim Laden der Rohdaten (batch {batch_id}): {e}")
+        return {}
 
     def trigger_auto_match(self, batch_id: int = None) -> Dict:
         try:
@@ -353,15 +423,27 @@ class ProvisionAPI:
         return {}
 
     def update_abrechnung_status(self, abrechnung_id: int, status: str) -> bool:
+        resp = self.client.put(
+            f'/pm/abrechnungen/{abrechnung_id}',
+            json_data={'status': status}
+        )
+        return resp.get('success', False)
+
+    def send_statement_email(self, abrechnung_id: int, pdf_base64: str,
+                             filename: str) -> dict:
         try:
-            resp = self.client.put(
-                f'/pm/abrechnungen/{abrechnung_id}',
-                json_data={'status': status}
-            )
-            return resp.get('success', False)
+            resp = self.client.post(
+                f'/pm/abrechnungen/{abrechnung_id}/send-email',
+                json_data={
+                    'pdf_base64': pdf_base64,
+                    'filename': filename,
+                })
+            if resp.get('success'):
+                return {'success': True, **resp.get('data', {})}
+            return {'success': False, 'error': resp.get('message', '')}
         except APIError as e:
-            logger.error(f"Fehler beim Aktualisieren der Abrechnung {abrechnung_id}: {e}")
-        return False
+            logger.error(f"Fehler beim E-Mail-Versand (Abrechnung {abrechnung_id}): {e}")
+            return {'success': False, 'error': str(e)}
 
     # ── Models ──
 
@@ -501,6 +583,22 @@ class ProvisionAPI:
         return {'total': 0, 'no_contract': 0, 'no_berater': 0,
                 'no_model': 0, 'no_split': 0}
 
+    def get_performance(self, von: str = None, bis: str = None,
+                        monat: str = None) -> Optional[PerformanceData]:
+        try:
+            params = {}
+            if von and bis:
+                params['von'] = von
+                params['bis'] = bis
+            elif monat:
+                params['monat'] = monat
+            resp = self.client.get('/pm/dashboard/performance', params=params)
+            if resp.get('success'):
+                return PerformanceData.from_dict(resp.get('data', {}))
+        except APIError as e:
+            logger.error(f"Fehler beim Laden der Erfolgsauswertung: {e}")
+        return None
+
     # ── Audit ──
 
     def get_audit_log(self, entity_type: str = None, entity_id: int = None,
@@ -515,6 +613,80 @@ class ProvisionAPI:
         except APIError as e:
             logger.error(f"Fehler beim Laden des PM-Audit-Logs: {e}")
         return []
+
+    # ── PM Settings ──
+
+    def get_pm_settings(self) -> Dict:
+        try:
+            resp = self.client.get('/pm/settings')
+            if resp.get('success'):
+                return resp.get('data', {}).get('settings', {})
+        except APIError as e:
+            logger.error(f"Fehler beim Laden der PM-Einstellungen: {e}")
+        return {}
+
+    def update_pm_settings(self, settings: Dict) -> bool:
+        try:
+            resp = self.client.put('/pm/settings', json_data={'settings': settings})
+            return resp.get('success', False)
+        except APIError as e:
+            logger.error(f"Fehler beim Speichern der PM-Einstellungen: {e}")
+        return False
+
+    # ── Freie Provisionen / Sonderzahlungen ──
+
+    def get_free_commissions(self, von: str = None, bis: str = None) -> List[Dict]:
+        try:
+            params = {}
+            if von:
+                params['von'] = von
+            if bis:
+                params['bis'] = bis
+            resp = self.client.get('/pm/free-commissions', params=params)
+            if resp.get('success'):
+                return resp.get('data', {}).get('free_commissions', [])
+        except APIError as e:
+            logger.error(f"Fehler beim Laden der freien Provisionen: {e}")
+        return []
+
+    def get_free_commission(self, fc_id: int) -> Dict:
+        try:
+            resp = self.client.get(f'/pm/free-commissions/{fc_id}')
+            if resp.get('success'):
+                return resp.get('data', {})
+        except APIError as e:
+            logger.error(f"Fehler beim Laden der freien Provision {fc_id}: {e}")
+        return {}
+
+    def create_free_commission(self, data: Dict) -> Dict:
+        try:
+            resp = self.client.post('/pm/free-commissions', json_data=data)
+            if resp.get('success'):
+                return {'success': True, 'id': resp.get('data', {}).get('id')}
+            return {'success': False, 'message': resp.get('message', '')}
+        except APIError as e:
+            logger.error(f"Fehler beim Erstellen der freien Provision: {e}")
+        return {'success': False}
+
+    def update_free_commission(self, fc_id: int, data: Dict) -> Dict:
+        try:
+            resp = self.client.put(f'/pm/free-commissions/{fc_id}', json_data=data)
+            if resp.get('success'):
+                return {'success': True}
+            return {'success': False, 'message': resp.get('message', '')}
+        except APIError as e:
+            logger.error(f"Fehler beim Aktualisieren der freien Provision {fc_id}: {e}")
+        return {'success': False}
+
+    def delete_free_commission(self, fc_id: int) -> Dict:
+        try:
+            resp = self.client.delete(f'/pm/free-commissions/{fc_id}')
+            if resp.get('success'):
+                return {'success': True}
+            return {'success': False, 'message': resp.get('message', '')}
+        except APIError as e:
+            logger.error(f"Fehler beim Loeschen der freien Provision {fc_id}: {e}")
+        return {'success': False}
 
     # ── Reset (Gefahrenzone) ──
 

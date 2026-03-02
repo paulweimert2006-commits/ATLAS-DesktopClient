@@ -12,7 +12,8 @@ from .entities import (
     Commission, Contract, Employee, CommissionModel,
     DashboardSummary, ImportResult, ImportBatch,
     BeraterAbrechnung, VermittlerMapping, ContractSearchResult,
-    PaginationInfo, RecalcSummary,
+    PaginationInfo, RecalcSummary, FreeCommission,
+    PerformanceData,
 )
 
 
@@ -201,5 +202,24 @@ class IPayoutsView(Protocol):
     """Interface für das Auszahlungen-Panel."""
 
     def show_abrechnungen(self, abrechnungen: List[BeraterAbrechnung]) -> None: ...
+    def show_loading(self, loading: bool) -> None: ...
+    def show_error(self, message: str) -> None: ...
+
+
+@runtime_checkable
+class IFreeCommissionView(Protocol):
+    """Interface fuer das Freie-Provisionen-Panel."""
+
+    def show_free_commissions(self, items: List[FreeCommission]) -> None: ...
+    def show_loading(self, loading: bool) -> None: ...
+    def show_error(self, message: str) -> None: ...
+    def show_success(self, message: str) -> None: ...
+
+
+@runtime_checkable
+class IPerformanceView(Protocol):
+    """Interface fuer das Erfolgsauswertung-Panel."""
+
+    def show_performance(self, data: PerformanceData) -> None: ...
     def show_loading(self, loading: bool) -> None: ...
     def show_error(self, message: str) -> None: ...

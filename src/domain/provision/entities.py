@@ -51,12 +51,18 @@ class Employee:
     model_name: Optional[str] = None
     model_rate: Optional[float] = None
     teamleiter_name: Optional[str] = None
+    user_username: Optional[str] = None
+    user_email: Optional[str] = None
 
     @property
     def effective_rate(self) -> float:
         if self.commission_rate_override is not None:
             return self.commission_rate_override
         return self.model_rate or 0.0
+
+    @property
+    def has_user(self) -> bool:
+        return self.user_id is not None
 
     @classmethod
     def from_dict(cls, d: Dict) -> 'Employee':
@@ -75,6 +81,8 @@ class Employee:
             model_name=d.get('model_name'),
             model_rate=float(d['model_rate']) if d.get('model_rate') is not None else None,
             teamleiter_name=d.get('teamleiter_name'),
+            user_username=d.get('user_username'),
+            user_email=d.get('user_email'),
         )
 
 
@@ -201,6 +209,7 @@ class Commission:
     berater_anteil: Optional[float] = None
     tl_anteil: Optional[float] = None
     ag_anteil: Optional[float] = None
+    company_deduction_amount: float = 0.0
     import_batch_id: Optional[int] = None
     import_source_type: Optional[str] = None
     import_vu_name: Optional[str] = None
@@ -210,9 +219,37 @@ class Commission:
     buchungsart_raw: Optional[str] = None
     konditionssatz: Optional[str] = None
     courtage_rate: Optional[float] = None
+    amount_settled: Optional[float] = None
+    amount_override_reason: Optional[str] = None
+    amount_overridden_by: Optional[int] = None
+    amount_overridden_at: Optional[str] = None
+    overrider_name: Optional[str] = None
+    note: Optional[str] = None
+    note_updated_at: Optional[str] = None
+    note_updated_by: Optional[int] = None
+    note_updater_name: Optional[str] = None
+    free_commission_id: Optional[int] = None
+
+    @property
+    def is_free(self) -> bool:
+        return self.free_commission_id is not None
+
+    @property
+    def effective_amount(self) -> float:
+        return self.amount_settled if self.amount_settled is not None else self.betrag
+
+    @property
+    def is_overridden(self) -> bool:
+        return self.amount_settled is not None
+
+    @property
+    def has_note(self) -> bool:
+        return bool(self.note)
 
     @property
     def source_label(self) -> str:
+        if self.free_commission_id is not None:
+            return "Sonderzahlung"
         if self.import_source_type == 'xempus':
             return "Xempus"
         if self.import_source_type == 'vu_liste':
@@ -248,6 +285,7 @@ class Commission:
             berater_anteil=float(d['berater_anteil']) if d.get('berater_anteil') is not None else None,
             tl_anteil=float(d['tl_anteil']) if d.get('tl_anteil') is not None else None,
             ag_anteil=float(d['ag_anteil']) if d.get('ag_anteil') is not None else None,
+            company_deduction_amount=float(d.get('company_deduction_amount', 0)),
             import_batch_id=int(d['import_batch_id']) if d.get('import_batch_id') else None,
             import_source_type=d.get('import_source_type'),
             import_vu_name=d.get('import_vu_name'),
@@ -257,6 +295,16 @@ class Commission:
             buchungsart_raw=d.get('buchungsart_raw'),
             konditionssatz=d.get('konditionssatz'),
             courtage_rate=float(d['courtage_rate']) if d.get('courtage_rate') is not None else None,
+            amount_settled=float(d['amount_settled']) if d.get('amount_settled') is not None else None,
+            amount_override_reason=d.get('amount_override_reason'),
+            amount_overridden_by=int(d['amount_overridden_by']) if d.get('amount_overridden_by') else None,
+            amount_overridden_at=d.get('amount_overridden_at'),
+            overrider_name=d.get('overrider_name'),
+            note=d.get('note'),
+            note_updated_at=d.get('note_updated_at'),
+            note_updated_by=int(d['note_updated_by']) if d.get('note_updated_by') else None,
+            note_updater_name=d.get('note_updater_name'),
+            free_commission_id=int(d['free_commission_id']) if d.get('free_commission_id') else None,
         )
 
 
@@ -363,10 +411,25 @@ class BeraterAbrechnung:
     tl_abzug: float = 0.0
     netto_provision: float = 0.0
     rueckbelastungen: float = 0.0
+    korrektur_vormonat: float = 0.0
+    korrektur_details: Optional[str] = None
+    vu_abzug_summe: float = 0.0
     auszahlung: float = 0.0
     anzahl_provisionen: int = 0
     status: str = 'berechnet'
     is_locked: bool = False
+    berater_email: Optional[str] = None
+    email_status: Optional[str] = None
+    email_sent_at: Optional[str] = None
+    email_error: Optional[str] = None
+
+    @property
+    def has_korrektur(self) -> bool:
+        return abs(self.korrektur_vormonat) > 0.005
+
+    @property
+    def has_email(self) -> bool:
+        return bool(self.berater_email)
 
     @classmethod
     def from_dict(cls, d: Dict) -> 'BeraterAbrechnung':
@@ -381,10 +444,17 @@ class BeraterAbrechnung:
             tl_abzug=float(d.get('tl_abzug', 0)),
             netto_provision=float(d.get('netto_provision', 0)),
             rueckbelastungen=float(d.get('rueckbelastungen', 0)),
+            korrektur_vormonat=float(d.get('korrektur_vormonat', 0)),
+            korrektur_details=d.get('korrektur_details'),
+            vu_abzug_summe=float(d.get('vu_abzug_summe', 0)),
             auszahlung=float(d.get('auszahlung', 0)),
             anzahl_provisionen=int(d.get('anzahl_provisionen', 0)),
             status=d.get('status', 'berechnet'),
             is_locked=bool(int(d.get('is_locked', 0))),
+            berater_email=d.get('berater_email'),
+            email_status=d.get('email_status'),
+            email_sent_at=d.get('email_sent_at'),
+            email_error=d.get('email_error'),
         )
 
 
@@ -407,4 +477,200 @@ class VermittlerMapping:
             berater_id=int(d.get('berater_id', 0)),
             berater_name=d.get('berater_name'),
             created_at=d.get('created_at'),
+        )
+
+
+@dataclass
+class FreeCommissionSplit:
+    """Einzelner Verteilungseintrag einer freien Provision."""
+    berater_id: int = 0
+    berater_name: str = ''
+    anteil_prozent: float = 0.0
+    anteil_euro: float = 0.0
+    commission_id: Optional[int] = None
+
+    @classmethod
+    def from_dict(cls, d: Dict) -> 'FreeCommissionSplit':
+        return cls(
+            berater_id=int(d.get('berater_id', 0)),
+            berater_name=d.get('berater_name', ''),
+            anteil_prozent=float(d.get('anteil_prozent', 0)),
+            anteil_euro=float(d.get('anteil_euro', 0)),
+            commission_id=int(d['commission_id']) if d.get('commission_id') else None,
+        )
+
+
+@dataclass
+class FreeCommission:
+    """Freie Provision / Sonderzahlung (Kopfdaten)."""
+    id: int = 0
+    datum: str = ''
+    gesamtbetrag: float = 0.0
+    beschreibung: str = ''
+    kostenstelle: Optional[str] = None
+    created_by: Optional[int] = None
+    created_by_name: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    verteilung_text: Optional[str] = None
+    can_edit: bool = True
+    splits: List[FreeCommissionSplit] = field(default_factory=list)
+
+    @classmethod
+    def from_dict(cls, d: Dict) -> 'FreeCommission':
+        splits_raw = d.get('splits', [])
+        splits = [FreeCommissionSplit.from_dict(s) for s in splits_raw] if splits_raw else []
+        return cls(
+            id=int(d.get('id', 0)),
+            datum=d.get('datum', ''),
+            gesamtbetrag=float(d.get('gesamtbetrag', 0)),
+            beschreibung=d.get('beschreibung', ''),
+            kostenstelle=d.get('kostenstelle'),
+            created_by=int(d['created_by']) if d.get('created_by') else None,
+            created_by_name=d.get('created_by_name'),
+            created_at=d.get('created_at'),
+            updated_at=d.get('updated_at'),
+            verteilung_text=d.get('verteilung_text'),
+            can_edit=bool(d.get('can_edit', True)),
+            splits=splits,
+        )
+
+
+# ═══════════════════════════════════════════════════════════
+# Performance / Erfolgsauswertung
+# ═══════════════════════════════════════════════════════════
+
+
+@dataclass
+class PerformanceMitarbeiter:
+    """KPIs fuer die persoenliche Ebene (Level 1)."""
+    employee_id: int = 0
+    employee_name: str = ''
+    provision_monat: float = 0.0
+    provision_ytd: float = 0.0
+    rueckbelastung_monat: float = 0.0
+    rueckbelastung_ytd: float = 0.0
+    stornoquote_betrag: float = 0.0
+    stornoquote_vertraege: float = 0.0
+    total_contracts: int = 0
+    stornierte_contracts: int = 0
+    positionen_monat: int = 0
+    positionen_ytd: int = 0
+
+    @classmethod
+    def from_dict(cls, d: Dict) -> 'PerformanceMitarbeiter':
+        return cls(
+            employee_id=int(d.get('employee_id', 0)),
+            employee_name=d.get('employee_name', ''),
+            provision_monat=float(d.get('provision_monat', 0)),
+            provision_ytd=float(d.get('provision_ytd', 0)),
+            rueckbelastung_monat=float(d.get('rueckbelastung_monat', 0)),
+            rueckbelastung_ytd=float(d.get('rueckbelastung_ytd', 0)),
+            stornoquote_betrag=float(d.get('stornoquote_betrag', 0)),
+            stornoquote_vertraege=float(d.get('stornoquote_vertraege', 0)),
+            total_contracts=int(d.get('total_contracts', 0)),
+            stornierte_contracts=int(d.get('stornierte_contracts', 0)),
+            positionen_monat=int(d.get('positionen_monat', 0)),
+            positionen_ytd=int(d.get('positionen_ytd', 0)),
+        )
+
+
+@dataclass
+class PerformanceAcencia:
+    """KPIs fuer die Firmen-Ebene (Level 2)."""
+    ag_anteil_monat: float = 0.0
+    ag_anteil_ytd: float = 0.0
+    ueberschuss_monat: float = 0.0
+    ueberschuss_ytd: float = 0.0
+    eingang_monat: float = 0.0
+    eingang_ytd: float = 0.0
+    auszahlung_berater_monat: float = 0.0
+    auszahlung_berater_ytd: float = 0.0
+    tl_anteil_monat: float = 0.0
+    tl_anteil_ytd: float = 0.0
+
+    @classmethod
+    def from_dict(cls, d: Dict) -> 'PerformanceAcencia':
+        return cls(
+            ag_anteil_monat=float(d.get('ag_anteil_monat', 0)),
+            ag_anteil_ytd=float(d.get('ag_anteil_ytd', 0)),
+            ueberschuss_monat=float(d.get('ueberschuss_monat', 0)),
+            ueberschuss_ytd=float(d.get('ueberschuss_ytd', 0)),
+            eingang_monat=float(d.get('eingang_monat', 0)),
+            eingang_ytd=float(d.get('eingang_ytd', 0)),
+            auszahlung_berater_monat=float(d.get('auszahlung_berater_monat', 0)),
+            auszahlung_berater_ytd=float(d.get('auszahlung_berater_ytd', 0)),
+            tl_anteil_monat=float(d.get('tl_anteil_monat', 0)),
+            tl_anteil_ytd=float(d.get('tl_anteil_ytd', 0)),
+        )
+
+
+@dataclass
+class PerformanceTeamMember:
+    """Einzelner Berater in der Team-Ansicht."""
+    id: int = 0
+    name: str = ''
+    brutto_monat: float = 0.0
+    netto_monat: float = 0.0
+    brutto_ytd: float = 0.0
+    netto_ytd: float = 0.0
+    stornoquote_betrag: float = 0.0
+
+    @classmethod
+    def from_dict(cls, d: Dict) -> 'PerformanceTeamMember':
+        return cls(
+            id=int(d.get('id', 0)),
+            name=d.get('name', ''),
+            brutto_monat=float(d.get('brutto_monat', 0)),
+            netto_monat=float(d.get('netto_monat', 0)),
+            brutto_ytd=float(d.get('brutto_ytd', 0)),
+            netto_ytd=float(d.get('netto_ytd', 0)),
+            stornoquote_betrag=float(d.get('stornoquote_betrag', 0)),
+        )
+
+
+@dataclass
+class PerformanceFuehrungskraft:
+    """KPIs fuer die Team-Ebene (Level 3)."""
+    team_umsatz_monat: float = 0.0
+    team_umsatz_ytd: float = 0.0
+    team_ag_anteil_monat: float = 0.0
+    team_ag_anteil_ytd: float = 0.0
+    team_rueckbelastung_monat: float = 0.0
+    team_rueckbelastung_ytd: float = 0.0
+    team_members: List['PerformanceTeamMember'] = field(default_factory=list)
+
+    @classmethod
+    def from_dict(cls, d: Dict) -> 'PerformanceFuehrungskraft':
+        members_raw = d.get('team_members', [])
+        members = [PerformanceTeamMember.from_dict(m) for m in members_raw]
+        return cls(
+            team_umsatz_monat=float(d.get('team_umsatz_monat', 0)),
+            team_umsatz_ytd=float(d.get('team_umsatz_ytd', 0)),
+            team_ag_anteil_monat=float(d.get('team_ag_anteil_monat', 0)),
+            team_ag_anteil_ytd=float(d.get('team_ag_anteil_ytd', 0)),
+            team_rueckbelastung_monat=float(d.get('team_rueckbelastung_monat', 0)),
+            team_rueckbelastung_ytd=float(d.get('team_rueckbelastung_ytd', 0)),
+            team_members=members,
+        )
+
+
+@dataclass
+class PerformanceData:
+    """Wrapper fuer alle 3 Ebenen der Erfolgsauswertung."""
+    levels: List[str] = field(default_factory=list)
+    mitarbeiter: Optional[PerformanceMitarbeiter] = None
+    acencia: Optional[PerformanceAcencia] = None
+    fuehrungskraft: Optional[PerformanceFuehrungskraft] = None
+
+    @classmethod
+    def from_dict(cls, d: Dict) -> 'PerformanceData':
+        ma = PerformanceMitarbeiter.from_dict(d['mitarbeiter']) if d.get('mitarbeiter') else None
+        ac = PerformanceAcencia.from_dict(d['acencia']) if d.get('acencia') else None
+        fk = PerformanceFuehrungskraft.from_dict(d['fuehrungskraft']) if d.get('fuehrungskraft') else None
+        return cls(
+            levels=d.get('levels', []),
+            mitarbeiter=ma,
+            acencia=ac,
+            fuehrungskraft=fk,
         )

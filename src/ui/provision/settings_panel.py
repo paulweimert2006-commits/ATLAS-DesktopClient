@@ -1,13 +1,12 @@
 """
-Provisions-Einstellungen Panel - Gefahrenzone mit Reset-Funktion.
+Provisions-Einstellungen Panel.
 
-Ermoeglicht das Zuruecksetzen aller Import-Daten fuer einen kompletten Neuimport.
-Mitarbeiter, Modelle und Vermittler-Zuordnungen bleiben erhalten.
+Allgemeine PM-Einstellungen (Default-Vermittler) und Gefahrenzone (Reset).
 """
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QFrame, QDialog, QProgressBar, QSizePolicy,
+    QFrame, QDialog, QProgressBar, QSizePolicy, QComboBox,
 )
 from PySide6.QtCore import Signal, Qt, QTimer, QThread
 
@@ -22,6 +21,42 @@ from i18n import de as texts
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+class _SettingsLoadWorker(QThread):
+    """Laedt PM-Settings und Mitarbeiterliste parallel."""
+    finished = Signal(dict, list)
+    error = Signal(str)
+
+    def __init__(self, api):
+        super().__init__()
+        self._api = api
+
+    def run(self):
+        try:
+            settings = self._api.get_pm_settings()
+            employees = self._api.get_employees()
+            self.finished.emit(settings, employees)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+class _SettingsSaveWorker(QThread):
+    """Speichert PM-Settings."""
+    finished = Signal(bool)
+    error = Signal(str)
+
+    def __init__(self, api, settings: dict):
+        super().__init__()
+        self._api = api
+        self._settings = settings
+
+    def run(self):
+        try:
+            ok = self._api.update_pm_settings(self._settings)
+            self.finished.emit(ok)
+        except Exception as e:
+            self.error.emit(str(e))
 
 
 class _ResetWorker(QThread):
@@ -172,7 +207,7 @@ class ResetConfirmDialog(QDialog):
 
 
 class SettingsPanel(QWidget):
-    """Einstellungen-Panel mit Gefahrenzone fuer Daten-Reset."""
+    """Einstellungen-Panel: Default-Vermittler + Gefahrenzone."""
 
     def __init__(self, api: ProvisionAPI):
         super().__init__()
@@ -180,7 +215,18 @@ class SettingsPanel(QWidget):
         self._presenter = None
         self._toast_manager = None
         self._reset_worker = None
+        self._settings_load_worker = None
+        self._settings_save_worker = None
+        self._employees = []
+        self._current_default_berater_id = None
+        self._initial_load_done = False
         self._setup_ui()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not self._initial_load_done:
+            self._initial_load_done = True
+            self._load_settings()
 
     @property
     def _backend(self):
@@ -199,6 +245,9 @@ class SettingsPanel(QWidget):
             color: {PRIMARY_900};
         """)
         layout.addWidget(title)
+
+        # ── Allgemeine Einstellungen ──
+        self._build_general_settings(layout)
 
         layout.addStretch()
 
@@ -305,6 +354,181 @@ class SettingsPanel(QWidget):
 
         layout.addStretch()
 
+    # ── General Settings ──
+
+    def _build_general_settings(self, parent_layout: QVBoxLayout):
+        frame = QFrame()
+        frame.setStyleSheet(f"""
+            QFrame {{
+                background-color: {PRIMARY_0};
+                border: 1px solid #e2e8f0;
+                border-radius: 12px;
+            }}
+        """)
+
+        fl = QVBoxLayout(frame)
+        fl.setContentsMargins(24, 24, 24, 24)
+        fl.setSpacing(16)
+
+        section_title = QLabel(texts.PM_SETTINGS_SECTION_GENERAL)
+        section_title.setStyleSheet(f"""
+            font-family: {FONT_HEADLINE};
+            font-size: 14pt;
+            font-weight: 700;
+            color: {PRIMARY_900};
+        """)
+        fl.addWidget(section_title)
+
+        sep = QFrame()
+        sep.setFixedHeight(1)
+        sep.setStyleSheet("background-color: #e2e8f0;")
+        fl.addWidget(sep)
+
+        row = QHBoxLayout()
+        row.setSpacing(16)
+
+        info_col = QVBoxLayout()
+        info_col.setSpacing(4)
+
+        lbl = QLabel(texts.PM_SETTINGS_DEFAULT_BERATER)
+        lbl.setStyleSheet(f"""
+            font-family: {FONT_BODY};
+            font-size: {FONT_SIZE_BODY};
+            font-weight: 600;
+            color: {PRIMARY_900};
+        """)
+        info_col.addWidget(lbl)
+
+        hint = QLabel(texts.PM_SETTINGS_DEFAULT_BERATER_HINT)
+        hint.setWordWrap(True)
+        hint.setStyleSheet(f"""
+            font-family: {FONT_BODY};
+            font-size: {FONT_SIZE_CAPTION};
+            color: {PRIMARY_500};
+            line-height: 1.4;
+        """)
+        info_col.addWidget(hint)
+
+        row.addLayout(info_col, 1)
+
+        right_col = QVBoxLayout()
+        right_col.setSpacing(8)
+
+        self._berater_combo = QComboBox()
+        self._berater_combo.setMinimumWidth(260)
+        self._berater_combo.setMinimumHeight(40)
+        self._berater_combo.setStyleSheet(f"""
+            QComboBox {{
+                font-family: {FONT_BODY};
+                font-size: {FONT_SIZE_BODY};
+                padding: 6px 12px;
+                border: 1px solid #cbd5e1;
+                border-radius: 6px;
+                background-color: white;
+                color: {PRIMARY_900};
+            }}
+            QComboBox:hover {{
+                border-color: {ACCENT_500};
+            }}
+            QComboBox::drop-down {{
+                border: none;
+                padding-right: 8px;
+            }}
+        """)
+        self._berater_combo.addItem(texts.PM_SETTINGS_DEFAULT_BERATER_NONE, None)
+        right_col.addWidget(self._berater_combo)
+
+        self._save_settings_btn = QPushButton(texts.PM_SETTINGS_SAVE_BTN)
+        self._save_settings_btn.setMinimumHeight(40)
+        self._save_settings_btn.setCursor(Qt.PointingHandCursor)
+        self._save_settings_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {ACCENT_500};
+                border: none;
+                border-radius: 6px;
+                padding: 8px 24px;
+                font-family: {FONT_BODY};
+                font-size: {FONT_SIZE_BODY};
+                font-weight: 600;
+                color: white;
+            }}
+            QPushButton:hover {{
+                background-color: #2563eb;
+            }}
+            QPushButton:disabled {{
+                background-color: #93c5fd;
+            }}
+        """)
+        self._save_settings_btn.clicked.connect(self._on_save_settings)
+        right_col.addWidget(self._save_settings_btn)
+
+        row.addLayout(right_col)
+        fl.addLayout(row)
+
+        parent_layout.addWidget(frame)
+
+    def _load_settings(self):
+        if self._settings_load_worker and self._settings_load_worker.isRunning():
+            return
+        self._save_settings_btn.setEnabled(False)
+        self._settings_load_worker = _SettingsLoadWorker(self._backend)
+        self._settings_load_worker.finished.connect(self._on_settings_loaded)
+        self._settings_load_worker.error.connect(self._on_settings_load_error)
+        self._settings_load_worker.start()
+
+    def _on_settings_loaded(self, settings: dict, employees: list):
+        self._employees = employees
+        self._berater_combo.clear()
+        self._berater_combo.addItem(texts.PM_SETTINGS_DEFAULT_BERATER_NONE, None)
+
+        for emp in sorted(employees, key=lambda e: e.name):
+            if emp.is_active:
+                self._berater_combo.addItem(emp.name, emp.id)
+
+        current_id = settings.get('xempus_default_berater_id')
+        self._current_default_berater_id = int(current_id) if current_id else None
+
+        if self._current_default_berater_id:
+            for i in range(self._berater_combo.count()):
+                if self._berater_combo.itemData(i) == self._current_default_berater_id:
+                    self._berater_combo.setCurrentIndex(i)
+                    break
+
+        self._save_settings_btn.setEnabled(True)
+
+    def _on_settings_load_error(self, error: str):
+        logger.error(f"Settings laden fehlgeschlagen: {error}")
+        self._save_settings_btn.setEnabled(True)
+
+    def _on_save_settings(self):
+        selected_id = self._berater_combo.currentData()
+        value = str(selected_id) if selected_id else ''
+
+        self._save_settings_btn.setEnabled(False)
+        self._settings_save_worker = _SettingsSaveWorker(
+            self._backend, {'xempus_default_berater_id': value})
+        self._settings_save_worker.finished.connect(self._on_settings_saved)
+        self._settings_save_worker.error.connect(self._on_settings_save_error)
+        self._settings_save_worker.start()
+
+    def _on_settings_saved(self, ok: bool):
+        self._save_settings_btn.setEnabled(True)
+        if ok:
+            self._current_default_berater_id = self._berater_combo.currentData()
+            if self._toast_manager:
+                self._toast_manager.show_success(texts.PM_SETTINGS_SAVED)
+        else:
+            if self._toast_manager:
+                self._toast_manager.show_error(texts.PM_SETTINGS_SAVE_ERROR)
+
+    def _on_settings_save_error(self, error: str):
+        self._save_settings_btn.setEnabled(True)
+        logger.error(f"Settings speichern fehlgeschlagen: {error}")
+        if self._toast_manager:
+            self._toast_manager.show_error(texts.PM_SETTINGS_SAVE_ERROR)
+
+    # ── Reset (Gefahrenzone) ──
+
     def _on_reset_clicked(self):
         dialog = ResetConfirmDialog(self)
         if dialog.exec() == QDialog.Accepted:
@@ -342,4 +566,4 @@ class SettingsPanel(QWidget):
         logger.error(f"Provision-Reset Fehler: {error}")
 
     def refresh(self):
-        pass
+        self._load_settings()

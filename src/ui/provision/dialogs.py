@@ -9,7 +9,7 @@ MatchContractDialog wird von mehreren Panels verwendet.
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QTableView,
     QHeaderView, QFrame, QPushButton, QLineEdit,
-    QDialogButtonBox, QMessageBox,
+    QDialogButtonBox, QMessageBox, QTextEdit, QDoubleSpinBox,
 )
 from PySide6.QtCore import Qt, QTimer
 from typing import Optional
@@ -345,3 +345,207 @@ class DiffDialog(QDialog):
         btn_box = QDialogButtonBox(QDialogButtonBox.Close)
         btn_box.rejected.connect(self.reject)
         layout.addWidget(btn_box)
+
+
+# =============================================================================
+# OverrideDialog (Betragskorrektur)
+# =============================================================================
+
+
+class OverrideDialog(QDialog):
+    """Dialog zum Setzen einer Betragskorrektur fuer die Abrechnung."""
+
+    def __init__(self, commission: Commission, parent=None):
+        super().__init__(parent)
+        self._comm = commission
+        self._amount: Optional[float] = None
+        self._reason: Optional[str] = None
+        self.setWindowTitle(texts.PM_OVERRIDE_TITLE)
+        self.setMinimumWidth(420)
+        self._setup_ui()
+
+    def _setup_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(14)
+
+        info_frame = QFrame()
+        info_frame.setStyleSheet(f"""
+            QFrame {{
+                background-color: {BG_SECONDARY};
+                border: 1px solid {BORDER_DEFAULT};
+                border-radius: 8px;
+                padding: 12px;
+            }}
+        """)
+        info_layout = QVBoxLayout(info_frame)
+        info_layout.setSpacing(6)
+
+        orig_label = QLabel(
+            f"<b>{texts.PM_OVERRIDE_ORIGINAL}:</b> {format_eur(self._comm.betrag)}"
+        )
+        orig_label.setStyleSheet(f"color: {PRIMARY_900}; border: none;")
+        info_layout.addWidget(orig_label)
+
+        context = QLabel(
+            f"{self._comm.versicherer or ''} | {self._comm.vsnr} | {self._comm.versicherungsnehmer or ''}"
+        )
+        context.setStyleSheet(
+            f"color: {PRIMARY_500}; font-size: {FONT_SIZE_CAPTION}; border: none;"
+        )
+        info_layout.addWidget(context)
+        layout.addWidget(info_frame)
+
+        amount_label = QLabel(texts.PM_OVERRIDE_AMOUNT)
+        amount_label.setStyleSheet(f"font-weight: 600; color: {PRIMARY_900};")
+        layout.addWidget(amount_label)
+
+        self._amount_spin = QDoubleSpinBox()
+        self._amount_spin.setRange(-9999999.99, 9999999.99)
+        self._amount_spin.setDecimals(2)
+        self._amount_spin.setSuffix(" \u20ac")
+        self._amount_spin.setFixedHeight(36)
+        current = self._comm.amount_settled if self._comm.is_overridden else self._comm.betrag
+        self._amount_spin.setValue(current)
+        self._amount_spin.setStyleSheet(f"""
+            QDoubleSpinBox {{
+                border: 1px solid {BORDER_DEFAULT}; border-radius: 6px;
+                padding: 4px 8px; font-size: {FONT_SIZE_BODY};
+            }}
+            QDoubleSpinBox:focus {{ border-color: {ACCENT_500}; }}
+        """)
+        layout.addWidget(self._amount_spin)
+
+        reason_label = QLabel(texts.PM_OVERRIDE_REASON)
+        reason_label.setStyleSheet(f"font-weight: 600; color: {PRIMARY_900};")
+        layout.addWidget(reason_label)
+
+        self._reason_edit = QTextEdit()
+        self._reason_edit.setPlaceholderText(texts.PM_OVERRIDE_REASON_PLACEHOLDER)
+        self._reason_edit.setMaximumHeight(80)
+        self._reason_edit.setStyleSheet(f"""
+            QTextEdit {{
+                border: 1px solid {BORDER_DEFAULT}; border-radius: 6px;
+                padding: 6px; font-size: {FONT_SIZE_BODY};
+            }}
+            QTextEdit:focus {{ border-color: {ACCENT_500}; }}
+        """)
+        if self._comm.amount_override_reason:
+            self._reason_edit.setPlainText(self._comm.amount_override_reason)
+        layout.addWidget(self._reason_edit)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+
+        save_btn = QPushButton(texts.PM_OVERRIDE_SET)
+        save_btn.setFixedHeight(36)
+        save_btn.setStyleSheet(f"""
+            QPushButton {{ background-color: {ACCENT_500}; color: white; border: none;
+                border-radius: 6px; padding: 8px 24px; font-weight: 600; }}
+            QPushButton:hover {{ background-color: #e88a2d; }}
+        """)
+        save_btn.clicked.connect(self._on_save)
+        btn_row.addWidget(save_btn)
+
+        cancel_btn = QPushButton(texts.PROVISION_MATCH_DLG_CANCEL)
+        cancel_btn.setFixedHeight(36)
+        cancel_btn.setStyleSheet(get_secondary_button_style())
+        cancel_btn.clicked.connect(self.reject)
+        btn_row.addWidget(cancel_btn)
+
+        layout.addLayout(btn_row)
+
+    def _on_save(self):
+        self._amount = round(self._amount_spin.value(), 2)
+        self._reason = self._reason_edit.toPlainText().strip() or None
+        self.accept()
+
+    @property
+    def amount(self) -> Optional[float]:
+        return self._amount
+
+    @property
+    def reason(self) -> Optional[str]:
+        return self._reason
+
+
+# =============================================================================
+# NoteDialog (Notiz bearbeiten)
+# =============================================================================
+
+
+class NoteDialog(QDialog):
+    """Dialog zum Bearbeiten einer Provisions-Notiz."""
+
+    def __init__(self, commission: Commission, parent=None):
+        super().__init__(parent)
+        self._comm = commission
+        self._note_text: Optional[str] = None
+        self.setWindowTitle(texts.PM_NOTE_TITLE)
+        self.setMinimumWidth(420)
+        self._setup_ui()
+
+    def _setup_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(14)
+
+        context = QLabel(
+            f"{self._comm.versicherer or ''} | {self._comm.vsnr} | "
+            f"{format_eur(self._comm.betrag)}"
+        )
+        context.setStyleSheet(f"color: {PRIMARY_500}; font-size: {FONT_SIZE_CAPTION};")
+        layout.addWidget(context)
+
+        self._note_edit = QTextEdit()
+        self._note_edit.setPlaceholderText(texts.PM_NOTE_PLACEHOLDER)
+        self._note_edit.setMinimumHeight(120)
+        self._note_edit.setStyleSheet(f"""
+            QTextEdit {{
+                border: 1px solid {BORDER_DEFAULT}; border-radius: 6px;
+                padding: 8px; font-size: {FONT_SIZE_BODY};
+            }}
+            QTextEdit:focus {{ border-color: {ACCENT_500}; }}
+        """)
+        if self._comm.note:
+            self._note_edit.setPlainText(self._comm.note)
+        layout.addWidget(self._note_edit)
+
+        if self._comm.note_updater_name and self._comm.note_updated_at:
+            meta = QLabel(texts.PM_NOTE_UPDATED_BY.format(
+                name=self._comm.note_updater_name,
+                date=self._comm.note_updated_at,
+            ))
+            meta.setStyleSheet(
+                f"color: {PRIMARY_500}; font-size: {FONT_SIZE_CAPTION}; font-style: italic;"
+            )
+            layout.addWidget(meta)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+
+        save_btn = QPushButton(texts.PM_NOTE_SAVE)
+        save_btn.setFixedHeight(36)
+        save_btn.setStyleSheet(f"""
+            QPushButton {{ background-color: {ACCENT_500}; color: white; border: none;
+                border-radius: 6px; padding: 8px 24px; font-weight: 600; }}
+            QPushButton:hover {{ background-color: #e88a2d; }}
+        """)
+        save_btn.clicked.connect(self._on_save)
+        btn_row.addWidget(save_btn)
+
+        cancel_btn = QPushButton(texts.PROVISION_MATCH_DLG_CANCEL)
+        cancel_btn.setFixedHeight(36)
+        cancel_btn.setStyleSheet(get_secondary_button_style())
+        cancel_btn.clicked.connect(self.reject)
+        btn_row.addWidget(cancel_btn)
+
+        layout.addLayout(btn_row)
+
+    def _on_save(self):
+        self._note_text = self._note_edit.toPlainText().strip()
+        self.accept()
+
+    @property
+    def note(self) -> Optional[str]:
+        return self._note_text

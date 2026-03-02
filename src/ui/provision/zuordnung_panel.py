@@ -380,7 +380,7 @@ class ZuordnungPanel(QWidget):
 
         if vu_name:
             vu_lbl = QLabel(texts.PROVISION_MAPPING_DLG_VU_NAME.format(name=vu_name))
-            vu_lbl.setStyleSheet(f"color: {PRIMARY_500}; font-size: {FONT_SIZE_CAPTION};")
+            vu_lbl.setStyleSheet(f"font-size: {FONT_SIZE_CAPTION};")
             vu_lbl.setWordWrap(True)
             form.addRow(vu_lbl)
 
@@ -394,7 +394,7 @@ class ZuordnungPanel(QWidget):
         berater_combo.addItem("\u2014", None)
         employees = self._backend.get_employees()
         for emp in employees:
-            if emp.is_active and emp.role in ('consulter', 'teamleiter'):
+            if emp.is_active and emp.role in ('consulter', 'teamleiter', 'geschaeftsfuehrer'):
                 berater_combo.addItem(emp.name, emp.id)
         form.addRow(texts.PROVISION_MAPPING_DLG_SELECT, berater_combo)
 

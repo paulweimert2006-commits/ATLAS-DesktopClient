@@ -299,6 +299,86 @@ test_db_complex()
 
 
 # ==============================================================================
+# Company Deduction (VU-Abzug) Tests
+# ==============================================================================
+
+print("\n[4] Company Deduction (VU-Abzug)")
+print("-" * 40)
+
+
+@test("company_deduction: Allianz 2 Promille korrekt berechnet")
+def test_allianz_deduction_2_permille():
+    betrag = 10000.0
+    value_permille = 2.0
+    deduction = round(betrag * value_permille / 1000, 2)
+    assert deduction == 20.00, f"Erwartet 20.00, erhalten {deduction}"
+
+
+test_allianz_deduction_2_permille()
+
+
+@test("company_deduction: Nicht-Allianz hat keinen Abzug")
+def test_non_allianz_no_deduction():
+    providers_without_deduction = ["SwissLife", "VB", "HDI", ""]
+    for provider in providers_without_deduction:
+        deduction = 0.0
+        assert deduction == 0.0, f"Provider '{provider}' sollte keinen Abzug haben"
+
+
+test_non_allianz_no_deduction()
+
+
+@test("company_deduction: Vor Stichtag kein Abzug")
+def test_before_effective_date():
+    effective_from = "2026-03-01"
+    test_date = "2026-02-28"
+    assert test_date < effective_from, "Datum vor Stichtag muss kleiner sein"
+    deduction = 0.0 if test_date < effective_from else round(5000.0 * 2 / 1000, 2)
+    assert deduction == 0.0, f"Vor Stichtag darf kein Abzug erfolgen, erhalten {deduction}"
+
+
+test_before_effective_date()
+
+
+@test("company_deduction: Negativer Betrag hat keinen Abzug")
+def test_negative_amount_no_deduction():
+    betrag = -500.0
+    deduction = round(betrag * 2 / 1000, 2) if betrag > 0 else 0.0
+    assert deduction == 0.0, f"Rueckbelastungen duerfen keinen Abzug haben, erhalten {deduction}"
+
+
+test_negative_amount_no_deduction()
+
+
+@test("company_deduction: Split-Invariante berater + tl + ag == betrag")
+def test_split_invariant_with_deduction():
+    betrag = 10000.0
+    deduction = round(betrag * 2 / 1000, 2)
+    eff_betrag = betrag - deduction
+    rate = 80.0
+    tl_rate = 10.0
+
+    berater_brutto = round(eff_betrag * rate / 100, 2)
+    tl_anteil = round(berater_brutto * tl_rate / 100, 2)
+    berater_anteil = round(berater_brutto - tl_anteil, 2)
+    ag_anteil = round(betrag - berater_brutto, 2)
+
+    total = round(berater_anteil + tl_anteil + ag_anteil, 2)
+    assert total == betrag, (
+        f"Split-Invariante verletzt: {berater_anteil} + {tl_anteil} + {ag_anteil} = {total}, erwartet {betrag}"
+    )
+
+    assert deduction == 20.00
+    assert berater_brutto == 7984.00, f"berater_brutto: erwartet 7984.00, erhalten {berater_brutto}"
+    assert tl_anteil == 798.40, f"tl_anteil: erwartet 798.40, erhalten {tl_anteil}"
+    assert berater_anteil == 7185.60, f"berater_anteil: erwartet 7185.60, erhalten {berater_anteil}"
+    assert ag_anteil == 2016.00, f"ag_anteil: erwartet 2016.00, erhalten {ag_anteil}"
+
+
+test_split_invariant_with_deduction()
+
+
+# ==============================================================================
 # ERGEBNIS
 # ==============================================================================
 

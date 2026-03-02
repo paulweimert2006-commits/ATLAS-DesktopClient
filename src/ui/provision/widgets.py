@@ -10,7 +10,7 @@ FilterChips, KPI-Karten, etc.).
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QLabel, QFrame,
     QPushButton, QStyledItemDelegate, QStyle, QMenu,
-    QSizePolicy, QScrollArea,
+    QSizePolicy, QScrollArea, QLineEdit, QComboBox, QHeaderView,
 )
 from PySide6.QtCore import Qt, Signal, QRect, QSize, QModelIndex, QPoint, QPointF, QTimer
 from PySide6.QtGui import QPainter, QColor, QFont, QPen, QFontMetrics
@@ -818,3 +818,90 @@ class ProvisionLoadingOverlay(QWidget):
         painter = QPainter(self)
         painter.fillRect(self.rect(), QColor(255, 255, 255, 200))
         super().paintEvent(event)
+
+
+# =============================================================================
+# ColumnFilterRow – Excel-Stil Spaltenfilter
+# =============================================================================
+
+class ColumnFilterRow(QWidget):
+    """Zeile mit einem Filter-Widget pro Tabellenspalte (Excel-Stil).
+
+    Spalten in ``combo_options`` erhalten eine QComboBox mit festen Werten,
+    alle anderen eine QLineEdit.  ``skip_columns`` werden uebersprungen
+    (kein Widget, z.B. Menue-Spalte).
+    """
+
+    column_filter_changed = Signal(int, str)
+
+    def __init__(
+        self,
+        column_count: int,
+        combo_options: dict[int, list[str]] | None = None,
+        skip_columns: set[int] | None = None,
+        parent=None,
+    ):
+        super().__init__(parent)
+        self._widgets: list[QWidget | None] = []
+        self._combo_options = combo_options or {}
+        self._skip = skip_columns or set()
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        filter_style = (
+            f"font-size: {FONT_SIZE_CAPTION}; font-family: {FONT_BODY}; "
+            f"border: 1px solid {BORDER_DEFAULT}; border-radius: 3px; "
+            f"padding: 2px 4px; background: white; color: {PRIMARY_900};"
+        )
+        combo_style = (
+            f"font-size: {FONT_SIZE_CAPTION}; font-family: {FONT_BODY}; "
+            f"border: 1px solid {BORDER_DEFAULT}; border-radius: 3px; "
+            f"padding: 1px 2px; background: white; color: {PRIMARY_900};"
+        )
+
+        for col in range(column_count):
+            if col in self._skip:
+                self._widgets.append(None)
+                spacer = QWidget()
+                spacer.setFixedWidth(0)
+                layout.addWidget(spacer)
+                continue
+
+            if col in self._combo_options:
+                w = QComboBox()
+                w.setStyleSheet(combo_style)
+                w.setFixedHeight(24)
+                w.addItem(texts.PM_FILTER_ALL_OPTION, "")
+                for opt in self._combo_options[col]:
+                    w.addItem(opt, opt)
+                w.currentIndexChanged.connect(
+                    lambda _idx, c=col, cb=w: self.column_filter_changed.emit(c, cb.currentData() or ""))
+            else:
+                w = QLineEdit()
+                w.setPlaceholderText(texts.PM_FILTER_COLUMN_PLACEHOLDER)
+                w.setStyleSheet(filter_style)
+                w.setFixedHeight(24)
+                w.textChanged.connect(lambda txt, c=col: self.column_filter_changed.emit(c, txt))
+
+            self._widgets.append(w)
+            layout.addWidget(w)
+
+    def sync_widths(self, header: QHeaderView) -> None:
+        """Spaltenbreiten an den QHeaderView anpassen."""
+        for col, w in enumerate(self._widgets):
+            if w is None:
+                continue
+            section_width = header.sectionSize(col)
+            w.setFixedWidth(max(section_width - 2, 20))
+
+    def clear_all(self) -> None:
+        """Alle Filter-Eingaben leeren (ohne Signal-Blockierung)."""
+        for col, w in enumerate(self._widgets):
+            if w is None:
+                continue
+            if isinstance(w, QComboBox):
+                w.setCurrentIndex(0)
+            elif isinstance(w, QLineEdit):
+                w.clear()

@@ -1560,6 +1560,8 @@ class MainHub(QMainWindow):
                     return
         
         # Worker-Threads aufräumen
+        if self._provision_view and hasattr(self._provision_view, 'cleanup'):
+            self._provision_view.cleanup()
         if self._bipro_view and hasattr(self._bipro_view, 'cleanup'):
             self._bipro_view.cleanup()
         

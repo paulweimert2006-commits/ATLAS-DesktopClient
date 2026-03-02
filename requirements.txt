@@ -44,6 +44,12 @@ keyring>=24.0.0,<26.0.0
 # Token-Zaehlung fuer KI-Kostenberechnung
 tiktoken>=0.5.0,<1.0.0
 
+# PDF-Generierung (Abrechnungs-Export)
+reportlab>=4.0,<5.0
+
+# Word-Dokument-Generierung (Abrechnungs-Export)
+python-docx>=1.0,<2.0
+
 # Fuer Packaging
 pyinstaller>=6.0.0,<7.0.0
 
