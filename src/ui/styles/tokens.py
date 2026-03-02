@@ -120,9 +120,10 @@ PILL_COLORS = {
 }
 
 ROLE_BADGE_COLORS = {
-    "consulter":   {"bg": "#dbeafe", "text": "#1e40af"},
-    "teamleiter":  {"bg": "#fff3e0", "text": "#e65100"},
-    "backoffice":  {"bg": "#f3f4f6", "text": "#374151"},
+    "consulter":          {"bg": "#dbeafe", "text": "#1e40af"},
+    "teamleiter":         {"bg": "#fff3e0", "text": "#e65100"},
+    "backoffice":         {"bg": "#f3f4f6", "text": "#374151"},
+    "geschaeftsfuehrer":  {"bg": "#ede9fe", "text": "#5b21b6"},
 }
 
 ART_BADGE_COLORS = {

@@ -1,7 +1,7 @@
 """
 Provisionsmanagement Hub - Hauptansicht mit eigener Sidebar.
 
-UX-Redesign v3.2: 7 Panels in 2 Sektionen (DATEN / VERWALTUNG),
+UX-Redesign v3.2: 10 Panels in 2 Sektionen (DATEN / VERWALTUNG),
 Workflow-orientierte Reihenfolge, klare Benennung.
 """
 
@@ -22,6 +22,7 @@ from presenters.provision.clearance_presenter import ClearancePresenter
 from presenters.provision.distribution_presenter import DistributionPresenter
 from presenters.provision.payouts_presenter import PayoutsPresenter
 from presenters.provision.free_commission_presenter import FreeCommissionPresenter
+from presenters.provision.performance_presenter import PerformancePresenter
 from ui.styles.tokens import (
     SIDEBAR_BG, SIDEBAR_TEXT, SIDEBAR_HOVER, SIDEBAR_WIDTH_INT,
     ACCENT_500, PRIMARY_500, PRIMARY_0, PRIMARY_900,
@@ -79,22 +80,24 @@ class ProvisionNavButton(QPushButton):
 
 
 class ProvisionHub(QWidget):
-    """Provisionsmanagement-Hauptansicht mit eigener Sidebar und 9 Panels."""
+    """Provisionsmanagement-Hauptansicht mit eigener Sidebar und 10 Panels."""
 
     back_requested = Signal()
 
     PANEL_OVERVIEW = 0
-    PANEL_IMPORT = 1
-    PANEL_VU = 2
-    PANEL_XEMPUS = 3
-    PANEL_FREE = 4
-    PANEL_CLEARANCE = 5
-    PANEL_DISTRIBUTION = 6
-    PANEL_PAYOUTS = 7
-    PANEL_SETTINGS = 8
+    PANEL_PERFORMANCE = 1
+    PANEL_IMPORT = 2
+    PANEL_VU = 3
+    PANEL_XEMPUS = 4
+    PANEL_FREE = 5
+    PANEL_CLEARANCE = 6
+    PANEL_DISTRIBUTION = 7
+    PANEL_PAYOUTS = 8
+    PANEL_SETTINGS = 9
 
     PANEL_RUNS = PANEL_IMPORT
     PANEL_POSITIONS = PANEL_VU
+    _TOTAL_PANELS = 10
 
     def __init__(self, api_client: APIClient, auth_api: AuthAPI):
         super().__init__()
@@ -114,6 +117,7 @@ class ProvisionHub(QWidget):
             'distribution': DistributionPresenter(self._repository),
             'payouts': PayoutsPresenter(self._repository),
             'free_commission': FreeCommissionPresenter(self._repository),
+            'performance': PerformancePresenter(self._repository),
         }
 
         user = self._auth_api.current_user
@@ -173,6 +177,7 @@ class ProvisionHub(QWidget):
             return btn
 
         add_nav("\u203A", texts.PROVISION_PANEL_OVERVIEW, texts.PROVISION_PANEL_OVERVIEW_DESC, self.PANEL_OVERVIEW)
+        add_nav("\u203A", texts.PM_PERF_PANEL_TITLE, texts.PM_PERF_PANEL_DESC, self.PANEL_PERFORMANCE)
 
         section_daten = QLabel(f"  {texts.PROVISION_SECTION_DATA}")
         section_daten.setStyleSheet(f"""
@@ -239,7 +244,7 @@ class ProvisionHub(QWidget):
         root.addWidget(sidebar)
 
         self._content_stack = QStackedWidget()
-        for i in range(9):
+        for i in range(self._TOTAL_PANELS):
             self._content_stack.addWidget(self._create_panel_placeholder(i))
         root.addWidget(self._content_stack)
 
@@ -272,6 +277,10 @@ class ProvisionHub(QWidget):
                 from ui.provision.dashboard_panel import DashboardPanel
                 panel = DashboardPanel()
                 panel.set_presenter(self._presenters['dashboard'])
+            elif index == self.PANEL_PERFORMANCE:
+                from ui.provision.performance_panel import PerformancePanel
+                panel = PerformancePanel()
+                panel.set_presenter(self._presenters['performance'])
             elif index == self.PANEL_IMPORT:
                 from ui.provision.abrechnungslaeufe_panel import AbrechnungslaeufPanel
                 panel = AbrechnungslaeufPanel()

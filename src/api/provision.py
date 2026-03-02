@@ -26,6 +26,7 @@ from domain.provision.entities import (  # noqa: F401 – Re-Export
     ImportBatch,
     BeraterAbrechnung,
     VermittlerMapping,
+    PerformanceData,
 )
 from infrastructure.api.provision_repository import ProvisionRepository
 
@@ -581,6 +582,22 @@ class ProvisionAPI:
             logger.error(f"Fehler beim Laden der Klaerfall-Counts: {e}")
         return {'total': 0, 'no_contract': 0, 'no_berater': 0,
                 'no_model': 0, 'no_split': 0}
+
+    def get_performance(self, von: str = None, bis: str = None,
+                        monat: str = None) -> Optional[PerformanceData]:
+        try:
+            params = {}
+            if von and bis:
+                params['von'] = von
+                params['bis'] = bis
+            elif monat:
+                params['monat'] = monat
+            resp = self.client.get('/pm/dashboard/performance', params=params)
+            if resp.get('success'):
+                return PerformanceData.from_dict(resp.get('data', {}))
+        except APIError as e:
+            logger.error(f"Fehler beim Laden der Erfolgsauswertung: {e}")
+        return None
 
     # ── Audit ──
 

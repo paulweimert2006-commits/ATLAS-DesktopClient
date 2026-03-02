@@ -13,6 +13,7 @@ from .entities import (
     DashboardSummary, ImportResult, ImportBatch,
     BeraterAbrechnung, VermittlerMapping, ContractSearchResult,
     PaginationInfo, RecalcSummary, FreeCommission,
+    PerformanceData,
 )
 
 
@@ -213,3 +214,12 @@ class IFreeCommissionView(Protocol):
     def show_loading(self, loading: bool) -> None: ...
     def show_error(self, message: str) -> None: ...
     def show_success(self, message: str) -> None: ...
+
+
+@runtime_checkable
+class IPerformanceView(Protocol):
+    """Interface fuer das Erfolgsauswertung-Panel."""
+
+    def show_performance(self, data: PerformanceData) -> None: ...
+    def show_loading(self, loading: bool) -> None: ...
+    def show_error(self, message: str) -> None: ...

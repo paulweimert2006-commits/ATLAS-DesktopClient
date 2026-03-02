@@ -164,7 +164,7 @@ class XempusPanel(QWidget):
         self._filter_berater.clear()
         self._filter_berater.addItem(texts.PROVISION_POS_FILTER_ALL, 0)
         for emp in sorted(self._employees, key=lambda e: e.name):
-            if emp.is_active and emp.role in ('consulter', 'teamleiter'):
+            if emp.is_active and emp.role in ('consulter', 'teamleiter', 'geschaeftsfuehrer'):
                 self._filter_berater.addItem(emp.name, emp.id)
         if old_berater:
             idx = self._filter_berater.findData(old_berater)

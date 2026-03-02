@@ -965,7 +965,7 @@ class ProvisionspositionenPanel(QWidget):
         berater_combo.addItem("\u2014", None)
         self._employees_cache = self._backend.get_employees()
         for emp in self._employees_cache:
-            if emp.is_active and emp.role in ('consulter', 'teamleiter'):
+            if emp.is_active and emp.role in ('consulter', 'teamleiter', 'geschaeftsfuehrer'):
                 berater_combo.addItem(emp.name, emp.id)
         form.addRow(texts.PROVISION_MAPPING_DLG_SELECT, berater_combo)
 

@@ -153,6 +153,7 @@ class VerteilschluesselPanel(QWidget):
             'consulter': texts.PROVISION_EMP_ROLE_CONSULTER,
             'teamleiter': texts.PROVISION_EMP_ROLE_TEAMLEITER,
             'backoffice': texts.PROVISION_EMP_ROLE_BACKOFFICE,
+            'geschaeftsfuehrer': texts.PROVISION_EMP_ROLE_GESCHAEFTSFUEHRER,
         })
         self._emp_table.setItemDelegateForColumn(1, role_del)
         self._role_del = role_del
@@ -338,6 +339,7 @@ class VerteilschluesselPanel(QWidget):
         role_combo.addItem(texts.PROVISION_EMP_ROLE_CONSULTER, "consulter")
         role_combo.addItem(texts.PROVISION_EMP_ROLE_TEAMLEITER, "teamleiter")
         role_combo.addItem(texts.PROVISION_EMP_ROLE_BACKOFFICE, "backoffice")
+        role_combo.addItem(texts.PROVISION_EMP_ROLE_GESCHAEFTSFUEHRER, "geschaeftsfuehrer")
         form.addRow(texts.PROVISION_EMP_DLG_ROLE, role_combo)
 
         model_combo = QComboBox()
@@ -387,7 +389,7 @@ class VerteilschluesselPanel(QWidget):
         tl_combo = QComboBox()
         tl_combo.addItem("\u2014", None)
         for e in self._employees:
-            if e.role == 'teamleiter' and e.is_active:
+            if e.role in ('teamleiter', 'geschaeftsfuehrer') and e.is_active:
                 tl_combo.addItem(e.name, e.id)
         form.addRow(texts.PROVISION_EMP_DLG_TEAMLEITER, tl_combo)
 
@@ -454,6 +456,7 @@ class VerteilschluesselPanel(QWidget):
             (texts.PROVISION_EMP_ROLE_CONSULTER, "consulter"),
             (texts.PROVISION_EMP_ROLE_TEAMLEITER, "teamleiter"),
             (texts.PROVISION_EMP_ROLE_BACKOFFICE, "backoffice"),
+            (texts.PROVISION_EMP_ROLE_GESCHAEFTSFUEHRER, "geschaeftsfuehrer"),
         ]
         for label, val in roles:
             role_combo.addItem(label, val)
@@ -516,7 +519,7 @@ class VerteilschluesselPanel(QWidget):
         tl_combo = QComboBox()
         tl_combo.addItem("\u2014", None)
         for e in self._employees:
-            if e.role == 'teamleiter' and e.is_active and e.id != emp.id:
+            if e.role in ('teamleiter', 'geschaeftsfuehrer') and e.is_active and e.id != emp.id:
                 tl_combo.addItem(e.name, e.id)
                 if e.id == emp.teamleiter_id:
                     tl_combo.setCurrentIndex(tl_combo.count() - 1)

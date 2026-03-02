@@ -59,7 +59,7 @@ src/                           Python Desktop-App (~130 Dateien, ~63.000 Zeilen)
     admin/                     Admin-Bereich (16 Panels)
       panels/                  Einzelne Admin-Panels
     archive/                   Dokumentenarchiv (Workers)
-    provision/                 Provisionsmanagement (9 Panels)
+    provision/                 Provisionsmanagement (10 Panels)
     styles/                    Design-Tokens
   api/                         API-Client-Module (~22 Dateien)
     openrouter/                KI-Integration (Klassifikation, OCR)

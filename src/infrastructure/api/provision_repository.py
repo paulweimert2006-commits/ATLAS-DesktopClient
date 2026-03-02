@@ -14,7 +14,7 @@ from domain.provision.entities import (
     Commission, Contract, Employee, CommissionModel,
     DashboardSummary, ImportResult, ImportBatch,
     BeraterAbrechnung, VermittlerMapping, ContractSearchResult,
-    PaginationInfo, RecalcSummary,
+    PaginationInfo, RecalcSummary, PerformanceData,
 )
 
 logger = logging.getLogger(__name__)
@@ -187,6 +187,22 @@ class ProvisionRepository:
             logger.error(f"Fehler beim Laden der Klärfall-Counts: {e}")
         return {'total': 0, 'no_contract': 0, 'no_berater': 0,
                 'no_model': 0, 'no_split': 0}
+
+    def get_performance(self, von: str = None, bis: str = None,
+                        monat: str = None) -> Optional[PerformanceData]:
+        try:
+            params = {}
+            if von and bis:
+                params['von'] = von
+                params['bis'] = bis
+            elif monat:
+                params['monat'] = monat
+            resp = self._client.get('/pm/dashboard/performance', params=params)
+            if resp.get('success'):
+                return PerformanceData.from_dict(resp.get('data', {}))
+        except APIError as e:
+            logger.error(f"Fehler beim Laden der Erfolgsauswertung: {e}")
+        return None
 
     # ── Match-Suggestions ──
 

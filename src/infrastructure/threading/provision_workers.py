@@ -40,6 +40,25 @@ class DashboardLoadWorker(QThread):
             self.error.emit(str(e))
 
 
+class PerformanceLoadWorker(QThread):
+    """Laedt die Erfolgsauswertung (3 Ebenen) im Hintergrund."""
+    finished = Signal(object)
+    error = Signal(str)
+
+    def __init__(self, repo: ProvisionRepository, von: str = None, bis: str = None):
+        super().__init__()
+        self._repo = repo
+        self._von = von
+        self._bis = bis
+
+    def run(self):
+        try:
+            data = self._repo.get_performance(von=self._von, bis=self._bis)
+            self.finished.emit(data)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
 class BeraterDetailWorker(QThread):
     finished = Signal(int, str, dict, object)
     error = Signal(str)

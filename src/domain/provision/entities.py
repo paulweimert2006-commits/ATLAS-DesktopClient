@@ -530,3 +530,143 @@ class FreeCommission:
             can_edit=bool(d.get('can_edit', True)),
             splits=splits,
         )
+
+
+# ═══════════════════════════════════════════════════════════
+# Performance / Erfolgsauswertung
+# ═══════════════════════════════════════════════════════════
+
+
+@dataclass
+class PerformanceMitarbeiter:
+    """KPIs fuer die persoenliche Ebene (Level 1)."""
+    employee_id: int = 0
+    employee_name: str = ''
+    provision_monat: float = 0.0
+    provision_ytd: float = 0.0
+    rueckbelastung_monat: float = 0.0
+    rueckbelastung_ytd: float = 0.0
+    stornoquote_betrag: float = 0.0
+    stornoquote_vertraege: float = 0.0
+    total_contracts: int = 0
+    stornierte_contracts: int = 0
+    positionen_monat: int = 0
+    positionen_ytd: int = 0
+
+    @classmethod
+    def from_dict(cls, d: Dict) -> 'PerformanceMitarbeiter':
+        return cls(
+            employee_id=int(d.get('employee_id', 0)),
+            employee_name=d.get('employee_name', ''),
+            provision_monat=float(d.get('provision_monat', 0)),
+            provision_ytd=float(d.get('provision_ytd', 0)),
+            rueckbelastung_monat=float(d.get('rueckbelastung_monat', 0)),
+            rueckbelastung_ytd=float(d.get('rueckbelastung_ytd', 0)),
+            stornoquote_betrag=float(d.get('stornoquote_betrag', 0)),
+            stornoquote_vertraege=float(d.get('stornoquote_vertraege', 0)),
+            total_contracts=int(d.get('total_contracts', 0)),
+            stornierte_contracts=int(d.get('stornierte_contracts', 0)),
+            positionen_monat=int(d.get('positionen_monat', 0)),
+            positionen_ytd=int(d.get('positionen_ytd', 0)),
+        )
+
+
+@dataclass
+class PerformanceAcencia:
+    """KPIs fuer die Firmen-Ebene (Level 2)."""
+    ag_anteil_monat: float = 0.0
+    ag_anteil_ytd: float = 0.0
+    ueberschuss_monat: float = 0.0
+    ueberschuss_ytd: float = 0.0
+    eingang_monat: float = 0.0
+    eingang_ytd: float = 0.0
+    auszahlung_berater_monat: float = 0.0
+    auszahlung_berater_ytd: float = 0.0
+    tl_anteil_monat: float = 0.0
+    tl_anteil_ytd: float = 0.0
+
+    @classmethod
+    def from_dict(cls, d: Dict) -> 'PerformanceAcencia':
+        return cls(
+            ag_anteil_monat=float(d.get('ag_anteil_monat', 0)),
+            ag_anteil_ytd=float(d.get('ag_anteil_ytd', 0)),
+            ueberschuss_monat=float(d.get('ueberschuss_monat', 0)),
+            ueberschuss_ytd=float(d.get('ueberschuss_ytd', 0)),
+            eingang_monat=float(d.get('eingang_monat', 0)),
+            eingang_ytd=float(d.get('eingang_ytd', 0)),
+            auszahlung_berater_monat=float(d.get('auszahlung_berater_monat', 0)),
+            auszahlung_berater_ytd=float(d.get('auszahlung_berater_ytd', 0)),
+            tl_anteil_monat=float(d.get('tl_anteil_monat', 0)),
+            tl_anteil_ytd=float(d.get('tl_anteil_ytd', 0)),
+        )
+
+
+@dataclass
+class PerformanceTeamMember:
+    """Einzelner Berater in der Team-Ansicht."""
+    id: int = 0
+    name: str = ''
+    brutto_monat: float = 0.0
+    netto_monat: float = 0.0
+    brutto_ytd: float = 0.0
+    netto_ytd: float = 0.0
+    stornoquote_betrag: float = 0.0
+
+    @classmethod
+    def from_dict(cls, d: Dict) -> 'PerformanceTeamMember':
+        return cls(
+            id=int(d.get('id', 0)),
+            name=d.get('name', ''),
+            brutto_monat=float(d.get('brutto_monat', 0)),
+            netto_monat=float(d.get('netto_monat', 0)),
+            brutto_ytd=float(d.get('brutto_ytd', 0)),
+            netto_ytd=float(d.get('netto_ytd', 0)),
+            stornoquote_betrag=float(d.get('stornoquote_betrag', 0)),
+        )
+
+
+@dataclass
+class PerformanceFuehrungskraft:
+    """KPIs fuer die Team-Ebene (Level 3)."""
+    team_umsatz_monat: float = 0.0
+    team_umsatz_ytd: float = 0.0
+    team_ag_anteil_monat: float = 0.0
+    team_ag_anteil_ytd: float = 0.0
+    team_rueckbelastung_monat: float = 0.0
+    team_rueckbelastung_ytd: float = 0.0
+    team_members: List['PerformanceTeamMember'] = field(default_factory=list)
+
+    @classmethod
+    def from_dict(cls, d: Dict) -> 'PerformanceFuehrungskraft':
+        members_raw = d.get('team_members', [])
+        members = [PerformanceTeamMember.from_dict(m) for m in members_raw]
+        return cls(
+            team_umsatz_monat=float(d.get('team_umsatz_monat', 0)),
+            team_umsatz_ytd=float(d.get('team_umsatz_ytd', 0)),
+            team_ag_anteil_monat=float(d.get('team_ag_anteil_monat', 0)),
+            team_ag_anteil_ytd=float(d.get('team_ag_anteil_ytd', 0)),
+            team_rueckbelastung_monat=float(d.get('team_rueckbelastung_monat', 0)),
+            team_rueckbelastung_ytd=float(d.get('team_rueckbelastung_ytd', 0)),
+            team_members=members,
+        )
+
+
+@dataclass
+class PerformanceData:
+    """Wrapper fuer alle 3 Ebenen der Erfolgsauswertung."""
+    levels: List[str] = field(default_factory=list)
+    mitarbeiter: Optional[PerformanceMitarbeiter] = None
+    acencia: Optional[PerformanceAcencia] = None
+    fuehrungskraft: Optional[PerformanceFuehrungskraft] = None
+
+    @classmethod
+    def from_dict(cls, d: Dict) -> 'PerformanceData':
+        ma = PerformanceMitarbeiter.from_dict(d['mitarbeiter']) if d.get('mitarbeiter') else None
+        ac = PerformanceAcencia.from_dict(d['acencia']) if d.get('acencia') else None
+        fk = PerformanceFuehrungskraft.from_dict(d['fuehrungskraft']) if d.get('fuehrungskraft') else None
+        return cls(
+            levels=d.get('levels', []),
+            mitarbeiter=ma,
+            acencia=ac,
+            fuehrungskraft=fk,
+        )

@@ -394,7 +394,7 @@ class ZuordnungPanel(QWidget):
         berater_combo.addItem("\u2014", None)
         employees = self._backend.get_employees()
         for emp in employees:
-            if emp.is_active and emp.role in ('consulter', 'teamleiter'):
+            if emp.is_active and emp.role in ('consulter', 'teamleiter', 'geschaeftsfuehrer'):
                 berater_combo.addItem(emp.name, emp.id)
         form.addRow(texts.PROVISION_MAPPING_DLG_SELECT, berater_combo)
 
