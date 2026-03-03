@@ -2639,3 +2639,18 @@ PM_PERF_ERROR = "Fehler beim Laden der Auswertung"
 PM_PERF_NO_EMPLOYEE = "Kein Mitarbeiter-Profil mit Ihrem Nutzerkonto verknuepft"
 PM_PERF_NO_TEAM = "Keine Teammitglieder vorhanden"
 PM_PERF_NO_DATA = "Keine Daten fuer den gewaehlten Zeitraum"
+
+# === System-Status / Wartungsmodus ===
+MAINTENANCE_TITLE = "ATLAS - Wartungsmodus"
+MAINTENANCE_HEADLINE = "ATLAS ist derzeit nicht verfuegbar"
+MAINTENANCE_BODY = (
+    "Wir arbeiten gerade an ATLAS. Die Server werden derzeit umgebaut "
+    "und optimiert. Bitte haben Sie etwas Geduld \u2013 ATLAS wird in Kuerze "
+    "wieder fuer Sie bereitstehen."
+)
+MAINTENANCE_CONTACT = "Bei dringenden Anliegen wenden Sie sich bitte an Paul Weimert (Paul.weimert@acencia.de)."
+MAINTENANCE_CLOSE_BTN = "Schliessen"
+MAINTENANCE_RECHECK_INFO = "Automatische Pruefung alle 60 Sekunden"
+MAINTENANCE_PENDING_OPS = "ATLAS wird in Kuerze eingeschraenkt. Aktive Vorgaenge werden noch abgeschlossen."
+MAINTENANCE_ACCESS_RESTORED = "ATLAS ist wieder verfuegbar."
+MAINTENANCE_SERVER_MSG = "Nachricht vom Server:"
