@@ -39,20 +39,30 @@ class SystemStatusAPI:
         self._client = client
 
     def get_status(self) -> SystemStatus:
-        """Aktuellen System-Status abfragen (oeffentlich, kein Auth noetig)."""
+        """Aktuellen System-Status abfragen.
+
+        FAIL-CLOSED: Bei API-Fehler wird 'locked' zurueckgegeben,
+        damit kein unautorisierter Zugang entsteht.
+        Einzige Ausnahme: Beim initialen Login (main.py) wird der Fehler
+        dem Nutzer angezeigt -- der Worker verwendet check_failed statt Fallback.
+        """
         try:
             response = self._client.get('/system/status')
             data = response.get('data', {})
+            status = data.get('status', 'locked')
+            if status not in ('public', 'closed', 'locked'):
+                logger.warning(f"Unbekannter System-Status: {status} - Fail-Closed")
+                status = 'locked'
             return SystemStatus(
-                status=data.get('status', 'public'),
+                status=status,
                 message=data.get('message')
             )
         except APIError as e:
-            logger.warning(f"System-Status Abfrage fehlgeschlagen: {e}")
-            return SystemStatus(status='public')
+            logger.warning(f"System-Status Abfrage fehlgeschlagen: {e} - Fail-Closed")
+            return SystemStatus(status='locked')
         except Exception as e:
-            logger.warning(f"System-Status Abfrage Fehler: {e}")
-            return SystemStatus(status='public')
+            logger.warning(f"System-Status Abfrage Fehler: {e} - Fail-Closed")
+            return SystemStatus(status='locked')
 
 
 def has_access(system_status: str, is_admin: bool, dev_mode: bool) -> bool:
