@@ -331,6 +331,7 @@ def main():
                             logger.info(f"Pflicht-Update erforderlich: {update_info.latest_version}")
                             from ui.auto_update_window import AutoUpdateWindow
                             auto_update = AutoUpdateWindow(update_info, update_service)
+                            QApplication.instance()._auto_update_window = auto_update
                             auto_update.show()
                             win.close()
                         elif update_info.deprecated and not update_info.update_available:
@@ -370,6 +371,7 @@ def main():
                 logger.info("Zugang wiederhergestellt - MainHub wird geoeffnet")
                 maintenance_win.close()
                 hub = MainHub(api_client=api_client, auth_api=auth_api)
+                QApplication.instance()._main_hub = hub
                 hub.show()
                 _setup_post_login(hub)
             
