@@ -120,9 +120,10 @@ PILL_COLORS = {
 }
 
 ROLE_BADGE_COLORS = {
-    "consulter":   {"bg": "#dbeafe", "text": "#1e40af"},
-    "teamleiter":  {"bg": "#fff3e0", "text": "#e65100"},
-    "backoffice":  {"bg": "#f3f4f6", "text": "#374151"},
+    "consulter":          {"bg": "#dbeafe", "text": "#1e40af"},
+    "teamleiter":         {"bg": "#fff3e0", "text": "#e65100"},
+    "backoffice":         {"bg": "#f3f4f6", "text": "#374151"},
+    "geschaeftsfuehrer":  {"bg": "#ede9fe", "text": "#5b21b6"},
 }
 
 ART_BADGE_COLORS = {
@@ -133,11 +134,6 @@ ART_BADGE_COLORS = {
     "sonstige":        {"bg": "#f3f4f6", "text": "#374151"},
 }
 
-VU_BADGE_COLORS = {
-    "Allianz":   {"bg": "#dbeafe", "text": "#1e40af"},
-    "SwissLife": {"bg": "#dcfce7", "text": "#166534"},
-    "VB":        {"bg": "#fff7ed", "text": "#c2410c"},
-}
 
 # =============================================================================
 # TYPOGRAFIE - ACENCIA Fonts (OFFIZIELL)
@@ -242,7 +238,7 @@ def build_rich_tooltip(
 # =============================================================================
 
 def get_provision_table_style() -> str:
-    """Tabellen-Styling fuer Provisionsmanagement: grosszuegige Zeilen, gut lesbar."""
+    """Tabellen-Styling fuer Provisionsmanagement: kompakte Zeilen, gut lesbar."""
     return f"""
         QTableView {{
             background-color: {BG_PRIMARY};
@@ -251,12 +247,12 @@ def get_provision_table_style() -> str:
             border-radius: {RADIUS_LG};
             gridline-color: #d5dfe8;
             font-family: {FONT_BODY};
-            font-size: 11pt;
+            font-size: 9.5pt;
             selection-background-color: {PRIMARY_100};
             selection-color: {TEXT_PRIMARY};
         }}
         QTableView::item {{
-            padding: 12px 14px;
+            padding: 6px 10px;
             border-bottom: 1px solid #d5dfe8;
         }}
         QTableView::item:selected {{
@@ -269,12 +265,12 @@ def get_provision_table_style() -> str:
         QHeaderView::section {{
             background-color: #d0dcea;
             color: {PRIMARY_900};
-            padding: 12px 14px;
+            padding: 7px 10px;
             border: none;
             border-bottom: 2px solid #98b3cb;
             font-weight: {FONT_WEIGHT_BOLD};
             font-family: {FONT_BODY};
-            font-size: 10pt;
+            font-size: 9pt;
         }}
         QHeaderView::section:hover {{
             background-color: #bfcfdf;
