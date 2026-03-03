@@ -38,6 +38,7 @@ class IProvisionRepository(Protocol):
         page: int = None,
         per_page: int = None,
         limit: int = 500,
+        offset: int = None,
     ) -> Tuple[List[Commission], Optional[PaginationInfo]]: ...
 
     def match_commission(self, commission_id: int, contract_id: int = None,

@@ -96,6 +96,7 @@ from bipro.workers import (
     FetchShipmentsWorker,
     DownloadShipmentWorker,
     AcknowledgeShipmentWorker,
+    AcknowledgeAllPrepWorker,
     MailImportWorker,
     ParallelDownloadManager,
     PreviewAllShipmentsWorker,
@@ -2448,13 +2449,14 @@ class BiPROView(QWidget):
     def _acknowledge_all_listed(self):
         """Quittiert alle in der Vorschau gelisteten Lieferungen.
 
-        Strategie: Parallele Batch-Quittierung (ein Worker pro VU mit allen
+        Strategie: Credentials im Hintergrund laden (kein UI-Freeze),
+        dann parallele Batch-Quittierung (ein Worker pro VU mit allen
         Shipment-IDs). Falls einzelne IDs fehlschlagen, werden diese im
         sequentiellen Fallback nochmals einzeln versucht.
         """
         from i18n.de import (
-            BIPRO_ACK_ALL_WARNING, BIPRO_ACK_SUCCESS,
-            BIPRO_ACK_NO_SHIPMENTS, BIPRO_ACK_BUTTON,
+            BIPRO_ACK_ALL_WARNING, BIPRO_ACK_NO_SHIPMENTS,
+            BIPRO_ACK_BUTTON, BIPRO_ACK_PREPARING,
         )
 
         if not self._preview_cache:
@@ -2478,27 +2480,33 @@ class BiPROView(QWidget):
             return
 
         self._ack_btn.setEnabled(False)
+        self._ack_btn.setText(BIPRO_ACK_PREPARING)
 
-        vu_batches: list[tuple] = []
-        for vu_name, shipments in self._preview_cache:
-            if not shipments:
-                continue
-            conn = self._find_connection_by_name(vu_name)
-            if not conn:
-                continue
-            creds = self._get_credentials_for_connection(conn)
-            if not creds:
-                continue
-            ship_ids = [ship.shipment_id for ship in shipments]
-            vu_batches.append((conn, creds, ship_ids))
+        self._ack_prep_worker = AcknowledgeAllPrepWorker(
+            preview_cache=list(self._preview_cache),
+            connections=self._connections,
+            vu_api=self.vu_api,
+            cert_config_loader=self._load_certificate_config,
+        )
+        self._ack_prep_worker.finished.connect(self._on_ack_prep_finished)
+        self._register_worker(self._ack_prep_worker)
+        self._ack_prep_worker.start()
+
+    def _on_ack_prep_finished(self, vu_batches: list):
+        """Callback wenn Batch-Vorbereitung fertig ist (Credentials geladen)."""
+        from i18n.de import BIPRO_ACK_BUTTON, BIPRO_ACK_IN_PROGRESS
 
         if not vu_batches:
             self._ack_btn.setEnabled(True)
+            self._ack_btn.setText(BIPRO_ACK_BUTTON)
             return
 
         self._ack_all_success = 0
         self._ack_all_total = sum(len(ids) for _, _, ids in vu_batches)
         self._ack_all_vus = set()
+
+        self._ack_btn.setText(
+            BIPRO_ACK_IN_PROGRESS.format(current=0, total=self._ack_all_total))
 
         self._acknowledge_all_parallel(vu_batches)
 
@@ -2538,6 +2546,7 @@ class BiPROView(QWidget):
                                       fail_ids: list, conn, creds):
         """Callback wenn ein paralleler VU-Worker fertig ist."""
         import logging
+        from i18n.de import BIPRO_ACK_IN_PROGRESS
         logger = logging.getLogger(__name__)
 
         if ok_ids:
@@ -2549,6 +2558,10 @@ class BiPROView(QWidget):
                            vu_name, len(fail_ids))
             for ship_id in fail_ids:
                 self._ack_parallel_failed_queue.append((conn, creds, ship_id))
+
+        self._ack_btn.setText(
+            BIPRO_ACK_IN_PROGRESS.format(
+                current=self._ack_all_success, total=self._ack_all_total))
 
         self._ack_parallel_pending -= 1
         if self._ack_parallel_pending <= 0:
@@ -2592,15 +2605,20 @@ class BiPROView(QWidget):
         self._acknowledge_worker = worker
 
     def _on_ack_all_item_done(self, vu_name: str, success: bool):
+        from i18n.de import BIPRO_ACK_IN_PROGRESS
         if success:
             self._ack_all_success += 1
             if vu_name:
                 self._ack_all_vus.add(vu_name)
+        self._ack_btn.setText(
+            BIPRO_ACK_IN_PROGRESS.format(
+                current=self._ack_all_success, total=self._ack_all_total))
         self._process_next_ack_all()
 
     def _on_ack_all_finished(self):
-        from i18n.de import BIPRO_ACK_SUCCESS
+        from i18n.de import BIPRO_ACK_SUCCESS, BIPRO_ACK_BUTTON
         self._ack_btn.setEnabled(True)
+        self._ack_btn.setText(BIPRO_ACK_BUTTON)
         self._save_ack_info()
         self._preview_cache = []
         self._preview_cache_time = 0
@@ -2674,6 +2692,7 @@ class BiPROView(QWidget):
         self._save_fetch_info()
         self._preview_cache = []
         self._preview_cache_time = 0
+        self._start_preview_load(force=True)
         
         if total_docs > 0 and hasattr(self, '_toast_manager') and self._toast_manager:
             from i18n.de import BIPRO_STATUS_FETCH_SUCCESS as msg

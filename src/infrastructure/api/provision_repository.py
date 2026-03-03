@@ -56,11 +56,13 @@ class ProvisionRepository:
         page: int = None,
         per_page: int = None,
         limit: int = 500,
+        offset: int = None,
     ) -> Tuple[List[Commission], Optional[PaginationInfo]]:
         cache_key = _make_key(
             "commissions", berater_id=berater_id, match_status=match_status,
             von=von, bis=bis, versicherer=versicherer, q=q,
-            is_relevant=is_relevant, page=page, per_page=per_page, limit=limit,
+            is_relevant=is_relevant, page=page, per_page=per_page,
+            limit=limit, offset=offset,
         )
         cached = self._cache.get(cache_key)
         if cached is not None:
@@ -72,6 +74,8 @@ class ProvisionRepository:
             params['per_page'] = per_page or 50
         else:
             params['limit'] = limit
+            if offset is not None:
+                params['offset'] = offset
         if berater_id:
             params['berater_id'] = berater_id
         if match_status:
@@ -92,7 +96,12 @@ class ProvisionRepository:
                 data = resp.get('data', {})
                 commissions = [Commission.from_dict(c) for c in data.get('commissions', [])]
                 pagination_data = data.get('pagination')
-                pagination = PaginationInfo.from_dict(pagination_data) if pagination_data else None
+                if pagination_data:
+                    pagination = PaginationInfo.from_dict(pagination_data)
+                elif 'total_available' in data:
+                    pagination = PaginationInfo(total=int(data['total_available']))
+                else:
+                    pagination = None
                 result = (commissions, pagination)
                 self._cache.set(cache_key, result, TTL_COMMISSIONS)
                 return result

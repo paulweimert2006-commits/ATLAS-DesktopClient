@@ -177,6 +177,8 @@ BIPRO_ACK_ALL_WARNING = (
 )
 BIPRO_ACK_SUCCESS = "{count} Lieferung(en) bei {vu_count} Versicherer(n) quittiert"
 BIPRO_ACK_NO_SHIPMENTS = "Keine Lieferungen zum Quittieren vorhanden."
+BIPRO_ACK_PREPARING = "Vorbereitung..."
+BIPRO_ACK_IN_PROGRESS = "Quittiere {current}/{total}..."
 
 # === Vorschau-Karten ===
 BIPRO_PREVIEW_LOADING = "Lieferungen werden geladen..."
@@ -1716,6 +1718,8 @@ PM_KORREKTUR_DETAIL_QUELLE = "Quelle: Abrechnung {monat}"
 PM_FILTER_ALL_OPTION = "Alle"
 PM_FILTER_COLUMN_PLACEHOLDER = "Filter..."
 PM_FILTER_SHOWING = "{visible} von {total} Positionen"
+PM_POSITIONS_TOTAL = "{count} Positionen"
+PM_POSITIONS_LOADED_CHUNKED = "{count} Positionen geladen (mehrere Abfragen)"
 PM_FILTER_CLEAR_ALL = "Alle Filter zuruecksetzen"
 
 # ── Provisionspositionen-Panel ──

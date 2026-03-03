@@ -140,9 +140,9 @@ class ProvisionAPI:
                         von: str = None, bis: str = None, versicherer: str = None,
                         q: str = None, is_relevant: bool = None,
                         page: int = None, per_page: int = None,
-                        limit: int = 500) -> tuple:
+                        limit: int = 500, offset: int = None) -> tuple:
         """Provisionen laden. Mit page/per_page: gibt (list, PaginationInfo) zurueck.
-        Ohne page: gibt (list, None) zurueck (Legacy-Modus).
+        Ohne page: gibt (list, PaginationInfo mit total_available) zurueck.
         """
         params = {}
         if page is not None:
@@ -150,6 +150,8 @@ class ProvisionAPI:
             params['per_page'] = per_page or 50
         else:
             params['limit'] = limit
+            if offset is not None:
+                params['offset'] = offset
         if berater_id:
             params['berater_id'] = berater_id
         if match_status:
@@ -170,7 +172,12 @@ class ProvisionAPI:
                 data = resp.get('data', {})
                 commissions = [Commission.from_dict(c) for c in data.get('commissions', [])]
                 pagination_data = data.get('pagination')
-                pagination = PaginationInfo.from_dict(pagination_data) if pagination_data else None
+                if pagination_data:
+                    pagination = PaginationInfo.from_dict(pagination_data)
+                elif 'total_available' in data:
+                    pagination = PaginationInfo(total=int(data['total_available']))
+                else:
+                    pagination = None
                 return commissions, pagination
         except APIError as e:
             logger.error(f"Fehler beim Laden der Provisionen: {e}")

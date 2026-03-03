@@ -5,14 +5,16 @@ Ersetzt: mappings_panel.py
 """
 
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QLabel, QTableView,
-    QHeaderView, QPushButton, QDialog, QComboBox,
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTableView,
+    QHeaderView, QPushButton, QDialog, QComboBox, QDateEdit,
     QLineEdit, QMenu, QFormLayout, QDialogButtonBox, QCheckBox,
 )
 from PySide6.QtCore import (
-    Qt, Signal, QModelIndex, QTimer,
+    Qt, Signal, QModelIndex, QTimer, QDate,
 )
 from typing import List, Dict, Optional
+from datetime import date
+import calendar
 
 from api.provision import ProvisionAPI
 from domain.provision.entities import Commission, VermittlerMapping, Employee
@@ -61,7 +63,7 @@ class ZuordnungPanel(QWidget):
         """Verbindet dieses Panel mit dem ClearancePresenter."""
         self._presenter = presenter
         presenter.set_view(self)
-        self._presenter.load_clearance()
+        self._load_data()
 
     # ── IClearanceView ──
 
@@ -105,6 +107,65 @@ class ZuordnungPanel(QWidget):
         auto_btn.clicked.connect(self._trigger_auto_match)
         header.add_action(auto_btn)
         layout.addWidget(header)
+
+        # Zeitraumfilter
+        date_row = QHBoxLayout()
+        date_row.setSpacing(10)
+
+        self._mode_combo = QComboBox()
+        self._mode_combo.setFixedWidth(170)
+        self._mode_combo.setFixedHeight(32)
+        self._mode_combo.addItem(texts.PROVISION_FILTER_MODE_MONTH, "month")
+        self._mode_combo.addItem(texts.PROVISION_FILTER_LAST_3, "last_3")
+        self._mode_combo.addItem(texts.PROVISION_FILTER_LAST_6, "last_6")
+        self._mode_combo.addItem(texts.PROVISION_FILTER_LAST_12, "last_12")
+        self._mode_combo.addItem(texts.PROVISION_FILTER_MODE_RANGE, "range")
+        self._mode_combo.addItem(texts.PROVISION_FILTER_ALL_TIME, "all")
+        self._mode_combo.currentIndexChanged.connect(self._on_date_mode_changed)
+        date_row.addWidget(self._mode_combo)
+
+        self._month_combo = QComboBox()
+        self._month_combo.setFixedWidth(130)
+        self._month_combo.setFixedHeight(32)
+        today = date.today()
+        for offset in range(24):
+            y = today.year
+            m = today.month - offset
+            while m < 1:
+                m += 12
+                y -= 1
+            self._month_combo.addItem(f"{m:02d}/{y}", f"{y}-{m:02d}")
+        self._month_combo.currentIndexChanged.connect(self._on_date_filter_changed)
+        date_row.addWidget(self._month_combo)
+
+        self._von_label = QLabel(texts.PROVISION_FILTER_FROM)
+        self._von_label.setStyleSheet(f"color: {PRIMARY_500};")
+        self._von_label.setVisible(False)
+        date_row.addWidget(self._von_label)
+        self._date_from = QDateEdit()
+        self._date_from.setCalendarPopup(True)
+        self._date_from.setDisplayFormat("dd.MM.yyyy")
+        self._date_from.setDate(QDate(today.year, today.month, 1).addMonths(-3))
+        self._date_from.setFixedHeight(32)
+        self._date_from.setVisible(False)
+        self._date_from.dateChanged.connect(self._on_date_filter_changed)
+        date_row.addWidget(self._date_from)
+
+        self._bis_label = QLabel(texts.PROVISION_FILTER_TO)
+        self._bis_label.setStyleSheet(f"color: {PRIMARY_500};")
+        self._bis_label.setVisible(False)
+        date_row.addWidget(self._bis_label)
+        self._date_to = QDateEdit()
+        self._date_to.setCalendarPopup(True)
+        self._date_to.setDisplayFormat("dd.MM.yyyy")
+        self._date_to.setDate(QDate.currentDate())
+        self._date_to.setFixedHeight(32)
+        self._date_to.setVisible(False)
+        self._date_to.dateChanged.connect(self._on_date_filter_changed)
+        date_row.addWidget(self._date_to)
+
+        date_row.addStretch()
+        layout.addLayout(date_row)
 
         # Klaerfall-Chips
         self._chips = FilterChipBar()
@@ -178,13 +239,58 @@ class ZuordnungPanel(QWidget):
     def refresh(self):
         self._load_data()
 
+    def _get_date_range(self):
+        mode = self._mode_combo.currentData()
+        if mode == "month":
+            val = self._month_combo.currentData()
+            if val:
+                y, m = val.split('-')
+                y, m = int(y), int(m)
+                last_day = calendar.monthrange(y, m)[1]
+                return f"{y}-{m:02d}-01", f"{y}-{m:02d}-{last_day:02d}"
+        elif mode == "range":
+            von = self._date_from.date().toString("yyyy-MM-dd")
+            bis = self._date_to.date().toString("yyyy-MM-dd")
+            return von, bis
+        elif mode == "last_3":
+            bis = date.today().strftime("%Y-%m-%d")
+            von = QDate.currentDate().addMonths(-3).toString("yyyy-MM-dd")
+            return von, bis
+        elif mode == "last_6":
+            bis = date.today().strftime("%Y-%m-%d")
+            von = QDate.currentDate().addMonths(-6).toString("yyyy-MM-dd")
+            return von, bis
+        elif mode == "last_12":
+            bis = date.today().strftime("%Y-%m-%d")
+            von = QDate.currentDate().addMonths(-12).toString("yyyy-MM-dd")
+            return von, bis
+        elif mode == "all":
+            return None, None
+        return None, None
+
+    def _on_date_mode_changed(self, *args):
+        mode = self._mode_combo.currentData()
+        is_month = mode == "month"
+        is_range = mode == "range"
+        self._month_combo.setVisible(is_month)
+        self._von_label.setVisible(is_range)
+        self._date_from.setVisible(is_range)
+        self._bis_label.setVisible(is_range)
+        self._date_to.setVisible(is_range)
+        self._load_data()
+
+    def _on_date_filter_changed(self, *args):
+        self._load_data()
+
     def _load_data(self):
         self._status.setText("")
         self._loading_overlay.setGeometry(self.rect())
         self._loading_overlay.setVisible(True)
 
+        von, bis = self._get_date_range()
+
         if self._presenter:
-            self._presenter.load_clearance()
+            self._presenter.load_clearance(von=von, bis=bis)
             return
 
         if self._worker:
@@ -195,7 +301,7 @@ class ZuordnungPanel(QWidget):
                 self._worker.error.disconnect()
             except RuntimeError:
                 pass
-        self._worker = ClearanceLoadWorker(self._backend)
+        self._worker = ClearanceLoadWorker(self._backend, von=von, bis=bis)
         self._worker.finished.connect(self._on_loaded)
         self._worker.error.connect(self._on_error)
         self._worker.start()

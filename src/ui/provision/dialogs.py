@@ -29,7 +29,7 @@ from ui.provision.widgets import (
 )
 from ui.provision.workers import MatchSearchWorker
 from ui.provision.models import SuggestionsModel
-from infrastructure.threading.worker_utils import run_worker
+from infrastructure.threading.worker_utils import run_worker, detach_worker
 from i18n import de as texts
 import logging
 
@@ -208,11 +208,7 @@ class MatchContractDialog(QDialog):
 
     def _run_search(self, q: str = None):
         if self._worker and self._worker.isRunning():
-            try:
-                self._worker.finished.disconnect()
-                self._worker.error.disconnect()
-            except (RuntimeError, TypeError):
-                pass
+            detach_worker(self._worker)
         self._worker = MatchSearchWorker(self._api, self._comm.id, q=q)
         self._worker.finished.connect(self._on_results)
         self._worker.error.connect(self._on_search_error)

@@ -383,6 +383,59 @@ class VuBatchesModel(QAbstractTableModel):
 # =============================================================================
 
 
+def build_positions_cache(data: List[Commission]):
+    """Baut Display- und Tooltip-Caches fuer PositionsModel. Thread-safe (keine Qt-Calls)."""
+    display: List[List[str]] = []
+    tooltips: List[Dict[int, str]] = []
+    ncols = 11
+    COL_DATUM, COL_VU, COL_VSNR, COL_KUNDE = 0, 1, 2, 3
+    COL_BETRAG, COL_BUCHUNGSART, COL_XEMPUS_BERATER, COL_BERATER = 4, 5, 6, 7
+    COL_STATUS, COL_BERATER_ANTEIL, COL_MENU = 8, 9, 10
+
+    for c in data:
+        row = [''] * ncols
+        tips: Dict[int, str] = {}
+
+        d = c.auszahlungsdatum or ""
+        if len(d) >= 10:
+            try:
+                dt = datetime.strptime(d[:10], "%Y-%m-%d")
+                row[COL_DATUM] = dt.strftime("%d.%m.%Y")
+            except ValueError:
+                row[COL_DATUM] = d
+        else:
+            row[COL_DATUM] = d
+
+        row[COL_VU] = c.vu_name or c.versicherer or ""
+        row[COL_VSNR] = c.vsnr or ""
+        row[COL_KUNDE] = c.versicherungsnehmer or ""
+
+        label = format_eur(c.effective_amount)
+        if c.is_overridden:
+            label += " *"
+        row[COL_BETRAG] = label
+        if c.is_overridden:
+            tips[COL_BETRAG] = texts.PM_OVERRIDE_TOOLTIP.format(
+                original=format_eur(c.betrag),
+                settled=format_eur(c.amount_settled),
+            )
+
+        row[COL_BUCHUNGSART] = c.buchungsart_raw or ART_LABELS.get(c.art, c.art)
+        row[COL_XEMPUS_BERATER] = c.xempus_berater_name or "\u2014"
+        row[COL_BERATER] = c.berater_name or "\u2014"
+        row[COL_STATUS] = status_label(c)
+        row[COL_BERATER_ANTEIL] = format_eur(c.berater_anteil) if c.berater_anteil is not None else ""
+        row[COL_MENU] = "\U0001f4dd" if c.has_note else ""
+        if c.has_note:
+            snippet = (c.note[:80] + "...") if len(c.note or '') > 80 else (c.note or '')
+            tips[COL_MENU] = snippet
+
+        display.append(row)
+        tooltips.append(tips)
+
+    return display, tooltips
+
+
 class PositionsModel(QAbstractTableModel):
     COL_DATUM = 0
     COL_VU = 1
@@ -394,8 +447,7 @@ class PositionsModel(QAbstractTableModel):
     COL_BERATER = 7
     COL_STATUS = 8
     COL_BERATER_ANTEIL = 9
-    COL_SOURCE = 10
-    COL_MENU = 11
+    COL_MENU = 10
 
     COLUMNS = [
         texts.PROVISION_POS_COL_DATUM,
@@ -408,7 +460,6 @@ class PositionsModel(QAbstractTableModel):
         texts.PROVISION_POS_COL_BERATER,
         texts.PROVISION_POS_COL_STATUS,
         texts.PROVISION_POS_COL_BERATER_ANTEIL,
-        texts.PROVISION_POS_COL_SOURCE,
         "",
     ]
 
@@ -426,7 +477,6 @@ class PositionsModel(QAbstractTableModel):
             hinweis=texts.PROVISION_TIP_STATUS_HINT,
         ),
         build_rich_tooltip(texts.PROVISION_TIP_COL_BERATER_ANTEIL),
-        texts.PROVISION_TIP_COL_SOURCE,
         "",
     ]
 
@@ -439,57 +489,18 @@ class PositionsModel(QAbstractTableModel):
     def set_data(self, data: List[Commission]):
         self.beginResetModel()
         self._data = data
-        self._build_cache()
+        self._display_cache, self._tooltip_cache = build_positions_cache(data)
         self.endResetModel()
 
-    def _build_cache(self):
-        display: List[List[str]] = []
-        tooltips: List[Dict[int, str]] = []
-        ncols = len(self.COLUMNS)
-        for c in self._data:
-            row = [''] * ncols
-            tips: Dict[int, str] = {}
-
-            d = c.auszahlungsdatum or ""
-            if len(d) >= 10:
-                try:
-                    dt = datetime.strptime(d[:10], "%Y-%m-%d")
-                    row[self.COL_DATUM] = dt.strftime("%d.%m.%Y")
-                except ValueError:
-                    row[self.COL_DATUM] = d
-            else:
-                row[self.COL_DATUM] = d
-
-            row[self.COL_VU] = c.vu_name or c.versicherer or ""
-            row[self.COL_VSNR] = c.vsnr or ""
-            row[self.COL_KUNDE] = c.versicherungsnehmer or ""
-
-            label = format_eur(c.effective_amount)
-            if c.is_overridden:
-                label += " *"
-            row[self.COL_BETRAG] = label
-            if c.is_overridden:
-                tips[self.COL_BETRAG] = texts.PM_OVERRIDE_TOOLTIP.format(
-                    original=format_eur(c.betrag),
-                    settled=format_eur(c.amount_settled),
-                )
-
-            row[self.COL_BUCHUNGSART] = c.buchungsart_raw or ART_LABELS.get(c.art, c.art)
-            row[self.COL_XEMPUS_BERATER] = c.xempus_berater_name or "\u2014"
-            row[self.COL_BERATER] = c.berater_name or "\u2014"
-            row[self.COL_STATUS] = status_label(c)
-            row[self.COL_BERATER_ANTEIL] = format_eur(c.berater_anteil) if c.berater_anteil is not None else ""
-            row[self.COL_SOURCE] = c.source_label
-            row[self.COL_MENU] = "\U0001f4dd" if c.has_note else ""
-            if c.has_note:
-                snippet = (c.note[:80] + "...") if len(c.note or '') > 80 else (c.note or '')
-                tips[self.COL_MENU] = snippet
-
-            display.append(row)
-            tooltips.append(tips)
-
-        self._display_cache = display
-        self._tooltip_cache = tooltips
+    def set_data_with_cache(self, data: List[Commission],
+                            display_cache: List[List[str]],
+                            tooltip_cache: List[Dict[int, str]]):
+        """Setzt Daten mit vorberechneten Caches (O(1) auf Main-Thread)."""
+        self.beginResetModel()
+        self._data = data
+        self._display_cache = display_cache
+        self._tooltip_cache = tooltip_cache
+        self.endResetModel()
 
     def get_commission(self, row: int) -> Optional[Commission]:
         if 0 <= row < len(self._data):

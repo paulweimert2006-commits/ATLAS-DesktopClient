@@ -31,14 +31,14 @@ from ui.styles.tokens import (
 )
 from ui.provision.widgets import (
     PillBadgeDelegate, FilterChipBar, SectionHeader, ThreeDotMenuDelegate,
-    ActivityFeedWidget, ProvisionLoadingOverlay, ColumnFilterRow, PaginationBar,
+    ActivityFeedWidget, ProvisionLoadingOverlay, ColumnFilterRow,
     format_eur, get_search_field_style,
 )
 from ui.provision.workers import (
     PositionsLoadWorker, AuditLoadWorker, IgnoreWorker, MappingCreateWorker,
     OverrideWorker, OverrideResetWorker, NoteWorker, RawDataLoadWorker,
 )
-from ui.provision.models import PositionsModel, PositionsFilterProxy, status_label, status_pill_key, ART_LABELS
+from ui.provision.models import PositionsModel, PositionsFilterProxy, status_label, status_pill_key, ART_LABELS, build_positions_cache
 from ui.provision.dialogs import MatchContractDialog, OverrideDialog, NoteDialog
 from infrastructure.threading.worker_utils import run_worker
 from i18n import de as texts
@@ -89,6 +89,10 @@ class ProvisionspositionenPanel(QWidget):
         self._all_data = commissions
         self._schedule_filter(debounce_ms=0)
         self._resize_columns()
+        total = pagination.total if pagination else len(commissions)
+        if total > 50000 and self._toast_manager:
+            self._toast_manager.show_info(
+                texts.PM_POSITIONS_LOADED_CHUNKED.format(count=len(commissions)))
 
     def show_loading(self, loading: bool) -> None:
         """View-Interface: Ladezustand."""
@@ -232,13 +236,15 @@ class ProvisionspositionenPanel(QWidget):
         self._table.setSelectionBehavior(QTableView.SelectRows)
         self._table.setSelectionMode(QTableView.SingleSelection)
         self._table.verticalHeader().setVisible(False)
-        self._table.verticalHeader().setDefaultSectionSize(52)
+        self._table.verticalHeader().setDefaultSectionSize(38)
         self._table.horizontalHeader().setDefaultSectionSize(100)
         self._table.horizontalHeader().setStretchLastSection(False)
         self._table.horizontalHeader().setMinimumSectionSize(40)
         self._table.setStyleSheet(get_provision_table_style())
         self._table.setMinimumHeight(400)
         self._table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self._table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self._table.customContextMenuRequested.connect(self._on_context_menu)
         self._table.selectionModel().selectionChanged.connect(self._on_selection_changed)
 
         status_delegate = PillBadgeDelegate(PILL_COLORS)
@@ -257,12 +263,10 @@ class ProvisionspositionenPanel(QWidget):
             texts.PROVISION_STATUS_GESPERRT,
             texts.PROVISION_STATUS_IGNORIERT,
         ]
-        source_options = ["VU-Liste", "Xempus", "Sonderzahlung"]
         self._col_filter_row = ColumnFilterRow(
             column_count=self._model.columnCount(),
             combo_options={
                 PositionsModel.COL_STATUS: status_options,
-                PositionsModel.COL_SOURCE: source_options,
             },
             skip_columns={PositionsModel.COL_MENU},
         )
@@ -276,9 +280,10 @@ class ProvisionspositionenPanel(QWidget):
             f"color: {PRIMARY_500}; font-size: {FONT_SIZE_CAPTION}; font-family: {FONT_BODY};")
         table_layout.addWidget(self._filter_info)
 
-        self._pagination = PaginationBar(page_size=200)
-        self._pagination.page_changed.connect(self._on_page_changed)
-        table_layout.addWidget(self._pagination)
+        self._total_info = QLabel("")
+        self._total_info.setStyleSheet(
+            f"color: {PRIMARY_500}; font-size: {FONT_SIZE_CAPTION}; font-family: {FONT_BODY};")
+        table_layout.addWidget(self._total_info)
 
         self._splitter.addWidget(table_widget)
 
@@ -434,8 +439,13 @@ class ProvisionspositionenPanel(QWidget):
         comm = self._model.get_commission(source_idx.row())
         if not comm:
             return None
+        return self._build_menu_for_commission(comm)
+
+    def _build_menu_for_commission(self, comm: Commission) -> QMenu:
         menu = QMenu(self)
         menu.addAction(texts.PROVISION_MENU_DETAILS, lambda: self._show_detail(comm))
+        if comm.import_batch_id:
+            menu.addAction(texts.PM_RAW_BTN_SHOW, lambda: self._show_raw_data_for(comm))
         if comm.match_status == 'unmatched':
             menu.addAction(texts.PROVISION_MATCH_DLG_ASSIGN, lambda: self._manual_match(comm))
         if comm.contract_id:
@@ -451,6 +461,17 @@ class ProvisionspositionenPanel(QWidget):
         menu.addSeparator()
         menu.addAction(texts.PROVISION_MENU_IGNORE, lambda: self._ignore_commission(comm))
         return menu
+
+    def _on_context_menu(self, pos):
+        index = self._table.indexAt(pos)
+        if not index.isValid():
+            return
+        source_idx = self._proxy.mapToSource(index)
+        comm = self._model.get_commission(source_idx.row())
+        if not comm:
+            return
+        menu = self._build_menu_for_commission(comm)
+        menu.exec(self._table.viewport().mapToGlobal(pos))
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -521,7 +542,7 @@ class ProvisionspositionenPanel(QWidget):
         logger.debug(f"Positionen _load_data: von={von}, bis={bis}")
 
         if self._presenter:
-            kwargs = dict(limit=5000)
+            kwargs = dict(limit=50000)
             if von:
                 kwargs['von'] = von
             if bis:
@@ -537,7 +558,7 @@ class ProvisionspositionenPanel(QWidget):
                 self._worker.error.disconnect()
             except RuntimeError:
                 pass
-        kwargs = dict(limit=5000)
+        kwargs = dict(limit=50000)
         if von:
             kwargs['von'] = von
         if bis:
@@ -553,6 +574,10 @@ class ProvisionspositionenPanel(QWidget):
         self._schedule_filter(debounce_ms=0)
         self._resize_columns()
         self._status.setText("")
+        total = pagination.total if pagination else len(data)
+        if total > 50000 and self._toast_manager:
+            self._toast_manager.show_info(
+                texts.PM_POSITIONS_LOADED_CHUNKED.format(count=len(data)))
 
     def _on_error(self, msg: str):
         self._loading_overlay.setVisible(False)
@@ -560,7 +585,7 @@ class ProvisionspositionenPanel(QWidget):
         logger.error(f"Positionen-Ladefehler: {msg}")
 
     def _schedule_filter(self, debounce_ms: int = 0):
-        """Chip-Zaehler und Statusfilter im Worker mit optionalem Debounce."""
+        """Chip-Zaehler, Statusfilter und Display-Cache im Background-Worker."""
         chip_key = self._chips.active_key()
         all_data = self._all_data
 
@@ -587,7 +612,11 @@ class ProvisionspositionenPanel(QWidget):
                 filtered = [c for c in filtered if c.match_status == 'unmatched']
             elif chip_key == "gesperrt":
                 filtered = [c for c in filtered if c.match_status in ('gesperrt', 'ignored')]
-            return ([total, zugeordnet, vertrag_gef, unmatched, locked], filtered)
+            if worker.is_cancelled():
+                return None
+            display_cache, tooltip_cache = build_positions_cache(filtered)
+            return ([total, zugeordnet, vertrag_gef, unmatched, locked],
+                    filtered, display_cache, tooltip_cache)
 
         run_worker(
             self._filter_ctx, compute, self._on_filter_computed,
@@ -597,7 +626,7 @@ class ProvisionspositionenPanel(QWidget):
     def _on_filter_computed(self, result):
         if result is None:
             return
-        counts, filtered = result
+        counts, filtered, display_cache, tooltip_cache = result
         total, zugeordnet, vertrag_gef, unmatched, locked = counts
         self._chips.blockSignals(True)
         self._chips.set_chips([
@@ -609,20 +638,16 @@ class ProvisionspositionenPanel(QWidget):
         ])
         self._chips.blockSignals(False)
         self._filtered_data = filtered
-        self._pagination.set_total(len(filtered))
-        self._paginate()
+        self._model.set_data_with_cache(filtered, display_cache, tooltip_cache)
+        self._update_total_info(len(filtered))
         self._update_filter_info()
 
-    def _on_page_changed(self, page: int):
-        self._paginate()
-
-    def _paginate(self):
-        data = self._filtered_data
-        page = self._pagination.current_page
-        ps = self._pagination._page_size
-        start = page * ps
-        end = start + ps
-        self._model.set_data(data[start:end])
+    def _update_total_info(self, count: int):
+        if count > 0:
+            self._total_info.setText(texts.PM_POSITIONS_TOTAL.format(count=count))
+            self._total_info.setVisible(True)
+        else:
+            self._total_info.setVisible(False)
 
     def _on_search_changed(self, text: str) -> None:
         self._proxy.set_global_filter(text)
@@ -655,29 +680,26 @@ class ProvisionspositionenPanel(QWidget):
     def _resize_columns(self):
         header = self._table.horizontalHeader()
         col_widths = {
-            PositionsModel.COL_DATUM: 85,
-            PositionsModel.COL_VU: 80,
-            PositionsModel.COL_VSNR: 120,
-            PositionsModel.COL_BETRAG: 90,
-            PositionsModel.COL_BUCHUNGSART: 70,
-            PositionsModel.COL_XEMPUS_BERATER: 120,
-            PositionsModel.COL_BERATER: 110,
-            PositionsModel.COL_STATUS: 110,
-            PositionsModel.COL_BERATER_ANTEIL: 80,
-            PositionsModel.COL_SOURCE: 60,
+            PositionsModel.COL_DATUM: 90,
+            PositionsModel.COL_VU: 100,
+            PositionsModel.COL_VSNR: 140,
+            PositionsModel.COL_BETRAG: 120,
+            PositionsModel.COL_BUCHUNGSART: 110,
+            PositionsModel.COL_XEMPUS_BERATER: 150,
+            PositionsModel.COL_BERATER: 140,
+            PositionsModel.COL_STATUS: 150,
+            PositionsModel.COL_BERATER_ANTEIL: 120,
             PositionsModel.COL_MENU: 36,
         }
         stretch_col = PositionsModel.COL_KUNDE
         for i in range(self._model.columnCount()):
             if i == stretch_col:
                 header.setSectionResizeMode(i, QHeaderView.Stretch)
-            elif i == PositionsModel.COL_MENU:
-                header.setSectionResizeMode(i, QHeaderView.Fixed)
-                self._table.setColumnWidth(i, 36)
             elif i in col_widths:
-                header.setSectionResizeMode(i, QHeaderView.ResizeToContents)
+                header.setSectionResizeMode(i, QHeaderView.Interactive)
+                self._table.setColumnWidth(i, col_widths[i])
             else:
-                header.setSectionResizeMode(i, QHeaderView.ResizeToContents)
+                header.setSectionResizeMode(i, QHeaderView.Interactive)
         self._col_filter_row.sync_widths(header)
 
     def _on_selection_changed(self, selected, deselected):
@@ -797,6 +819,19 @@ class ProvisionspositionenPanel(QWidget):
                 'time': e.get('created_at', '')[:16].replace('T', ' ') if e.get('created_at') else '',
             })
         self._activity_feed.set_items(feed_items)
+
+    def _show_raw_data_for(self, comm: Commission):
+        """Originaldaten fuer eine beliebige Commission laden (aus Kontextmenue)."""
+        if not comm or not comm.import_batch_id:
+            return
+        self._raw_comm = comm
+        if hasattr(self, '_raw_worker') and self._raw_worker and self._raw_worker.isRunning():
+            return
+        logger.info(f"Rohdaten laden: batch_id={comm.import_batch_id}, sheet={comm.import_sheet_name}, vu={comm.import_vu_name}")
+        self._raw_worker = RawDataLoadWorker(self._backend, comm.import_batch_id)
+        self._raw_worker.finished.connect(self._on_raw_data_loaded)
+        self._raw_worker.error.connect(self._on_raw_data_error)
+        self._raw_worker.start()
 
     def _show_raw_data(self):
         comm = self._current_detail_comm

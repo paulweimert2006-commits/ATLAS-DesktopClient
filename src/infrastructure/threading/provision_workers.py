@@ -9,7 +9,7 @@ from PySide6.QtCore import QThread, Signal
 from typing import List, Dict, Optional
 
 from infrastructure.api.provision_repository import ProvisionRepository
-from domain.provision.entities import ImportResult
+from domain.provision.entities import ImportResult, PaginationInfo
 from i18n import de as texts
 import logging
 
@@ -274,6 +274,7 @@ class VuImportWorker(QThread):
 
 
 class PositionsLoadWorker(QThread):
+    """Laedt Provisionspositionen mit automatischem Chunking bei grossen Datenmengen."""
     finished = Signal(object, object)
     error = Signal(str)
 
@@ -285,7 +286,18 @@ class PositionsLoadWorker(QThread):
     def run(self):
         try:
             data, pagination = self._repo.get_commissions(**self._kwargs)
-            self.finished.emit(data, pagination)
+            total = pagination.total if pagination else len(data)
+
+            while len(data) < total:
+                chunk_kwargs = {**self._kwargs, 'offset': len(data)}
+                next_data, _ = self._repo.get_commissions(**chunk_kwargs)
+                if not next_data:
+                    break
+                data.extend(next_data)
+                logger.debug(f"Chunk geladen: {len(data)}/{total}")
+
+            final_pagination = PaginationInfo(total=total) if total > 0 else None
+            self.finished.emit(data, final_pagination)
         except Exception as e:
             self.error.emit(str(e))
 
@@ -350,14 +362,23 @@ class ClearanceLoadWorker(QThread):
     finished = Signal(object, object)
     error = Signal(str)
 
-    def __init__(self, repo: ProvisionRepository):
+    def __init__(self, repo: ProvisionRepository, von: str = None, bis: str = None):
         super().__init__()
         self._repo = repo
+        self._von = von
+        self._bis = bis
 
     def run(self):
         try:
-            unmatched, _ = self._repo.get_commissions(match_status='unmatched', is_relevant=True, limit=1000)
-            all_matched, _ = self._repo.get_commissions(is_relevant=True, limit=5000)
+            date_kwargs = {}
+            if self._von:
+                date_kwargs['von'] = self._von
+            if self._bis:
+                date_kwargs['bis'] = self._bis
+            unmatched, _ = self._repo.get_commissions(
+                match_status='unmatched', is_relevant=True, limit=50000, **date_kwargs)
+            all_matched, _ = self._repo.get_commissions(
+                is_relevant=True, limit=50000, **date_kwargs)
             berater_missing = [c for c in all_matched
                                if c.match_status in ('auto_matched', 'manual_matched') and not c.berater_id]
             commissions = unmatched + berater_missing

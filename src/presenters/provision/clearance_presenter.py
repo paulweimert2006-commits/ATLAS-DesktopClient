@@ -65,18 +65,20 @@ class ClearancePresenter:
         """
         self._view = view
 
-    def load_clearance(self) -> None:
+    def load_clearance(self, von: str = None, bis: str = None) -> None:
         """
         Löst das (asynchrone) Nachladen aller Klärfälle und bestehenden Mappings aus.
         Setzt Ladeanzeige in der View. Beendet ggf. laufenden Worker zuvor.
         """
+        self._current_von = von
+        self._current_bis = bis
         if self._view:
             self._view.show_loading(True)
 
         if self._load_worker and self._load_worker.isRunning():
             detach_worker(self._load_worker)
 
-        self._load_worker = ClearanceLoadWorker(self._repo)
+        self._load_worker = ClearanceLoadWorker(self._repo, von=von, bis=bis)
         self._load_worker.finished.connect(self._on_clearance_loaded)
         self._load_worker.error.connect(self._on_error)
         self._load_worker.start()
@@ -269,7 +271,10 @@ class ClearancePresenter:
         """
         Löst erneutes Laden aller Klärfall- und Mappingdaten (Komplett-Refresh aus).
         """
-        self.load_clearance()
+        self.load_clearance(
+            von=getattr(self, '_current_von', None),
+            bis=getattr(self, '_current_bis', None),
+        )
 
     def has_running_workers(self) -> bool:
         """

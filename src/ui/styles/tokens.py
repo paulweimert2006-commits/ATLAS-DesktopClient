@@ -238,7 +238,7 @@ def build_rich_tooltip(
 # =============================================================================
 
 def get_provision_table_style() -> str:
-    """Tabellen-Styling fuer Provisionsmanagement: grosszuegige Zeilen, gut lesbar."""
+    """Tabellen-Styling fuer Provisionsmanagement: kompakte Zeilen, gut lesbar."""
     return f"""
         QTableView {{
             background-color: {BG_PRIMARY};
@@ -247,12 +247,12 @@ def get_provision_table_style() -> str:
             border-radius: {RADIUS_LG};
             gridline-color: #d5dfe8;
             font-family: {FONT_BODY};
-            font-size: 11pt;
+            font-size: 9.5pt;
             selection-background-color: {PRIMARY_100};
             selection-color: {TEXT_PRIMARY};
         }}
         QTableView::item {{
-            padding: 12px 14px;
+            padding: 6px 10px;
             border-bottom: 1px solid #d5dfe8;
         }}
         QTableView::item:selected {{
@@ -265,12 +265,12 @@ def get_provision_table_style() -> str:
         QHeaderView::section {{
             background-color: #d0dcea;
             color: {PRIMARY_900};
-            padding: 12px 14px;
+            padding: 7px 10px;
             border: none;
             border-bottom: 2px solid #98b3cb;
             font-weight: {FONT_WEIGHT_BOLD};
             font-family: {FONT_BODY};
-            font-size: 10pt;
+            font-size: 9pt;
         }}
         QHeaderView::section:hover {{
             background-color: #bfcfdf;
