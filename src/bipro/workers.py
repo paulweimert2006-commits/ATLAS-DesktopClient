@@ -438,6 +438,65 @@ class AcknowledgeShipmentWorker(QThread):
             self.finished.emit([], self.shipment_ids)
 
 
+class AcknowledgeAllPrepWorker(QThread):
+    """Bereitet Batch-Quittierung vor: Credentials im Hintergrund laden.
+
+    Vermeidet UI-Freeze, da vu_api.get_credentials() HTTP-Calls ausfuehrt.
+    Emittiert fertige Batches [(conn, creds, ship_ids), ...].
+    """
+    finished = Signal(list)
+
+    def __init__(self, preview_cache: list, connections: list,
+                 vu_api, cert_config_loader=None):
+        super().__init__()
+        self._preview_cache = preview_cache
+        self._connections = connections
+        self._vu_api = vu_api
+        self._cert_config_loader = cert_config_loader
+
+    def _resolve_credentials(self, conn):
+        """Credentials fuer eine VU-Verbindung laden (laeuft im Worker-Thread)."""
+        if conn.auth_type == 'certificate':
+            if not self._cert_config_loader:
+                return None
+            cert_config = self._cert_config_loader(conn.id)
+            if not cert_config:
+                return None
+            cert_format = cert_config.get('cert_format', 'pfx')
+            if cert_format == 'jks':
+                return VUCredentials(
+                    username="", password="",
+                    jks_path=cert_config.get('jks_path', ''),
+                    jks_password=cert_config.get('jks_password', ''),
+                    jks_alias=cert_config.get('jks_alias', ''),
+                    jks_key_password=cert_config.get('jks_key_password', ''),
+                )
+            return VUCredentials(
+                username="", password="",
+                pfx_path=cert_config.get('pfx_path', ''),
+                pfx_password=cert_config.get('pfx_password', ''),
+            )
+        try:
+            return self._vu_api.get_credentials(conn.id)
+        except Exception:
+            return None
+
+    def run(self):
+        batches = []
+        for vu_name, shipments in self._preview_cache:
+            if not shipments:
+                continue
+            conn = next((c for c in self._connections if c.vu_name == vu_name), None)
+            if not conn:
+                continue
+            creds = self._resolve_credentials(conn)
+            if not creds:
+                continue
+            ship_ids = [ship.shipment_id for ship in shipments]
+            batches.append((conn, creds, ship_ids))
+        self.finished.emit(batches)
+
+
 # =============================================================================
 # MAIL IMPORT WORKER - IMAP-Mails abrufen und Anhaenge importieren
 # =============================================================================

@@ -430,6 +430,12 @@ class MainHub(QMainWindow):
         # Sofort einmal pollen
         QTimer.singleShot(2000, self._poll_notifications)
         
+        # System-Status (Live-Zugangs-Check, wird bei jedem Notification-Poll mitgeprueft)
+        from ui.maintenance_overlay import MaintenanceOverlay
+        self._maintenance_overlay = MaintenanceOverlay(self.api_client, self.auth_api.current_user, self)
+        self._system_status_worker = None
+        self._maintenance_pending = False
+        
         # Standardmaeßig Mitteilungszentrale anzeigen (nach Poller-Init!)
         self._show_message_center()
     
@@ -1105,6 +1111,8 @@ class MainHub(QMainWindow):
         self._prev_unread_chats = unread_chats
         self._prev_unread_system = unread_system
         self._prev_unread_bipro_events = unread_bipro
+        
+        self._check_system_status()
     
     def _update_notification_badge(self, count: int):
         """Aktualisiert den Badge auf dem Mitteilungszentrale-Button."""
@@ -1524,46 +1532,127 @@ class MainHub(QMainWindow):
 
         logger.info(f"Drag & Drop Undo: {deleted}/{len(doc_ids)} Dokument(e) entfernt")
 
+    # ------------------------------------------------------------------
+    # System-Status (Live-Zugangs-Pruefung)
+    # ------------------------------------------------------------------
+
+    def _check_system_status(self):
+        """Periodischer System-Status-Check (Fail-Closed)."""
+        if self._system_status_worker and self._system_status_worker.isRunning():
+            return
+        from ui.maintenance_overlay import SystemStatusCheckWorker
+        self._system_status_worker = SystemStatusCheckWorker(self.api_client, self)
+        self._system_status_worker.status_received.connect(self._on_system_status_received)
+        self._system_status_worker.check_failed.connect(self._on_system_status_check_failed)
+        self._system_status_worker.start()
+
+    def _on_system_status_check_failed(self):
+        """Fail-Closed: Bei Fehler bleibt der aktuelle Zustand erhalten."""
+        logger.warning("System-Status-Check fehlgeschlagen - aktueller Zustand bleibt bestehen")
+
+    def _on_system_status_received(self, status: str, message: str):
+        """Ergebnis des System-Status-Checks verarbeiten."""
+        from api.system_status import has_access
+        from main import is_dev_mode
+
+        user = self.auth_api.current_user
+        if not user:
+            return
+
+        accessible = has_access(status, user.is_admin, is_dev_mode())
+
+        if not accessible and not self._maintenance_overlay.isVisible():
+            blocking = self._get_all_blocking_operations()
+            if blocking and not self._maintenance_pending:
+                self._maintenance_pending = True
+                self._pending_maintenance_msg = message
+                from i18n import de as texts
+                if hasattr(self, '_toast_manager') and self._toast_manager:
+                    self._toast_manager.show_warning(texts.MAINTENANCE_PENDING_OPS, duration_ms=8000)
+                QTimer.singleShot(15_000, self._retry_maintenance_after_ops)
+            elif not blocking:
+                self._maintenance_pending = False
+                self._maintenance_overlay.show_overlay(message)
+        elif accessible and self._maintenance_overlay.isVisible():
+            self._maintenance_overlay.hide_overlay()
+            self._maintenance_pending = False
+            from i18n import de as texts
+            if hasattr(self, '_toast_manager') and self._toast_manager:
+                self._toast_manager.show_success(texts.MAINTENANCE_ACCESS_RESTORED)
+
+    def _retry_maintenance_after_ops(self):
+        """Erneuter Versuch Overlay einzublenden nachdem blockierende Ops abgewartet wurden."""
+        if not self._maintenance_pending:
+            return
+        blocking = self._get_all_blocking_operations()
+        if blocking:
+            QTimer.singleShot(15_000, self._retry_maintenance_after_ops)
+        else:
+            self._maintenance_pending = False
+            msg = getattr(self, '_pending_maintenance_msg', '')
+            self._maintenance_overlay.show_overlay(msg)
+
+    def _get_all_blocking_operations(self) -> list:
+        """Sammelt alle laufenden blockierenden Operationen."""
+        ops = []
+        if self._archive_view and hasattr(self._archive_view, 'get_blocking_operations'):
+            ops.extend(self._archive_view.get_blocking_operations())
+        if self._provision_view and hasattr(self._provision_view, 'get_blocking_operations'):
+            ops.extend(self._provision_view.get_blocking_operations())
+        return ops
+
     def resizeEvent(self, event):
-        """Toasts bei Fenster-Resize neu positionieren."""
+        """Toasts und Overlays bei Fenster-Resize neu positionieren."""
         super().resizeEvent(event)
         if hasattr(self, '_toast_manager'):
             self._toast_manager.reposition()
+        if hasattr(self, '_maintenance_overlay') and self._maintenance_overlay.isVisible():
+            self._maintenance_overlay.setGeometry(self.centralWidget().rect())
 
     def closeEvent(self, event):
         """Fenster schließen."""
-        # Pruefen auf blockierende Operationen (KI-Verarbeitung, Kosten-Check, SmartScan, Provision-Import)
-        blocking = []
-        if self._archive_view and hasattr(self._archive_view, 'get_blocking_operations'):
-            blocking.extend(self._archive_view.get_blocking_operations())
-        if self._provision_view and hasattr(self._provision_view, 'get_blocking_operations'):
-            blocking.extend(self._provision_view.get_blocking_operations())
-        if blocking:
-            from i18n import de as texts
-            msg = texts.CLOSE_BLOCKED_TITLE + "\n\n" + "\n".join(f"- {b}" for b in blocking)
-            if hasattr(self, '_toast_manager') and self._toast_manager:
-                self._toast_manager.show_warning(msg)
-            event.ignore()
-            return
+        # Wenn Maintenance-Overlay aktiv: App SOFORT beenden, keine Rueckfragen
+        _maintenance_forced = (
+            hasattr(self, '_maintenance_overlay')
+            and self._maintenance_overlay
+            and self._maintenance_overlay.is_blocking
+        )
 
-        # Prüfen auf ungespeicherte Änderungen im GDV-Editor
-        if self._gdv_view and hasattr(self._gdv_view, 'has_unsaved_changes'):
-            if self._gdv_view.has_unsaved_changes():
-                reply = QMessageBox.question(
-                    self,
-                    "Ungespeicherte Änderungen",
-                    "Es gibt ungespeicherte Änderungen im GDV-Editor.\nWirklich beenden?",
-                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-                )
-                if reply != QMessageBox.StandardButton.Yes:
-                    event.ignore()
-                    return
+        if not _maintenance_forced:
+            # Pruefen auf blockierende Operationen (KI-Verarbeitung, Kosten-Check, SmartScan, Provision-Import)
+            blocking = []
+            if self._archive_view and hasattr(self._archive_view, 'get_blocking_operations'):
+                blocking.extend(self._archive_view.get_blocking_operations())
+            if self._provision_view and hasattr(self._provision_view, 'get_blocking_operations'):
+                blocking.extend(self._provision_view.get_blocking_operations())
+            if blocking:
+                from i18n import de as texts
+                msg = texts.CLOSE_BLOCKED_TITLE + "\n\n" + "\n".join(f"- {b}" for b in blocking)
+                if hasattr(self, '_toast_manager') and self._toast_manager:
+                    self._toast_manager.show_warning(msg)
+                event.ignore()
+                return
+
+            # Prüfen auf ungespeicherte Änderungen im GDV-Editor
+            if self._gdv_view and hasattr(self._gdv_view, 'has_unsaved_changes'):
+                if self._gdv_view.has_unsaved_changes():
+                    reply = QMessageBox.question(
+                        self,
+                        "Ungespeicherte Änderungen",
+                        "Es gibt ungespeicherte Änderungen im GDV-Editor.\nWirklich beenden?",
+                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                    )
+                    if reply != QMessageBox.StandardButton.Yes:
+                        event.ignore()
+                        return
         
         # Worker-Threads aufräumen
+        if self._provision_view and hasattr(self._provision_view, 'cleanup'):
+            self._provision_view.cleanup()
         if self._bipro_view and hasattr(self._bipro_view, 'cleanup'):
             self._bipro_view.cleanup()
         
-        # Update-Timer stoppen
+        # Timer stoppen
         if hasattr(self, '_update_timer'):
             self._update_timer.stop()
         
@@ -1571,6 +1660,11 @@ class MainHub(QMainWindow):
         if self._update_check_worker and self._update_check_worker.isRunning():
             self._update_check_worker.quit()
             self._update_check_worker.wait(2000)
+        
+        # System-Status-Worker aufraumen
+        if self._system_status_worker and self._system_status_worker.isRunning():
+            self._system_status_worker.quit()
+            self._system_status_worker.wait(2000)
         
         # Drop-Upload-Worker aufraumen (BUG-0025 Fix: cancel() statt nur quit())
         if self._drop_upload_worker and self._drop_upload_worker.isRunning():

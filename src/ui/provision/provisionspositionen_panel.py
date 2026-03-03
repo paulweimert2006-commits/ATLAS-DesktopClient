@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
     QDialog, QFormLayout, QDialogButtonBox, QDateEdit,
 )
 from PySide6.QtCore import (
-    Qt, Signal, QSortFilterProxyModel, QTimer, QDate, QModelIndex,
+    Qt, Signal, QTimer, QDate, QModelIndex, QObject,
 )
 from PySide6.QtGui import QColor
 from typing import List, Optional
@@ -21,7 +21,6 @@ import calendar
 
 from api.provision import ProvisionAPI
 from domain.provision.entities import Commission, Employee, ContractSearchResult, PaginationInfo
-from api.client import APIError
 from ui.styles.tokens import (
     PRIMARY_100, PRIMARY_500, PRIMARY_900, ACCENT_500,
     BG_PRIMARY, BG_SECONDARY, BG_TERTIARY, BORDER_DEFAULT,
@@ -32,14 +31,16 @@ from ui.styles.tokens import (
 )
 from ui.provision.widgets import (
     PillBadgeDelegate, FilterChipBar, SectionHeader, ThreeDotMenuDelegate,
-    PaginationBar, ActivityFeedWidget, ProvisionLoadingOverlay,
+    ActivityFeedWidget, ProvisionLoadingOverlay, ColumnFilterRow,
     format_eur, get_search_field_style,
 )
 from ui.provision.workers import (
     PositionsLoadWorker, AuditLoadWorker, IgnoreWorker, MappingCreateWorker,
+    OverrideWorker, OverrideResetWorker, NoteWorker, RawDataLoadWorker,
 )
-from ui.provision.models import PositionsModel, status_label, status_pill_key, ART_LABELS
-from ui.provision.dialogs import MatchContractDialog
+from ui.provision.models import PositionsModel, PositionsFilterProxy, status_label, status_pill_key, ART_LABELS, build_positions_cache
+from ui.provision.dialogs import MatchContractDialog, OverrideDialog, NoteDialog
+from infrastructure.threading.worker_utils import run_worker
 from i18n import de as texts
 import logging
 
@@ -64,6 +65,7 @@ class ProvisionspositionenPanel(QWidget):
         self._toast_manager = None
         self._current_detail_comm: Optional[Commission] = None
         self._employees_cache: List[Employee] = []
+        self._filter_ctx = QObject(self)
         self._setup_ui()
         if api:
             QTimer.singleShot(100, self._load_data)
@@ -85,9 +87,12 @@ class ProvisionspositionenPanel(QWidget):
         """View-Interface: Provisionen anzeigen."""
         self._loading_overlay.setVisible(False)
         self._all_data = commissions
-        self._update_chips()
-        self._apply_filter()
+        self._schedule_filter(debounce_ms=0)
         self._resize_columns()
+        total = pagination.total if pagination else len(commissions)
+        if total > 50000 and self._toast_manager:
+            self._toast_manager.show_info(
+                texts.PM_POSITIONS_LOADED_CHUNKED.format(count=len(commissions)))
 
     def show_loading(self, loading: bool) -> None:
         """View-Interface: Ladezustand."""
@@ -180,7 +185,7 @@ class ProvisionspositionenPanel(QWidget):
         # FilterChips + Suche
         filter_row = QHBoxLayout()
         self._chips = FilterChipBar()
-        self._chips.filter_changed.connect(self._apply_filter)
+        self._chips.filter_changed.connect(lambda: self._schedule_filter(debounce_ms=300))
         filter_row.addWidget(self._chips)
 
         self._relevance_cb = QCheckBox(texts.PROVISION_RELEVANCE_TOGGLE)
@@ -196,8 +201,17 @@ class ProvisionspositionenPanel(QWidget):
         self._search.setFixedWidth(220)
         self._search.setFixedHeight(32)
         self._search.setStyleSheet(get_search_field_style())
-        self._search.textChanged.connect(self._apply_filter)
         filter_row.addWidget(self._search)
+
+        self._clear_filter_btn = QPushButton(texts.PM_FILTER_CLEAR_ALL)
+        self._clear_filter_btn.setFixedHeight(32)
+        self._clear_filter_btn.setCursor(Qt.PointingHandCursor)
+        self._clear_filter_btn.setStyleSheet(
+            f"color: {PRIMARY_500}; background: transparent; border: none; "
+            f"font-size: {FONT_SIZE_CAPTION}; font-family: {FONT_BODY};")
+        self._clear_filter_btn.clicked.connect(self._clear_all_filters)
+        self._clear_filter_btn.setVisible(False)
+        filter_row.addWidget(self._clear_filter_btn)
 
         layout.addLayout(filter_row)
 
@@ -210,23 +224,27 @@ class ProvisionspositionenPanel(QWidget):
         table_layout.setContentsMargins(0, 0, 0, 0)
 
         self._model = PositionsModel()
-        self._proxy = QSortFilterProxyModel()
+        self._proxy = PositionsFilterProxy()
         self._proxy.setSourceModel(self._model)
-        self._proxy.setFilterCaseSensitivity(Qt.CaseInsensitive)
+
+        self._search.textChanged.connect(self._on_search_changed)
 
         self._table = QTableView()
         self._table.setModel(self._proxy)
+        self._table.setSortingEnabled(True)
         self._table.setAlternatingRowColors(True)
         self._table.setSelectionBehavior(QTableView.SelectRows)
         self._table.setSelectionMode(QTableView.SingleSelection)
         self._table.verticalHeader().setVisible(False)
-        self._table.verticalHeader().setDefaultSectionSize(52)
+        self._table.verticalHeader().setDefaultSectionSize(38)
         self._table.horizontalHeader().setDefaultSectionSize(100)
         self._table.horizontalHeader().setStretchLastSection(False)
         self._table.horizontalHeader().setMinimumSectionSize(40)
         self._table.setStyleSheet(get_provision_table_style())
         self._table.setMinimumHeight(400)
         self._table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self._table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self._table.customContextMenuRequested.connect(self._on_context_menu)
         self._table.selectionModel().selectionChanged.connect(self._on_selection_changed)
 
         status_delegate = PillBadgeDelegate(PILL_COLORS)
@@ -237,11 +255,35 @@ class ProvisionspositionenPanel(QWidget):
         self._table.setItemDelegateForColumn(PositionsModel.COL_MENU, menu_delegate)
         self._menu_delegate = menu_delegate
 
+        # Spaltenfilter-Zeile (Excel-Stil)
+        status_options = [
+            texts.PROVISION_STATUS_ZUGEORDNET,
+            texts.PROVISION_STATUS_VERTRAG_GEFUNDEN,
+            texts.PROVISION_STATUS_OFFEN,
+            texts.PROVISION_STATUS_GESPERRT,
+            texts.PROVISION_STATUS_IGNORIERT,
+        ]
+        self._col_filter_row = ColumnFilterRow(
+            column_count=self._model.columnCount(),
+            combo_options={
+                PositionsModel.COL_STATUS: status_options,
+            },
+            skip_columns={PositionsModel.COL_MENU},
+        )
+        self._col_filter_row.column_filter_changed.connect(self._on_column_filter_changed)
+        table_layout.addWidget(self._col_filter_row)
+
         table_layout.addWidget(self._table)
 
-        self._pagination = PaginationBar(page_size=50)
-        self._pagination.page_changed.connect(self._on_page_changed)
-        table_layout.addWidget(self._pagination)
+        self._filter_info = QLabel("")
+        self._filter_info.setStyleSheet(
+            f"color: {PRIMARY_500}; font-size: {FONT_SIZE_CAPTION}; font-family: {FONT_BODY};")
+        table_layout.addWidget(self._filter_info)
+
+        self._total_info = QLabel("")
+        self._total_info.setStyleSheet(
+            f"color: {PRIMARY_500}; font-size: {FONT_SIZE_CAPTION}; font-family: {FONT_BODY};")
+        table_layout.addWidget(self._total_info)
 
         self._splitter.addWidget(table_widget)
 
@@ -304,6 +346,11 @@ class ProvisionspositionenPanel(QWidget):
         self._det_datum = self._add_detail_field(texts.PROVISION_POS_COL_DATUM)
         self._det_kunde = self._add_detail_field(texts.PROVISION_POS_COL_KUNDE)
 
+        self._det_raw_btn = QPushButton(texts.PM_RAW_BTN_SHOW)
+        self._det_raw_btn.setCursor(Qt.PointingHandCursor)
+        self._det_raw_btn.clicked.connect(self._show_raw_data)
+        self._detail_layout.addWidget(self._det_raw_btn)
+
         # Zuordnung
         self._det_section_match = QLabel(texts.PROVISION_POS_DETAIL_MATCHING)
         self._det_section_match.setStyleSheet(f"font-weight: 600; font-size: 11pt; color: {PRIMARY_900}; margin-top: 8px;")
@@ -320,6 +367,27 @@ class ProvisionspositionenPanel(QWidget):
         self._det_ag = self._add_detail_field(texts.PROVISION_TIP_COL_AG_ANTEIL[:20])
         self._det_berater_ant = self._add_detail_field(texts.PROVISION_POS_DETAIL_BERATER_ANTEIL)
         self._det_tl = self._add_detail_field(texts.PROVISION_POS_DETAIL_TEAMLEITER)
+
+        # Override-Info
+        self._det_section_override = QLabel(texts.PM_OVERRIDE_TITLE)
+        self._det_section_override.setStyleSheet(f"font-weight: 600; font-size: 11pt; color: {PRIMARY_900}; margin-top: 8px;")
+        self._detail_layout.addWidget(self._det_section_override)
+        self._det_override_original = self._add_detail_field(texts.PM_OVERRIDE_ORIGINAL)
+        self._det_override_settled = self._add_detail_field(texts.PM_OVERRIDE_SETTLED)
+        self._det_override_reason = self._add_detail_field(texts.PM_OVERRIDE_REASON)
+        self._det_override_by = self._add_detail_field(texts.PM_OVERRIDE_BY)
+
+        # Notiz
+        self._det_section_note = QLabel(texts.PM_NOTE_TITLE)
+        self._det_section_note.setStyleSheet(f"font-weight: 600; font-size: 11pt; color: {PRIMARY_900}; margin-top: 8px;")
+        self._detail_layout.addWidget(self._det_section_note)
+        self._det_note_text = QLabel("")
+        self._det_note_text.setWordWrap(True)
+        self._det_note_text.setStyleSheet(f"color: {PRIMARY_900}; font-size: {FONT_SIZE_BODY};")
+        self._detail_layout.addWidget(self._det_note_text)
+        self._det_note_meta = QLabel("")
+        self._det_note_meta.setStyleSheet(f"color: {PRIMARY_500}; font-size: {FONT_SIZE_CAPTION}; font-style: italic;")
+        self._detail_layout.addWidget(self._det_note_meta)
 
         # Audit-Log
         self._det_section_audit = QLabel(texts.PROVISION_POS_DETAIL_AUDIT)
@@ -371,8 +439,13 @@ class ProvisionspositionenPanel(QWidget):
         comm = self._model.get_commission(source_idx.row())
         if not comm:
             return None
+        return self._build_menu_for_commission(comm)
+
+    def _build_menu_for_commission(self, comm: Commission) -> QMenu:
         menu = QMenu(self)
         menu.addAction(texts.PROVISION_MENU_DETAILS, lambda: self._show_detail(comm))
+        if comm.import_batch_id:
+            menu.addAction(texts.PM_RAW_BTN_SHOW, lambda: self._show_raw_data_for(comm))
         if comm.match_status == 'unmatched':
             menu.addAction(texts.PROVISION_MATCH_DLG_ASSIGN, lambda: self._manual_match(comm))
         if comm.contract_id:
@@ -380,12 +453,31 @@ class ProvisionspositionenPanel(QWidget):
         mappable_name = comm.xempus_berater_name or comm.vermittler_name
         if not comm.berater_id and mappable_name:
             menu.addAction(texts.PROVISION_MAP_DLG_CREATE_TITLE, lambda: self._create_mapping_for(comm))
+        menu.addSeparator()
+        menu.addAction(texts.PM_OVERRIDE_TITLE, lambda: self._open_override_dialog(comm))
+        if comm.is_overridden:
+            menu.addAction(texts.PM_OVERRIDE_RESET, lambda: self._reset_override(comm))
+        menu.addAction(texts.PM_NOTE_TITLE, lambda: self._open_note_dialog(comm))
+        menu.addSeparator()
         menu.addAction(texts.PROVISION_MENU_IGNORE, lambda: self._ignore_commission(comm))
         return menu
+
+    def _on_context_menu(self, pos):
+        index = self._table.indexAt(pos)
+        if not index.isValid():
+            return
+        source_idx = self._proxy.mapToSource(index)
+        comm = self._model.get_commission(source_idx.row())
+        if not comm:
+            return
+        menu = self._build_menu_for_commission(comm)
+        menu.exec(self._table.viewport().mapToGlobal(pos))
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._loading_overlay.setGeometry(self.rect())
+        if hasattr(self, '_col_filter_row'):
+            self._col_filter_row.sync_widths(self._table.horizontalHeader())
 
     def refresh(self):
         self._load_data()
@@ -450,7 +542,7 @@ class ProvisionspositionenPanel(QWidget):
         logger.debug(f"Positionen _load_data: von={von}, bis={bis}")
 
         if self._presenter:
-            kwargs = dict(limit=5000)
+            kwargs = dict(limit=50000)
             if von:
                 kwargs['von'] = von
             if bis:
@@ -466,7 +558,7 @@ class ProvisionspositionenPanel(QWidget):
                 self._worker.error.disconnect()
             except RuntimeError:
                 pass
-        kwargs = dict(limit=5000)
+        kwargs = dict(limit=50000)
         if von:
             kwargs['von'] = von
         if bis:
@@ -476,27 +568,67 @@ class ProvisionspositionenPanel(QWidget):
         self._worker.error.connect(self._on_error)
         self._worker.start()
 
-    def _on_loaded(self, data: List[Commission]):
+    def _on_loaded(self, data: List[Commission], pagination=None):
         self._loading_overlay.setVisible(False)
         self._all_data = data
-        self._update_chips()
-        self._apply_filter()
+        self._schedule_filter(debounce_ms=0)
         self._resize_columns()
         self._status.setText("")
+        total = pagination.total if pagination else len(data)
+        if total > 50000 and self._toast_manager:
+            self._toast_manager.show_info(
+                texts.PM_POSITIONS_LOADED_CHUNKED.format(count=len(data)))
 
     def _on_error(self, msg: str):
         self._loading_overlay.setVisible(False)
         self._status.setText(texts.PROVISION_DASH_ERROR)
         logger.error(f"Positionen-Ladefehler: {msg}")
 
-    def _update_chips(self):
-        total = len(self._all_data)
-        zugeordnet = sum(1 for c in self._all_data
-                         if c.match_status in ('auto_matched', 'manual_matched', 'matched') and c.berater_id)
-        vertrag_gef = sum(1 for c in self._all_data
-                          if c.match_status in ('auto_matched', 'manual_matched', 'matched') and not c.berater_id)
-        unmatched = sum(1 for c in self._all_data if c.match_status == 'unmatched')
-        locked = sum(1 for c in self._all_data if c.match_status in ('gesperrt', 'ignored'))
+    def _schedule_filter(self, debounce_ms: int = 0):
+        """Chip-Zaehler, Statusfilter und Display-Cache im Background-Worker."""
+        chip_key = self._chips.active_key()
+        all_data = self._all_data
+
+        def compute(worker):
+            if worker.is_cancelled():
+                return None
+            total = len(all_data)
+            zugeordnet = sum(1 for c in all_data
+                             if c.match_status in ('auto_matched', 'manual_matched', 'matched') and c.berater_id)
+            vertrag_gef = sum(1 for c in all_data
+                              if c.match_status in ('auto_matched', 'manual_matched', 'matched') and not c.berater_id)
+            unmatched = sum(1 for c in all_data if c.match_status == 'unmatched')
+            locked = sum(1 for c in all_data if c.match_status in ('gesperrt', 'ignored'))
+            if worker.is_cancelled():
+                return None
+            filtered = all_data
+            if chip_key == "zugeordnet":
+                filtered = [c for c in filtered
+                            if c.match_status in ('auto_matched', 'manual_matched', 'matched') and c.berater_id]
+            elif chip_key == "vertrag_gefunden":
+                filtered = [c for c in filtered
+                            if c.match_status in ('auto_matched', 'manual_matched', 'matched') and not c.berater_id]
+            elif chip_key == "offen":
+                filtered = [c for c in filtered if c.match_status == 'unmatched']
+            elif chip_key == "gesperrt":
+                filtered = [c for c in filtered if c.match_status in ('gesperrt', 'ignored')]
+            if worker.is_cancelled():
+                return None
+            display_cache, tooltip_cache = build_positions_cache(filtered)
+            return ([total, zugeordnet, vertrag_gef, unmatched, locked],
+                    filtered, display_cache, tooltip_cache)
+
+        run_worker(
+            self._filter_ctx, compute, self._on_filter_computed,
+            debounce_ms=debounce_ms,
+        )
+
+    def _on_filter_computed(self, result):
+        if result is None:
+            return
+        counts, filtered, display_cache, tooltip_cache = result
+        total, zugeordnet, vertrag_gef, unmatched, locked = counts
+        self._chips.blockSignals(True)
         self._chips.set_chips([
             ("alle", texts.PROVISION_POS_FILTER_ALL, total),
             ("zugeordnet", texts.PROVISION_POS_FILTER_MATCHED, zugeordnet),
@@ -504,71 +636,71 @@ class ProvisionspositionenPanel(QWidget):
             ("offen", texts.PROVISION_POS_FILTER_UNMATCHED, unmatched),
             ("gesperrt", texts.PROVISION_POS_FILTER_LOCKED, locked),
         ])
-
-    def _apply_filter(self, *args):
-        key = self._chips.active_key()
-        search = self._search.text().strip().lower()
-
-        filtered = self._all_data
-        if key == "zugeordnet":
-            filtered = [c for c in filtered
-                        if c.match_status in ('auto_matched', 'manual_matched', 'matched') and c.berater_id]
-        elif key == "vertrag_gefunden":
-            filtered = [c for c in filtered
-                        if c.match_status in ('auto_matched', 'manual_matched', 'matched') and not c.berater_id]
-        elif key == "offen":
-            filtered = [c for c in filtered if c.match_status == 'unmatched']
-        elif key == "gesperrt":
-            filtered = [c for c in filtered if c.match_status in ('gesperrt', 'ignored')]
-
-        if search:
-            filtered = [c for c in filtered if
-                        search in (c.versicherer or "").lower() or
-                        search in (c.vsnr or "").lower() or
-                        search in (c.versicherungsnehmer or "").lower() or
-                        search in (c.berater_name or "").lower() or
-                        search in (c.xempus_berater_name or "").lower()]
-
+        self._chips.blockSignals(False)
         self._filtered_data = filtered
-        self._pagination.set_total(len(filtered))
-        self._paginate()
+        self._model.set_data_with_cache(filtered, display_cache, tooltip_cache)
+        self._update_total_info(len(filtered))
+        self._update_filter_info()
 
-    def _on_page_changed(self, page: int):
-        self._paginate()
+    def _update_total_info(self, count: int):
+        if count > 0:
+            self._total_info.setText(texts.PM_POSITIONS_TOTAL.format(count=count))
+            self._total_info.setVisible(True)
+        else:
+            self._total_info.setVisible(False)
 
-    def _paginate(self):
-        page = self._pagination.current_page
-        ps = self._pagination._page_size
-        start = page * ps
-        end = start + ps
-        self._model.set_data(self._filtered_data[start:end])
+    def _on_search_changed(self, text: str) -> None:
+        self._proxy.set_global_filter(text)
+        self._update_filter_info()
+        self._clear_filter_btn.setVisible(bool(text.strip()))
+
+    def _on_column_filter_changed(self, column: int, text: str) -> None:
+        self._proxy.set_column_filter(column, text)
+        self._update_filter_info()
+        has_any = bool(self._proxy._column_filters) or bool(self._search.text().strip())
+        self._clear_filter_btn.setVisible(has_any)
+
+    def _clear_all_filters(self) -> None:
+        self._search.clear()
+        self._col_filter_row.clear_all()
+        self._proxy.clear_all_filters()
+        self._update_filter_info()
+        self._clear_filter_btn.setVisible(False)
+
+    def _update_filter_info(self) -> None:
+        visible = self._proxy.rowCount()
+        total = self._model.rowCount()
+        if visible < total:
+            self._filter_info.setText(
+                texts.PM_FILTER_SHOWING.format(visible=visible, total=total))
+            self._filter_info.setVisible(True)
+        else:
+            self._filter_info.setVisible(False)
 
     def _resize_columns(self):
         header = self._table.horizontalHeader()
         col_widths = {
-            PositionsModel.COL_DATUM: 85,
-            PositionsModel.COL_VU: 80,
-            PositionsModel.COL_VSNR: 120,
-            PositionsModel.COL_BETRAG: 90,
-            PositionsModel.COL_BUCHUNGSART: 70,
-            PositionsModel.COL_XEMPUS_BERATER: 120,
-            PositionsModel.COL_BERATER: 110,
-            PositionsModel.COL_STATUS: 110,
-            PositionsModel.COL_BERATER_ANTEIL: 80,
-            PositionsModel.COL_SOURCE: 60,
+            PositionsModel.COL_DATUM: 90,
+            PositionsModel.COL_VU: 100,
+            PositionsModel.COL_VSNR: 140,
+            PositionsModel.COL_BETRAG: 120,
+            PositionsModel.COL_BUCHUNGSART: 110,
+            PositionsModel.COL_XEMPUS_BERATER: 150,
+            PositionsModel.COL_BERATER: 140,
+            PositionsModel.COL_STATUS: 150,
+            PositionsModel.COL_BERATER_ANTEIL: 120,
             PositionsModel.COL_MENU: 36,
         }
         stretch_col = PositionsModel.COL_KUNDE
         for i in range(self._model.columnCount()):
             if i == stretch_col:
                 header.setSectionResizeMode(i, QHeaderView.Stretch)
-            elif i == PositionsModel.COL_MENU:
-                header.setSectionResizeMode(i, QHeaderView.Fixed)
-                self._table.setColumnWidth(i, 36)
             elif i in col_widths:
-                header.setSectionResizeMode(i, QHeaderView.ResizeToContents)
+                header.setSectionResizeMode(i, QHeaderView.Interactive)
+                self._table.setColumnWidth(i, col_widths[i])
             else:
-                header.setSectionResizeMode(i, QHeaderView.ResizeToContents)
+                header.setSectionResizeMode(i, QHeaderView.Interactive)
+        self._col_filter_row.sync_widths(header)
 
     def _on_selection_changed(self, selected, deselected):
         indexes = self._table.selectionModel().selectedRows()
@@ -601,6 +733,7 @@ class ProvisionspositionenPanel(QWidget):
                 pass
         self._det_datum.setText(d)
         self._det_kunde.setText(comm.versicherungsnehmer or "")
+        self._det_raw_btn.setVisible(bool(comm.import_batch_id))
 
         self._det_status.setText(status_label(comm))
 
@@ -619,6 +752,38 @@ class ProvisionspositionenPanel(QWidget):
         self._det_ag.setText(format_eur(comm.ag_anteil) if comm.ag_anteil is not None else "\u2014")
         self._det_berater_ant.setText(format_eur(comm.berater_anteil) if comm.berater_anteil is not None else "\u2014")
         self._det_tl.setText(format_eur(comm.tl_anteil) if comm.tl_anteil is not None else "\u2014")
+
+        has_override = comm.is_overridden
+        self._det_section_override.setVisible(has_override)
+        if has_override:
+            self._det_override_original.setText(format_eur(comm.betrag))
+            self._det_override_settled.setText(format_eur(comm.amount_settled))
+            self._det_override_reason.setText(comm.amount_override_reason or "\u2014")
+            override_info = comm.overrider_name or "\u2014"
+            if comm.amount_overridden_at:
+                override_info += f" ({comm.amount_overridden_at[:16]})"
+            self._det_override_by.setText(override_info)
+        else:
+            self._det_override_original.setText("")
+            self._det_override_settled.setText("")
+            self._det_override_reason.setText("")
+            self._det_override_by.setText("")
+
+        has_note = comm.has_note
+        self._det_section_note.setVisible(True)
+        if has_note:
+            self._det_note_text.setText(comm.note)
+            self._det_note_text.setVisible(True)
+            if comm.note_updater_name and comm.note_updated_at:
+                self._det_note_meta.setText(texts.PM_NOTE_UPDATED_BY.format(
+                    name=comm.note_updater_name, date=comm.note_updated_at[:16]))
+                self._det_note_meta.setVisible(True)
+            else:
+                self._det_note_meta.setVisible(False)
+        else:
+            self._det_note_text.setText(texts.PM_NOTE_EMPTY)
+            self._det_note_text.setVisible(True)
+            self._det_note_meta.setVisible(False)
 
         self._detail_panel.setVisible(True)
         self._load_audit(comm)
@@ -655,6 +820,82 @@ class ProvisionspositionenPanel(QWidget):
             })
         self._activity_feed.set_items(feed_items)
 
+    def _show_raw_data_for(self, comm: Commission):
+        """Originaldaten fuer eine beliebige Commission laden (aus Kontextmenue)."""
+        if not comm or not comm.import_batch_id:
+            return
+        self._raw_comm = comm
+        if hasattr(self, '_raw_worker') and self._raw_worker and self._raw_worker.isRunning():
+            return
+        logger.info(f"Rohdaten laden: batch_id={comm.import_batch_id}, sheet={comm.import_sheet_name}, vu={comm.import_vu_name}")
+        self._raw_worker = RawDataLoadWorker(self._backend, comm.import_batch_id)
+        self._raw_worker.finished.connect(self._on_raw_data_loaded)
+        self._raw_worker.error.connect(self._on_raw_data_error)
+        self._raw_worker.start()
+
+    def _show_raw_data(self):
+        comm = self._current_detail_comm
+        if not comm or not comm.import_batch_id:
+            return
+
+        if hasattr(self, '_raw_worker') and self._raw_worker and self._raw_worker.isRunning():
+            return
+
+        self._det_raw_btn.setEnabled(False)
+        self._det_raw_btn.setText(texts.PM_RAW_LOADING)
+
+        self._raw_comm = comm
+        logger.info(f"Rohdaten laden: batch_id={comm.import_batch_id}, sheet={comm.import_sheet_name}, vu={comm.import_vu_name}")
+        self._raw_worker = RawDataLoadWorker(self._backend, comm.import_batch_id)
+        self._raw_worker.finished.connect(self._on_raw_data_loaded)
+        self._raw_worker.error.connect(self._on_raw_data_error)
+        self._raw_worker.start()
+
+    def _on_raw_data_loaded(self, batch_id: int, raw: dict):
+        self._det_raw_btn.setEnabled(True)
+        self._det_raw_btn.setText(texts.PM_RAW_BTN_SHOW)
+
+        logger.info(f"Rohdaten GET batch={batch_id}: keys={list(raw.keys()) if raw else 'None'}, "
+                     f"sheets={len(raw.get('sheets', []))} entries" if raw else "raw=None")
+        sheets = raw.get('sheets', []) if raw else []
+        if not sheets:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.information(self, texts.PM_RAW_BTN_SHOW, texts.PM_RAW_NO_DATA)
+            return
+
+        comm = self._raw_comm
+        sheet_key = (comm.import_sheet_name or comm.import_vu_name) if comm else None
+        sheet = None
+        if sheet_key:
+            sheet = next((s for s in sheets if s.get('sheet_name') == sheet_key), None)
+        if not sheet and len(sheets) == 1:
+            sheet = sheets[0]
+        if not sheet:
+            sheet = sheets[0]
+
+        logger.info(f"Rohdaten-Viewer: sheet_key='{sheet_key}', "
+                     f"gewaehlt='{sheet.get('sheet_name')}', "
+                     f"source_row={comm.source_row if comm else None}, "
+                     f"rows={len(sheet.get('rows', []))}")
+
+        from ui.provision.raw_data_viewer import RawDataViewerDialog
+        dlg = RawDataViewerDialog(
+            parent=self,
+            headers=sheet.get('headers', []),
+            rows_data=sheet.get('rows', []),
+            target_row=comm.source_row if comm else None,
+            sheet_name=sheet.get('sheet_name'),
+            title=texts.PM_RAW_TITLE_JSON.format(batch_id=batch_id),
+        )
+        dlg.exec()
+
+    def _on_raw_data_error(self, error: str):
+        self._det_raw_btn.setEnabled(True)
+        self._det_raw_btn.setText(texts.PM_RAW_BTN_SHOW)
+        logger.error(f"Rohdaten-Laden fehlgeschlagen: {error}")
+        from PySide6.QtWidgets import QMessageBox
+        QMessageBox.warning(self, texts.PM_RAW_BTN_SHOW, texts.PM_RAW_LOAD_ERROR)
+
     def _ignore_commission(self, comm: Commission):
         if hasattr(self, '_ignore_worker') and self._ignore_worker and self._ignore_worker.isRunning():
             return
@@ -668,6 +909,84 @@ class ProvisionspositionenPanel(QWidget):
             if self._toast_manager:
                 self._toast_manager.show_success(texts.PROVISION_TOAST_IGNORED)
             self._load_data()
+
+    def _open_override_dialog(self, comm: Commission):
+        dlg = OverrideDialog(comm, parent=self)
+        if dlg.exec() == QDialog.Accepted and dlg.amount is not None:
+            self._override_worker = OverrideWorker(
+                self._backend, comm.id, dlg.amount, dlg.reason)
+            self._override_worker.finished.connect(self._on_override_finished)
+            self._override_worker.error.connect(
+                lambda msg: self._show_toast_error(texts.PM_OVERRIDE_TOAST_ERROR, msg))
+            self._override_worker.start()
+
+    def _on_override_finished(self, result):
+        success = result.get('success', False) if isinstance(result, dict) else result
+        if success:
+            abr = result.get('abrechnungen') if isinstance(result, dict) else None
+            count = abr.get('abrechnungen_regenerated', 0) if abr else 0
+            if self._toast_manager:
+                if count > 0:
+                    self._toast_manager.show_success(
+                        texts.PM_OVERRIDE_TOAST_SET_WITH_ABRECHNUNGEN.format(count=count))
+                else:
+                    self._toast_manager.show_success(texts.PM_OVERRIDE_TOAST_SET)
+            self._load_data()
+        else:
+            if self._toast_manager:
+                self._toast_manager.show_error(texts.PM_OVERRIDE_TOAST_ERROR)
+
+    def _reset_override(self, comm: Commission):
+        from PySide6.QtWidgets import QMessageBox
+        reply = QMessageBox.question(
+            self, texts.PM_OVERRIDE_RESET, texts.PM_OVERRIDE_RESET_CONFIRM,
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if reply != QMessageBox.Yes:
+            return
+        self._override_reset_worker = OverrideResetWorker(self._backend, comm.id)
+        self._override_reset_worker.finished.connect(self._on_override_reset_finished)
+        self._override_reset_worker.error.connect(
+            lambda msg: self._show_toast_error(texts.PM_OVERRIDE_TOAST_ERROR, msg))
+        self._override_reset_worker.start()
+
+    def _on_override_reset_finished(self, result):
+        success = result.get('success', False) if isinstance(result, dict) else result
+        if success:
+            abr = result.get('abrechnungen') if isinstance(result, dict) else None
+            count = abr.get('abrechnungen_regenerated', 0) if abr else 0
+            if self._toast_manager:
+                if count > 0:
+                    self._toast_manager.show_success(
+                        texts.PM_OVERRIDE_TOAST_RESET_WITH_ABRECHNUNGEN.format(count=count))
+                else:
+                    self._toast_manager.show_success(texts.PM_OVERRIDE_TOAST_RESET)
+            self._load_data()
+        else:
+            if self._toast_manager:
+                self._toast_manager.show_error(texts.PM_OVERRIDE_TOAST_ERROR)
+
+    def _open_note_dialog(self, comm: Commission):
+        dlg = NoteDialog(comm, parent=self)
+        if dlg.exec() == QDialog.Accepted and dlg.note is not None:
+            self._note_worker = NoteWorker(self._backend, comm.id, dlg.note)
+            self._note_worker.finished.connect(self._on_note_finished)
+            self._note_worker.error.connect(
+                lambda msg: self._show_toast_error(texts.PM_NOTE_TOAST_ERROR, msg))
+            self._note_worker.start()
+
+    def _on_note_finished(self, ok: bool):
+        if ok:
+            if self._toast_manager:
+                self._toast_manager.show_success(texts.PM_NOTE_TOAST_SAVED)
+            self._load_data()
+        else:
+            if self._toast_manager:
+                self._toast_manager.show_error(texts.PM_NOTE_TOAST_ERROR)
+
+    def _show_toast_error(self, title: str, detail: str):
+        logger.warning(f"{title}: {detail}")
+        if self._toast_manager:
+            self._toast_manager.show_error(f"{title}: {detail}")
 
     def _on_detail_assign(self):
         if self._current_detail_comm:
@@ -686,12 +1005,20 @@ class ProvisionspositionenPanel(QWidget):
             self._load_data()
 
     def _create_mapping_for(self, comm: Commission):
-        from ui.provision.zuordnung_panel import ZuordnungPanel
         xempus_name = comm.xempus_berater_name or ""
         vu_name = comm.vermittler_name or ""
         primary_name = xempus_name or vu_name
         if not primary_name:
             return
+        run_worker(
+            self, lambda w: self._backend.get_employees(),
+            lambda employees, c=comm: self._show_mapping_dialog(c, employees),
+        )
+
+    def _show_mapping_dialog(self, comm: Commission, employees):
+        xempus_name = comm.xempus_berater_name or ""
+        vu_name = comm.vermittler_name or ""
+        primary_name = xempus_name or vu_name
 
         dlg = QDialog(self)
         dlg.setWindowTitle(texts.PROVISION_MAP_DLG_CREATE_TITLE)
@@ -700,7 +1027,7 @@ class ProvisionspositionenPanel(QWidget):
 
         if vu_name:
             vu_lbl = QLabel(texts.PROVISION_MAPPING_DLG_VU_NAME.format(name=vu_name))
-            vu_lbl.setStyleSheet(f"color: {PRIMARY_500}; font-size: {FONT_SIZE_CAPTION};")
+            vu_lbl.setStyleSheet(f"font-size: {FONT_SIZE_CAPTION};")
             vu_lbl.setWordWrap(True)
             form.addRow(vu_lbl)
 
@@ -712,9 +1039,9 @@ class ProvisionspositionenPanel(QWidget):
 
         berater_combo = QComboBox()
         berater_combo.addItem("\u2014", None)
-        self._employees_cache = self._backend.get_employees()
-        for emp in self._employees_cache:
-            if emp.is_active and emp.role in ('consulter', 'teamleiter'):
+        self._employees_cache = employees
+        for emp in employees:
+            if emp.is_active and emp.role in ('consulter', 'teamleiter', 'geschaeftsfuehrer'):
                 berater_combo.addItem(emp.name, emp.id)
         form.addRow(texts.PROVISION_MAPPING_DLG_SELECT, berater_combo)
 

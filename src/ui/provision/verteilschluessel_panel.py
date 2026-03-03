@@ -9,20 +9,21 @@ from PySide6.QtWidgets import (
     QHeaderView, QFrame, QPushButton, QDialog, QComboBox,
     QLineEdit, QFormLayout, QDialogButtonBox, QDoubleSpinBox,
     QTextEdit, QScrollArea, QSizePolicy, QMenu, QMessageBox,
-    QDateEdit,
+    QDateEdit, QGroupBox, QCheckBox,
 )
 from PySide6.QtCore import (
     Qt, Signal, QTimer, QModelIndex, QDate,
 )
 from typing import List, Optional
 
-from api.client import APIError
+from api.client import APIClient
+from api.admin import AdminAPI
 from api.provision import ProvisionAPI
 from domain.provision.entities import Employee, CommissionModel
 from ui.styles.tokens import (
     PRIMARY_100, PRIMARY_500, PRIMARY_900, ACCENT_500,
     BG_PRIMARY, BG_SECONDARY, BORDER_DEFAULT,
-    ERROR,
+    ERROR, SUCCESS,
     FONT_BODY, FONT_SIZE_BODY, FONT_SIZE_CAPTION,
     ROLE_BADGE_COLORS, build_rich_tooltip, get_provision_table_style,
 )
@@ -32,6 +33,7 @@ from ui.provision.widgets import (
 )
 from ui.provision.workers import VerteilschluesselLoadWorker, SaveEmployeeWorker, SaveModelWorker
 from ui.provision.models import DistEmployeeModel
+from infrastructure.threading.worker_utils import run_worker
 from i18n import de as texts
 import logging
 
@@ -47,9 +49,10 @@ class VerteilschluesselPanel(QWidget):
     navigate_to_panel = Signal(int)
     data_changed = Signal()
 
-    def __init__(self, api: ProvisionAPI = None):
+    def __init__(self, api: ProvisionAPI = None, api_client: APIClient = None):
         super().__init__()
         self._api = api
+        self._admin_api = AdminAPI(api_client) if api_client else None
         self._presenter = None
         self._worker = None
         self._save_worker = None
@@ -151,6 +154,7 @@ class VerteilschluesselPanel(QWidget):
             'consulter': texts.PROVISION_EMP_ROLE_CONSULTER,
             'teamleiter': texts.PROVISION_EMP_ROLE_TEAMLEITER,
             'backoffice': texts.PROVISION_EMP_ROLE_BACKOFFICE,
+            'geschaeftsfuehrer': texts.PROVISION_EMP_ROLE_GESCHAEFTSFUEHRER,
         })
         self._emp_table.setItemDelegateForColumn(1, role_del)
         self._role_del = role_del
@@ -310,14 +314,18 @@ class VerteilschluesselPanel(QWidget):
         if dlg.exec() == QDialog.Accepted:
             name = name_edit.text().strip()
             if name:
-                self._backend.create_model({
+                data = {
                     'name': name,
                     'commission_rate': rate_spin.value(),
                     'tl_rate': tl_rate_spin.value() if tl_rate_spin.value() > 0 else None,
                     'tl_basis': tl_basis_combo.currentData(),
                     'description': desc_edit.text().strip() or None,
-                })
-                self._load_data()
+                }
+                run_worker(
+                    self,
+                    lambda w, d=data: self._backend.create_model(d),
+                    lambda _: self._load_data(),
+                )
 
     def _get_model_map(self) -> dict:
         """Model-ID -> CommissionModel Lookup fuer Auto-Fill aller Felder."""
@@ -336,6 +344,7 @@ class VerteilschluesselPanel(QWidget):
         role_combo.addItem(texts.PROVISION_EMP_ROLE_CONSULTER, "consulter")
         role_combo.addItem(texts.PROVISION_EMP_ROLE_TEAMLEITER, "teamleiter")
         role_combo.addItem(texts.PROVISION_EMP_ROLE_BACKOFFICE, "backoffice")
+        role_combo.addItem(texts.PROVISION_EMP_ROLE_GESCHAEFTSFUEHRER, "geschaeftsfuehrer")
         form.addRow(texts.PROVISION_EMP_DLG_ROLE, role_combo)
 
         model_combo = QComboBox()
@@ -385,7 +394,7 @@ class VerteilschluesselPanel(QWidget):
         tl_combo = QComboBox()
         tl_combo.addItem("\u2014", None)
         for e in self._employees:
-            if e.role == 'teamleiter' and e.is_active:
+            if e.role in ('teamleiter', 'geschaeftsfuehrer') and e.is_active:
                 tl_combo.addItem(e.name, e.id)
         form.addRow(texts.PROVISION_EMP_DLG_TEAMLEITER, tl_combo)
 
@@ -410,10 +419,16 @@ class VerteilschluesselPanel(QWidget):
                     'tl_override_basis': tl_basis_combo.currentData(),
                     'teamleiter_id': tl_combo.currentData(),
                 }
-                self._backend.create_employee(data)
-                if self._toast_manager:
-                    self._toast_manager.show_success(texts.PROVISION_TOAST_SAVED)
-                self._load_data()
+                run_worker(
+                    self,
+                    lambda w, d=data: self._backend.create_employee(d),
+                    self._on_employee_created,
+                )
+
+    def _on_employee_created(self, result):
+        if self._toast_manager:
+            self._toast_manager.show_success(texts.PROVISION_TOAST_SAVED)
+        self._load_data()
 
     # ── Employee context menu + edit/delete ──
 
@@ -452,6 +467,7 @@ class VerteilschluesselPanel(QWidget):
             (texts.PROVISION_EMP_ROLE_CONSULTER, "consulter"),
             (texts.PROVISION_EMP_ROLE_TEAMLEITER, "teamleiter"),
             (texts.PROVISION_EMP_ROLE_BACKOFFICE, "backoffice"),
+            (texts.PROVISION_EMP_ROLE_GESCHAEFTSFUEHRER, "geschaeftsfuehrer"),
         ]
         for label, val in roles:
             role_combo.addItem(label, val)
@@ -514,7 +530,7 @@ class VerteilschluesselPanel(QWidget):
         tl_combo = QComboBox()
         tl_combo.addItem("\u2014", None)
         for e in self._employees:
-            if e.role == 'teamleiter' and e.is_active and e.id != emp.id:
+            if e.role in ('teamleiter', 'geschaeftsfuehrer') and e.is_active and e.id != emp.id:
                 tl_combo.addItem(e.name, e.id)
                 if e.id == emp.teamleiter_id:
                     tl_combo.setCurrentIndex(tl_combo.count() - 1)
@@ -526,6 +542,9 @@ class VerteilschluesselPanel(QWidget):
         gueltig_ab.setDisplayFormat("dd.MM.yyyy")
         gueltig_ab.setToolTip(texts.PROVISION_GUELTIG_AB_HINT)
         form.addRow(texts.PROVISION_GUELTIG_AB + ":", gueltig_ab)
+
+        user_section = self._build_user_account_section(dlg, emp)
+        form.addRow(user_section)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(dlg.accept)
@@ -548,28 +567,294 @@ class VerteilschluesselPanel(QWidget):
                 'teamleiter_id': tl_combo.currentData(),
                 'gueltig_ab': gueltig_ab.date().toString("yyyy-MM-dd"),
             }
+            pending_user_id = user_section.property('pending_user_id')
+            if pending_user_id is not None:
+                data['user_id'] = pending_user_id
+            self.show_loading(True)
             self._save_worker = SaveEmployeeWorker(self._backend, emp.id, data)
             self._save_worker.finished.connect(self._on_save_finished)
             self._save_worker.error.connect(self._on_save_error)
             self._save_worker.start()
 
-    def _deactivate_employee(self, emp: Employee):
-        try:
-            self._backend.delete_employee(emp.id, hard=False)
+    # ── Nutzerkonto-Abschnitt im Edit-Dialog ──
+
+    def _build_user_account_section(self, parent_dlg: QDialog, emp: Employee) -> QGroupBox:
+        """Baut den Nutzerkonto-Abschnitt fuer den Employee-Edit-Dialog."""
+        group = QGroupBox(texts.PM_EMP_USER_SECTION)
+        layout = QVBoxLayout(group)
+        layout.setSpacing(8)
+
+        group.setProperty('pending_user_id', None)
+
+        if emp.has_user:
+            self._build_user_linked_view(layout, parent_dlg, group, emp)
+        else:
+            self._build_user_unlinked_view(layout, parent_dlg, group, emp)
+
+        return group
+
+    def _build_user_linked_view(self, layout: QVBoxLayout, parent_dlg: QDialog,
+                                group: QGroupBox, emp: Employee):
+        email_display = emp.user_email or ''
+        if email_display:
+            info_text = texts.PM_EMP_USER_LINKED.format(
+                username=emp.user_username or '?', email=email_display)
+        else:
+            info_text = texts.PM_EMP_USER_LINKED_NO_EMAIL.format(
+                username=emp.user_username or '?')
+
+        info_label = QLabel(info_text)
+        info_label.setStyleSheet(f"color: {SUCCESS}; font-size: {FONT_SIZE_BODY};")
+        layout.addWidget(info_label)
+
+        unlink_btn = QPushButton(texts.PM_EMP_USER_UNLINK)
+        unlink_btn.setStyleSheet(get_secondary_button_style())
+        unlink_btn.clicked.connect(
+            lambda: self._on_unlink_user(group, layout, parent_dlg, emp))
+        layout.addWidget(unlink_btn)
+
+    def _on_unlink_user(self, group: QGroupBox, layout: QVBoxLayout,
+                        parent_dlg: QDialog, emp: Employee):
+        reply = QMessageBox.question(
+            parent_dlg,
+            texts.PM_EMP_USER_SECTION,
+            texts.PM_EMP_USER_UNLINK_CONFIRM,
+        )
+        if reply == QMessageBox.Yes:
+            group.setProperty('pending_user_id', 0)
+            self._clear_layout(layout)
+            done_label = QLabel(texts.PM_EMP_USER_UNLINK_SUCCESS)
+            done_label.setStyleSheet(f"color: {PRIMARY_500}; font-style: italic;")
+            layout.addWidget(done_label)
+
+    def _build_user_unlinked_view(self, layout: QVBoxLayout, parent_dlg: QDialog,
+                                  group: QGroupBox, emp: Employee):
+        info_label = QLabel(texts.PM_EMP_USER_NONE)
+        info_label.setStyleSheet(f"color: {PRIMARY_500}; font-size: {FONT_SIZE_BODY};")
+        layout.addWidget(info_label)
+
+        btn_row = QHBoxLayout()
+        link_btn = QPushButton(texts.PM_EMP_USER_LINK_EXISTING)
+        link_btn.setStyleSheet(get_secondary_button_style())
+        link_btn.clicked.connect(
+            lambda: self._on_link_existing_user(group, layout, parent_dlg))
+        btn_row.addWidget(link_btn)
+
+        create_btn = QPushButton(texts.PM_EMP_USER_CREATE_NEW)
+        create_btn.setStyleSheet(get_secondary_button_style())
+        create_btn.clicked.connect(
+            lambda: self._on_create_new_user(group, layout, parent_dlg, emp))
+        btn_row.addWidget(create_btn)
+
+        if not self._admin_api:
+            link_btn.setEnabled(False)
+            link_btn.setToolTip("AdminAPI nicht verfuegbar")
+            create_btn.setEnabled(False)
+            create_btn.setToolTip("AdminAPI nicht verfuegbar")
+
+        layout.addLayout(btn_row)
+
+    def _on_link_existing_user(self, group: QGroupBox, layout: QVBoxLayout,
+                               parent_dlg: QDialog):
+        if not self._admin_api:
+            return
+        run_worker(
+            self,
+            lambda w: self._admin_api.get_users(),
+            lambda users, g=group, l=layout: self._populate_user_combo(g, l, users),
+            on_error=lambda msg: self._on_link_user_error(msg),
+        )
+
+    def _on_link_user_error(self, msg):
+        logger.error(f"Fehler beim Laden der Nutzer: {msg}")
+        if self._toast_manager:
+            self._toast_manager.show_error(msg)
+
+    def _populate_user_combo(self, group: QGroupBox, layout: QVBoxLayout, users):
+        linked_ids = {e.user_id for e in self._employees if e.user_id}
+        available = [u for u in users if u.get('id') not in linked_ids
+                     and u.get('is_active', True)]
+
+        if not available:
             if self._toast_manager:
-                self._toast_manager.show_success(texts.PROVISION_TOAST_DEACTIVATED)
-            self._load_data()
-        except APIError:
-            pass
+                self._toast_manager.show_info(texts.PM_EMP_USER_NONE)
+            return
+
+        self._clear_layout(layout)
+        select_label = QLabel(texts.PM_EMP_USER_LINK_EXISTING)
+        select_label.setStyleSheet(f"font-weight: bold; font-size: {FONT_SIZE_BODY};")
+        layout.addWidget(select_label)
+
+        combo = QComboBox()
+        combo.addItem(texts.PM_EMP_USER_SELECT, None)
+        for u in available:
+            display = u.get('username', '')
+            email = u.get('email', '')
+            if email:
+                display += f" ({email})"
+            combo.addItem(display, u.get('id'))
+        layout.addWidget(combo)
+
+        def _on_selected():
+            uid = combo.currentData()
+            if uid:
+                group.setProperty('pending_user_id', uid)
+
+        combo.currentIndexChanged.connect(_on_selected)
+
+    def _on_create_new_user(self, group: QGroupBox, layout: QVBoxLayout,
+                            parent_dlg: QDialog, emp: Employee):
+        if not self._admin_api:
+            return
+
+        self._clear_layout(layout)
+        create_label = QLabel(texts.PM_EMP_USER_CREATE_NEW)
+        create_label.setStyleSheet(f"font-weight: bold; font-size: {FONT_SIZE_BODY};")
+        layout.addWidget(create_label)
+
+        create_form = QFormLayout()
+        create_form.setSpacing(6)
+
+        suggested_username = emp.name.lower().replace(' ', '.').replace('ue', 'ue').replace('ae', 'ae').replace('oe', 'oe')
+        username_edit = QLineEdit(suggested_username)
+        username_edit.setPlaceholderText(texts.PM_EMP_USER_USERNAME)
+        create_form.addRow(texts.PM_EMP_USER_USERNAME + ":", username_edit)
+
+        email_edit = QLineEdit()
+        email_edit.setPlaceholderText(texts.PM_EMP_USER_EMAIL)
+        create_form.addRow(texts.PM_EMP_USER_EMAIL + ":", email_edit)
+
+        password_edit = QLineEdit()
+        password_edit.setPlaceholderText(texts.PM_EMP_USER_PASSWORD)
+        password_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        create_form.addRow(texts.PM_EMP_USER_PASSWORD + ":", password_edit)
+
+        layout.addLayout(create_form)
+
+        perm_group_box = QGroupBox(texts.PM_EMP_USER_PERMISSIONS)
+        perm_layout = QVBoxLayout(perm_group_box)
+        perm_layout.setSpacing(4)
+        perm_checkboxes = {}
+        for perm_key, perm_name in texts.PERMISSION_NAMES.items():
+            cb = QCheckBox(perm_name)
+            cb.setChecked(False)
+            perm_checkboxes[perm_key] = cb
+            perm_layout.addWidget(cb)
+        layout.addWidget(perm_group_box)
+
+        confirm_btn = QPushButton(texts.PM_EMP_USER_CREATE_NEW)
+        confirm_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {ACCENT_500};
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 6px 16px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{ background-color: #e88a2d; }}
+        """)
+
+        status_label = QLabel()
+        layout.addWidget(status_label)
+
+        def _do_create():
+            uname = username_edit.text().strip()
+            if len(uname) < 3:
+                status_label.setText(texts.PM_EMP_USER_NAME_TOO_SHORT)
+                status_label.setStyleSheet(f"color: {ERROR};")
+                return
+            pw = password_edit.text()
+            if len(pw) < 8:
+                status_label.setText(texts.PM_EMP_USER_PW_TOO_SHORT)
+                status_label.setStyleSheet(f"color: {ERROR};")
+                return
+            email = email_edit.text().strip()
+            perms = [k for k, cb in perm_checkboxes.items() if cb.isChecked()]
+            confirm_btn.setEnabled(False)
+            status_label.setText(texts.PM_EMP_USER_CREATE_NEW + "...")
+            status_label.setStyleSheet(f"color: {PRIMARY_500};")
+
+            run_worker(
+                self,
+                lambda w: self._admin_api.create_user(
+                    username=uname, password=pw, email=email,
+                    account_type='user', permissions=perms,
+                ),
+                lambda new_user: _on_user_created(new_user),
+                on_error=lambda msg: _on_user_create_error(msg),
+            )
+
+        def _on_user_created(new_user):
+            new_user_id = new_user.get('id') if new_user else None
+            if new_user_id:
+                group.setProperty('pending_user_id', new_user_id)
+                status_label.setText(texts.PM_EMP_USER_CREATE_SUCCESS)
+                status_label.setStyleSheet(f"color: {SUCCESS};")
+                confirm_btn.setEnabled(False)
+                username_edit.setReadOnly(True)
+                email_edit.setReadOnly(True)
+                password_edit.setReadOnly(True)
+                for cb in perm_checkboxes.values():
+                    cb.setEnabled(False)
+            else:
+                status_label.setText(texts.PM_EMP_USER_CREATE_ERROR.format(
+                    error="Keine User-ID erhalten"))
+                status_label.setStyleSheet(f"color: {ERROR};")
+                confirm_btn.setEnabled(True)
+
+        def _on_user_create_error(msg):
+            status_label.setText(texts.PM_EMP_USER_CREATE_ERROR.format(error=msg))
+            status_label.setStyleSheet(f"color: {ERROR};")
+            confirm_btn.setEnabled(True)
+
+        confirm_btn.clicked.connect(_do_create)
+        layout.addWidget(confirm_btn)
+
+    @staticmethod
+    def _clear_layout(layout: QVBoxLayout):
+        while layout.count():
+            item = layout.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
+            elif item.layout():
+                VerteilschluesselPanel._clear_sub_layout(item.layout())
+
+    @staticmethod
+    def _clear_sub_layout(layout):
+        while layout.count():
+            item = layout.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
+            elif item.layout():
+                VerteilschluesselPanel._clear_sub_layout(item.layout())
+
+    def _deactivate_employee(self, emp: Employee):
+        run_worker(
+            self,
+            lambda w, eid=emp.id: self._backend.delete_employee(eid, hard=False),
+            lambda _: self._on_emp_deactivated(),
+        )
+
+    def _on_emp_deactivated(self):
+        if self._toast_manager:
+            self._toast_manager.show_success(texts.PROVISION_TOAST_DEACTIVATED)
+        self._load_data()
 
     def _activate_employee(self, emp: Employee):
-        try:
-            success, _ = self._backend.update_employee(emp.id, {'is_active': True})
-            if success and self._toast_manager:
-                self._toast_manager.show_success(texts.PROVISION_TOAST_ACTIVATED)
-            self._load_data()
-        except APIError:
-            pass
+        run_worker(
+            self,
+            lambda w, eid=emp.id: self._backend.update_employee(eid, {'is_active': True}),
+            self._on_emp_activated,
+        )
+
+    def _on_emp_activated(self, result):
+        success = result[0] if isinstance(result, tuple) else result
+        if success and self._toast_manager:
+            self._toast_manager.show_success(texts.PROVISION_TOAST_ACTIVATED)
+        self._load_data()
 
     def _delete_employee(self, emp: Employee):
         answer = QMessageBox.question(
@@ -581,19 +866,25 @@ class VerteilschluesselPanel(QWidget):
         )
         if answer != QMessageBox.Yes:
             return
-        try:
-            self._backend.delete_employee(emp.id, hard=True)
+        run_worker(
+            self,
+            lambda w, eid=emp.id: self._backend.delete_employee(eid, hard=True),
+            lambda _: self._on_emp_hard_deleted(),
+            on_error=self._on_emp_delete_error,
+        )
+
+    def _on_emp_hard_deleted(self):
+        if self._toast_manager:
+            self._toast_manager.show_success(texts.PROVISION_TOAST_DELETED)
+        self._load_data()
+
+    def _on_emp_delete_error(self, error_msg):
+        if '409' in error_msg:
             if self._toast_manager:
-                self._toast_manager.show_success(texts.PROVISION_TOAST_DELETED)
-            self._load_data()
-        except APIError as e:
-            error_msg = str(e)
-            if '409' in error_msg:
-                if self._toast_manager:
-                    self._toast_manager.show_warning(texts.PROVISION_EMP_DELETE_HAS_REF)
-            else:
-                if self._toast_manager:
-                    self._toast_manager.show_error(error_msg)
+                self._toast_manager.show_warning(texts.PROVISION_EMP_DELETE_HAS_REF)
+        else:
+            if self._toast_manager:
+                self._toast_manager.show_error(error_msg)
 
     # ── Model context menu + edit/delete ──
 
@@ -658,12 +949,14 @@ class VerteilschluesselPanel(QWidget):
                 'description': desc_edit.text().strip() or None,
                 'gueltig_ab': gueltig_ab.date().toString("yyyy-MM-dd"),
             }
+            self.show_loading(True)
             self._save_worker = SaveModelWorker(self._backend, model.id, data)
             self._save_worker.finished.connect(self._on_save_finished)
             self._save_worker.error.connect(self._on_save_error)
             self._save_worker.start()
 
     def _on_save_finished(self, success: bool, summary):
+        self.show_loading(False)
         if success:
             if summary:
                 msg = texts.PROVISION_RECALC_TOAST.format(
@@ -680,11 +973,19 @@ class VerteilschluesselPanel(QWidget):
             self._load_data()
 
     def _on_save_error(self, error_msg: str):
+        self.show_loading(False)
         if self._toast_manager:
             self._toast_manager.show_error(error_msg)
 
     def _deactivate_model(self, model: CommissionModel):
-        if self._backend.delete_model(model.id):
+        run_worker(
+            self,
+            lambda w, mid=model.id: self._backend.delete_model(mid),
+            self._on_model_deactivated,
+        )
+
+    def _on_model_deactivated(self, success):
+        if success:
             if self._toast_manager:
                 self._toast_manager.show_success(texts.PROVISION_TOAST_DEACTIVATED)
             self._load_data()
