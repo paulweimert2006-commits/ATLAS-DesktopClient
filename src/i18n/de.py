@@ -164,6 +164,17 @@ BIPRO_HIDE_DETAILS = "Details ausblenden"
 BIPRO_GO_TO_ARCHIVE = "Zum Archiv"
 BIPRO_FETCH_ONLY_MAIL = "Nur Mails"
 BIPRO_FETCH_ONLY_VU = "Nur ausgewaehlte VU"
+BIPRO_FETCH_SINGLE_VU_TOOLTIP = "Nur die aktuell ausgewaehlte VU abrufen"
+BIPRO_MORE_ACTIONS = "Weitere Aktionen"
+BIPRO_MORE_ACTIONS_TOOLTIP = "Weitere BiPRO Aktionen"
+BIPRO_ADMIN_TOGGLE_ACCESSIBLE = "Admin Modus Umschalter"
+BIPRO_ADMIN_TOGGLE_TOOLTIP = "Zwischen Standard- und Admin-Ansicht wechseln"
+
+# === Emojis für Buttons ===
+EMOJI_FETCH = "🔄"
+EMOJI_ACK = "✅"
+EMOJI_MAIL = "✉"
+EMOJI_VU = "🏢"
 
 # === Quittieren ===
 BIPRO_ACK_BUTTON = "Quittieren"
