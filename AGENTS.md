@@ -1,7 +1,7 @@
 # AGENTS.md
 # ACENCIA ATLAS -- Desktop Client
 
-> **Version**: siehe `VERSION`-Datei (aktuell 2.2.8) | **Stand**: 02.03.2026
+> **Version**: siehe `VERSION`-Datei (aktuell 2.2.8) | **Stand**: 03.03.2026
 > Detaillierte Dokumentation liegt im privaten Submodule `ATLAS_private - Doku - Backend/`.
 
 ---
@@ -16,27 +16,30 @@
 | **Nutzer** | Versicherungsvermittler-Team (2-5 Personen) |
 | **Entry Point** | `python run.py` |
 | **Version** | Siehe `VERSION`-Datei im Root |
-| **Hosting** | Strato Webspace, `https://acencia.info/api/` |
+| **Hosting** | Hetzner Cloud (CCX13, Nuernberg), `https://acencia.info/api/` |
 
 ---
 
 ## Architektur (Clean Architecture)
 
 ```
-Desktop-App (PySide6)             Strato Webspace
-├── UI Layer                      ├── PHP REST API (~33 Endpoints)
-│   ├── main_hub.py               │   ├── auth.php (JWT)
-│   ├── provision/ (10 Panels)    │   ├── documents.php (Archiv)
-│   ├── admin/ (17 Panels)        │   ├── provision.php (GF-Bereich)
-│   └── message_center_view.py    │   └── ... (~33 Dateien)
-├── Presenters (MVP)              ├── MySQL (~47+ Tabellen)
-├── Use Cases                     ├── Dokumente-Storage
-├── Domain (Entities, Rules)      └── Releases-Storage
-├── Infrastructure (Adapters)
-├── API Clients (~29 Module)
-├── BiPRO SOAP Client
-└── Services (~16 Module)
+Desktop-App (PySide6)             Hetzner Cloud (CCX13, Nuernberg)
+├── UI Layer                      ├── Nginx (HTTPS, HTTP/2, Rate-Limiting)
+│   ├── main_hub.py               ├── PHP 8.3 FPM + REST API (~33 Endpoints)
+│   ├── provision/ (10 Panels)    │   ├── auth.php (JWT)
+│   ├── admin/ (17 Panels)        │   ├── documents.php (Archiv)
+│   └── message_center_view.py    │   ├── provision.php (GF-Bereich)
+├── Presenters (MVP)              │   └── ... (~33 Dateien)
+├── Use Cases                     ├── MySQL 8.0 Self-Hosted (60 Tabellen)
+├── Domain (Entities, Rules)      ├── Volume 100 GB (/mnt/atlas-volume)
+├── Infrastructure (Adapters)     │   ├── dokumente/ (2.589 Dateien, 428 MB)
+├── API Clients (~29 Module)      │   ├── releases/ (29 Installer, 5.3 GB)
+├── BiPRO SOAP Client             │   └── backups/ (taeglich, 30 Tage)
+└── Services (~16 Module)         └── Admin-Panel (/admin-panel/)
 ```
+
+**Server-Details:** Siehe `ATLAS_private - Doku - Backend/hetzner-migration/INFRASTRUKTUR_DATEN.md`
+**Live-Configs:** Siehe `ATLAS_private - Doku - Backend/hetzner-migration/server-mirror/`
 
 ---
 
@@ -143,5 +146,11 @@ ATLAS_private - Doku - Backend/     (Git Submodule, privat)
     api/                            33 PHP-Endpoints
     api/lib/                        Shared Libraries (DB, JWT, Crypto, Permissions, PHPMailer)
     setup/                          DB-Migrationen (34 Skripte, 005-041)
+  hetzner-migration/                Server-Migration Strato → Hetzner (abgeschlossen 03.03.2026)
+    00_MIGRATIONSPLAN.md            Gesamtueberblick + Fortschritt
+    INFRASTRUKTUR_DATEN.md          Live-Infrastruktur-Werte (IPs, Credentials, Pfade)
+    server-mirror/                  1:1-Spiegelung aller Server-Configs + Runtime-Snapshots
+    configs/                        Vorbereitete Config-Templates
+    scripts/                        Setup- und Sync-Scripts
   AGENTS.md                         Vollstaendige Agent-Instruktionen (Single Source of Truth)
 ```
