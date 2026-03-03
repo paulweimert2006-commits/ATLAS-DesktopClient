@@ -1,7 +1,7 @@
 """
 Provisionsmanagement Hub - Hauptansicht mit eigener Sidebar.
 
-UX-Redesign v3.2: 7 Panels in 2 Sektionen (DATEN / VERWALTUNG),
+UX-Redesign v3.2: 10 Panels in 2 Sektionen (DATEN / VERWALTUNG),
 Workflow-orientierte Reihenfolge, klare Benennung.
 """
 
@@ -15,12 +15,16 @@ from api.client import APIClient
 from api.auth import AuthAPI
 from api.provision import ProvisionAPI
 from infrastructure.api.provision_repository import ProvisionRepository
+from infrastructure.cache.provision_cache import ProvisionCache
+from infrastructure.threading.freeze_detector import FreezeDetector
 from presenters.provision.positions_presenter import PositionsPresenter
 from presenters.provision.dashboard_presenter import DashboardPresenter
 from presenters.provision.import_presenter import ImportPresenter
 from presenters.provision.clearance_presenter import ClearancePresenter
 from presenters.provision.distribution_presenter import DistributionPresenter
 from presenters.provision.payouts_presenter import PayoutsPresenter
+from presenters.provision.free_commission_presenter import FreeCommissionPresenter
+from presenters.provision.performance_presenter import PerformancePresenter
 from ui.styles.tokens import (
     SIDEBAR_BG, SIDEBAR_TEXT, SIDEBAR_HOVER, SIDEBAR_WIDTH_INT,
     ACCENT_500, PRIMARY_500, PRIMARY_0, PRIMARY_900,
@@ -78,21 +82,24 @@ class ProvisionNavButton(QPushButton):
 
 
 class ProvisionHub(QWidget):
-    """Provisionsmanagement-Hauptansicht mit eigener Sidebar und 7 Panels."""
+    """Provisionsmanagement-Hauptansicht mit eigener Sidebar und 10 Panels."""
 
     back_requested = Signal()
 
     PANEL_OVERVIEW = 0
-    PANEL_IMPORT = 1
-    PANEL_VU = 2
-    PANEL_XEMPUS = 3
-    PANEL_CLEARANCE = 4
-    PANEL_DISTRIBUTION = 5
-    PANEL_PAYOUTS = 6
-    PANEL_SETTINGS = 7
+    PANEL_PERFORMANCE = 1
+    PANEL_IMPORT = 2
+    PANEL_VU = 3
+    PANEL_XEMPUS = 4
+    PANEL_FREE = 5
+    PANEL_CLEARANCE = 6
+    PANEL_DISTRIBUTION = 7
+    PANEL_PAYOUTS = 8
+    PANEL_SETTINGS = 9
 
     PANEL_RUNS = PANEL_IMPORT
     PANEL_POSITIONS = PANEL_VU
+    _TOTAL_PANELS = 10
 
     def __init__(self, api_client: APIClient, auth_api: AuthAPI):
         super().__init__()
@@ -103,6 +110,9 @@ class ProvisionHub(QWidget):
         self._nav_buttons = []
         self._panels_loaded = set()
 
+        self._freeze_detector = FreezeDetector(self)
+        self._refresh_guard = False
+
         self._repository = ProvisionRepository(api_client)
         self._presenters = {
             'positions': PositionsPresenter(self._repository),
@@ -111,6 +121,8 @@ class ProvisionHub(QWidget):
             'clearance': ClearancePresenter(self._repository),
             'distribution': DistributionPresenter(self._repository),
             'payouts': PayoutsPresenter(self._repository),
+            'free_commission': FreeCommissionPresenter(self._repository),
+            'performance': PerformancePresenter(self._repository),
         }
 
         user = self._auth_api.current_user
@@ -119,6 +131,8 @@ class ProvisionHub(QWidget):
             return
 
         self._setup_ui()
+        self._freeze_detector.start()
+        self._freeze_detector.set_context("provision_hub:init")
 
     def _setup_ui(self):
         root = QHBoxLayout(self)
@@ -170,6 +184,7 @@ class ProvisionHub(QWidget):
             return btn
 
         add_nav("\u203A", texts.PROVISION_PANEL_OVERVIEW, texts.PROVISION_PANEL_OVERVIEW_DESC, self.PANEL_OVERVIEW)
+        add_nav("\u203A", texts.PM_PERF_PANEL_TITLE, texts.PM_PERF_PANEL_DESC, self.PANEL_PERFORMANCE)
 
         section_daten = QLabel(f"  {texts.PROVISION_SECTION_DATA}")
         section_daten.setStyleSheet(f"""
@@ -182,6 +197,7 @@ class ProvisionHub(QWidget):
         add_nav("\u203A", texts.PROVISION_PANEL_IMPORT, texts.PROVISION_PANEL_IMPORT_DESC, self.PANEL_IMPORT)
         add_nav("\u203A", texts.PROVISION_PANEL_VU, texts.PROVISION_PANEL_VU_DESC, self.PANEL_VU)
         add_nav("\u203A", texts.PROVISION_PANEL_XEMPUS, texts.PROVISION_PANEL_XEMPUS_DESC, self.PANEL_XEMPUS)
+        add_nav("\u203A", texts.PM_FREE_PANEL_TITLE, texts.PM_FREE_PANEL_DESC, self.PANEL_FREE)
 
         sep = QFrame()
         sep.setFixedHeight(1)
@@ -235,7 +251,7 @@ class ProvisionHub(QWidget):
         root.addWidget(sidebar)
 
         self._content_stack = QStackedWidget()
-        for i in range(8):
+        for i in range(self._TOTAL_PANELS):
             self._content_stack.addWidget(self._create_panel_placeholder(i))
         root.addWidget(self._content_stack)
 
@@ -251,9 +267,17 @@ class ProvisionHub(QWidget):
         layout.addWidget(lbl)
         return w
 
+    _PANEL_NAMES = {
+        0: "overview", 1: "performance", 2: "import", 3: "positions",
+        4: "xempus", 5: "free_commission", 6: "clearance",
+        7: "distribution", 8: "payouts", 9: "settings",
+    }
+
     def _navigate_to(self, index: int):
         for i, btn in enumerate(self._nav_buttons):
             btn.setChecked(i == index)
+        panel_name = self._PANEL_NAMES.get(index, f"panel_{index}")
+        self._freeze_detector.set_context(f"provision:{panel_name}")
         self._ensure_panel_loaded(index)
         self._content_stack.setCurrentIndex(index)
 
@@ -268,6 +292,10 @@ class ProvisionHub(QWidget):
                 from ui.provision.dashboard_panel import DashboardPanel
                 panel = DashboardPanel()
                 panel.set_presenter(self._presenters['dashboard'])
+            elif index == self.PANEL_PERFORMANCE:
+                from ui.provision.performance_panel import PerformancePanel
+                panel = PerformancePanel()
+                panel.set_presenter(self._presenters['performance'])
             elif index == self.PANEL_IMPORT:
                 from ui.provision.abrechnungslaeufe_panel import AbrechnungslaeufPanel
                 panel = AbrechnungslaeufPanel()
@@ -279,13 +307,17 @@ class ProvisionHub(QWidget):
             elif index == self.PANEL_XEMPUS:
                 from ui.provision.xempus_insight_panel import XempusInsightPanel
                 panel = XempusInsightPanel(self._provision_api)
+            elif index == self.PANEL_FREE:
+                from ui.provision.free_commission_panel import FreeCommissionPanel
+                panel = FreeCommissionPanel()
+                panel.set_presenter(self._presenters['free_commission'])
             elif index == self.PANEL_CLEARANCE:
                 from ui.provision.zuordnung_panel import ZuordnungPanel
                 panel = ZuordnungPanel()
                 panel.set_presenter(self._presenters['clearance'])
             elif index == self.PANEL_DISTRIBUTION:
                 from ui.provision.verteilschluessel_panel import VerteilschluesselPanel
-                panel = VerteilschluesselPanel()
+                panel = VerteilschluesselPanel(api_client=self._api_client)
                 panel.set_presenter(self._presenters['distribution'])
             elif index == self.PANEL_PAYOUTS:
                 from ui.provision.auszahlungen_panel import AuszahlungenPanel
@@ -314,6 +346,7 @@ class ProvisionHub(QWidget):
 
     def _on_panel_data_changed(self):
         """Daten in einem Panel haben sich geaendert - alle anderen Panels aktualisieren."""
+        ProvisionCache.instance().invalidate_all()
         for index in list(self._panels_loaded):
             panel = self._content_stack.widget(index)
             if panel and hasattr(panel, 'refresh'):
@@ -323,7 +356,13 @@ class ProvisionHub(QWidget):
                     logger.debug(f"Refresh Panel {index} nach data_changed: {e}")
 
     def _refresh_all(self):
-        """Alle geladenen Panels neu laden."""
+        """Alle geladenen Panels neu laden (mit Guard gegen Rapid-Fire)."""
+        if self._refresh_guard:
+            return
+        self._refresh_guard = True
+        QTimer.singleShot(1500, self._release_refresh_guard)
+
+        ProvisionCache.instance().invalidate_all()
         for index in list(self._panels_loaded):
             panel = self._content_stack.widget(index)
             if panel and hasattr(panel, 'refresh'):
@@ -334,29 +373,36 @@ class ProvisionHub(QWidget):
         if self._toast_manager:
             self._toast_manager.show_success(texts.PROVISION_HUB_REFRESH_DONE)
 
+    def _release_refresh_guard(self):
+        self._refresh_guard = False
+
     def get_blocking_operations(self) -> list:
         """Laufende Operationen die das Schliessen blockieren."""
         ops = []
-        runs_panel = self._content_stack.widget(self.PANEL_IMPORT)
-        if runs_panel and hasattr(runs_panel, '_import_worker'):
-            worker = runs_panel._import_worker
-            if worker and worker.isRunning():
-                ops.append(texts.PROVISION_BLOCKING_IMPORT)
-            parse_worker = getattr(runs_panel, '_parse_worker', None)
-            if parse_worker and parse_worker.isRunning():
-                ops.append(texts.PROVISION_BLOCKING_PARSE)
+
+        for name, presenter in self._presenters.items():
+            if presenter and hasattr(presenter, 'has_running_workers'):
+                if presenter.has_running_workers():
+                    ops.append(texts.PROVISION_BLOCKING_IMPORT if name == 'import'
+                               else texts.PROVISION_BLOCKING_WORKER)
 
         for index in list(self._panels_loaded):
-            if index == self.PANEL_IMPORT:
-                continue
             panel = self._content_stack.widget(index)
             if not panel:
                 continue
-            for attr in ('_load_worker', '_worker', '_detail_worker',
-                         '_audit_worker', '_ignore_worker', '_mapping_worker',
-                         '_pos_worker', '_generate_worker', '_save_worker'):
+            for attr in ('_import_worker', '_parse_worker', '_load_worker',
+                         '_worker', '_detail_worker', '_audit_worker',
+                         '_ignore_worker', '_mapping_worker', '_pos_worker',
+                         '_generate_worker', '_save_worker', '_raw_worker'):
                 w = getattr(panel, attr, None)
                 if w and w.isRunning():
                     ops.append(texts.PROVISION_BLOCKING_WORKER)
                     break
         return ops
+
+    def cleanup(self) -> None:
+        """Alle laufenden Worker sicher beenden."""
+        self._freeze_detector.stop()
+        for presenter in self._presenters.values():
+            if presenter and hasattr(presenter, 'cleanup'):
+                presenter.cleanup()

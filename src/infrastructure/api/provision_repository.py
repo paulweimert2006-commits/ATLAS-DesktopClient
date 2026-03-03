@@ -4,6 +4,10 @@ Infrastructure-Adapter: Provision API → Domain Repository Interfaces.
 Wrappt die bestehende ProvisionAPI-Klasse und implementiert
 die Domain-Interfaces. Konvertiert zwischen API-Datenformaten
 und Domain-Entitäten.
+
+Cache-Integration: Lesende Methoden nutzen ProvisionCache mit
+TTL-basiertem Lookup. Schreibende Methoden invalidieren betroffene
+Cache-Prefixe nach Erfolg.
 """
 
 import logging
@@ -14,7 +18,13 @@ from domain.provision.entities import (
     Commission, Contract, Employee, CommissionModel,
     DashboardSummary, ImportResult, ImportBatch,
     BeraterAbrechnung, VermittlerMapping, ContractSearchResult,
-    PaginationInfo, RecalcSummary,
+    PaginationInfo, RecalcSummary, PerformanceData,
+)
+from infrastructure.cache.provision_cache import (
+    ProvisionCache, _make_key,
+    TTL_EMPLOYEES, TTL_MODELS, TTL_MAPPINGS, TTL_COMMISSIONS,
+    TTL_DASHBOARD, TTL_CLEARANCE, TTL_ABRECHNUNGEN, TTL_PERFORMANCE,
+    TTL_FREE_COMMISSIONS, TTL_IMPORT_BATCHES, TTL_CONTRACTS,
 )
 
 logger = logging.getLogger(__name__)
@@ -28,8 +38,9 @@ class ProvisionRepository:
     Einzelne Klasse als Fassade für den bestehenden REST-API-Client.
     """
 
-    def __init__(self, client: APIClient):
+    def __init__(self, client: APIClient, cache: ProvisionCache = None):
         self._client = client
+        self._cache = cache or ProvisionCache.instance()
 
     # ── Commissions (IProvisionRepository) ──
 
@@ -45,13 +56,26 @@ class ProvisionRepository:
         page: int = None,
         per_page: int = None,
         limit: int = 500,
+        offset: int = None,
     ) -> Tuple[List[Commission], Optional[PaginationInfo]]:
+        cache_key = _make_key(
+            "commissions", berater_id=berater_id, match_status=match_status,
+            von=von, bis=bis, versicherer=versicherer, q=q,
+            is_relevant=is_relevant, page=page, per_page=per_page,
+            limit=limit, offset=offset,
+        )
+        cached = self._cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         params = {}
         if page is not None:
             params['page'] = page
             params['per_page'] = per_page or 50
         else:
             params['limit'] = limit
+            if offset is not None:
+                params['offset'] = offset
         if berater_id:
             params['berater_id'] = berater_id
         if match_status:
@@ -72,8 +96,15 @@ class ProvisionRepository:
                 data = resp.get('data', {})
                 commissions = [Commission.from_dict(c) for c in data.get('commissions', [])]
                 pagination_data = data.get('pagination')
-                pagination = PaginationInfo.from_dict(pagination_data) if pagination_data else None
-                return commissions, pagination
+                if pagination_data:
+                    pagination = PaginationInfo.from_dict(pagination_data)
+                elif 'total_available' in data:
+                    pagination = PaginationInfo(total=int(data['total_available']))
+                else:
+                    pagination = None
+                result = (commissions, pagination)
+                self._cache.set(cache_key, result, TTL_COMMISSIONS)
+                return result
         except APIError as e:
             logger.error(f"Fehler beim Laden der Provisionen: {e}")
         return [], None
@@ -85,7 +116,10 @@ class ProvisionRepository:
                 f'/pm/commissions/{commission_id}/match',
                 json_data={'contract_id': contract_id, 'berater_id': berater_id}
             )
-            return resp.get('success', False)
+            ok = resp.get('success', False)
+            if ok:
+                self._invalidate_commission_context()
+            return ok
         except APIError as e:
             logger.error(f"Fehler beim manuellen Matching {commission_id}: {e}")
         return False
@@ -93,7 +127,10 @@ class ProvisionRepository:
     def ignore_commission(self, commission_id: int) -> bool:
         try:
             resp = self._client.put(f'/pm/commissions/{commission_id}/ignore', json_data={})
-            return resp.get('success', False)
+            ok = resp.get('success', False)
+            if ok:
+                self._invalidate_commission_context()
+            return ok
         except APIError as e:
             logger.error(f"Fehler beim Ignorieren der Provision {commission_id}: {e}")
         return False
@@ -102,15 +139,66 @@ class ProvisionRepository:
         try:
             resp = self._client.post('/pm/commissions/recalculate', json_data={})
             if resp.get('success'):
+                self._cache.invalidate("commissions")
+                self._cache.invalidate("dashboard")
+                self._cache.invalidate("abrechnungen")
                 return resp.get('data', {}).get('recalculated', 0)
         except APIError as e:
             logger.error(f"Fehler bei Split-Neuberechnung: {e}")
         return 0
 
+    def set_commission_override(self, commission_id: int, amount_settled: float,
+                                reason: str = None) -> dict:
+        try:
+            data = {'amount_settled': amount_settled}
+            if reason:
+                data['reason'] = reason
+            resp = self._client.put(
+                f'/pm/commissions/{commission_id}/override', json_data=data)
+            if resp.get('success'):
+                self._cache.invalidate("commissions")
+                self._cache.invalidate("abrechnungen")
+                return {'success': True, 'abrechnungen': resp.get('data', {}).get('abrechnungen')}
+            return {'success': False}
+        except APIError as e:
+            logger.error(f"Fehler beim Setzen des Overrides {commission_id}: {e}")
+        return {'success': False}
+
+    def reset_commission_override(self, commission_id: int) -> dict:
+        try:
+            resp = self._client.delete(
+                f'/pm/commissions/{commission_id}/override')
+            if resp.get('success'):
+                self._cache.invalidate("commissions")
+                self._cache.invalidate("abrechnungen")
+                return {'success': True, 'abrechnungen': resp.get('data', {}).get('abrechnungen')}
+            return {'success': False}
+        except APIError as e:
+            logger.error(f"Fehler beim Zuruecksetzen des Overrides {commission_id}: {e}")
+        return {'success': False}
+
+    def save_commission_note(self, commission_id: int, note: str) -> bool:
+        try:
+            resp = self._client.put(
+                f'/pm/commissions/{commission_id}/note',
+                json_data={'note': note})
+            ok = resp.get('success', False)
+            if ok:
+                self._cache.invalidate("commissions")
+            return ok
+        except APIError as e:
+            logger.error(f"Fehler beim Speichern der Notiz {commission_id}: {e}")
+        return False
+
     # ── Dashboard ──
 
     def get_dashboard_summary(self, von: str = None,
                               bis: str = None) -> Optional[DashboardSummary]:
+        cache_key = _make_key("dashboard", von=von, bis=bis)
+        cached = self._cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         params = {}
         if von and bis:
             params['von'] = von
@@ -118,7 +206,9 @@ class ProvisionRepository:
         try:
             resp = self._client.get('/pm/dashboard/summary', params=params)
             if resp.get('success'):
-                return DashboardSummary.from_dict(resp.get('data', {}))
+                result = DashboardSummary.from_dict(resp.get('data', {}))
+                self._cache.set(cache_key, result, TTL_DASHBOARD)
+                return result
         except APIError as e:
             logger.error(f"Fehler beim Laden des Dashboards: {e}")
         return None
@@ -138,6 +228,11 @@ class ProvisionRepository:
         return None
 
     def get_clearance_counts(self, von: str = None, bis: str = None) -> Dict:
+        cache_key = _make_key("clearance", von=von, bis=bis)
+        cached = self._cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         try:
             params = {}
             if von:
@@ -146,11 +241,36 @@ class ProvisionRepository:
                 params['bis'] = bis
             resp = self._client.get('/pm/clearance', params=params)
             if resp.get('success'):
-                return resp.get('data', {})
+                result = resp.get('data', {})
+                self._cache.set(cache_key, result, TTL_CLEARANCE)
+                return result
         except APIError as e:
             logger.error(f"Fehler beim Laden der Klärfall-Counts: {e}")
         return {'total': 0, 'no_contract': 0, 'no_berater': 0,
                 'no_model': 0, 'no_split': 0}
+
+    def get_performance(self, von: str = None, bis: str = None,
+                        monat: str = None) -> Optional[PerformanceData]:
+        cache_key = _make_key("performance", von=von, bis=bis, monat=monat)
+        cached = self._cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        try:
+            params = {}
+            if von and bis:
+                params['von'] = von
+                params['bis'] = bis
+            elif monat:
+                params['monat'] = monat
+            resp = self._client.get('/pm/dashboard/performance', params=params)
+            if resp.get('success'):
+                result = PerformanceData.from_dict(resp.get('data', {}))
+                self._cache.set(cache_key, result, TTL_PERFORMANCE)
+                return result
+        except APIError as e:
+            logger.error(f"Fehler beim Laden der Erfolgsauswertung: {e}")
+        return None
 
     # ── Match-Suggestions ──
 
@@ -193,6 +313,8 @@ class ProvisionRepository:
                 'force_override': force_override,
             })
             if resp.get('success'):
+                self._invalidate_commission_context()
+                self._cache.invalidate("contracts")
                 return resp.get('data', {})
         except APIError as e:
             logger.error(f"Fehler bei Zuordnung commission={commission_id} → contract={contract_id}: {e}")
@@ -216,6 +338,7 @@ class ProvisionRepository:
                 'skip_match': skip_match,
             }, timeout=120, retries=retries)
             if resp.get('success'):
+                self._cache.invalidate_all()
                 return ImportResult.from_dict(resp.get('data', {}))
         except APIError as e:
             logger.error(f"Fehler beim VU-Import: {e}")
@@ -231,29 +354,72 @@ class ProvisionRepository:
                 'file_hash': file_hash,
             }, timeout=120)
             if resp.get('success'):
+                self._cache.invalidate_all()
                 return ImportResult.from_dict(resp.get('data', {}))
         except APIError as e:
             logger.error(f"Fehler beim Xempus-Import: {e}")
             raise
         return None
 
+    def upload_raw_data(self, batch_id: int, headers: list, rows: list,
+                        sheet_name: str = None, total_rows: int = 0,
+                        skipped_rows: int = 0) -> bool:
+        try:
+            resp = self._client.post(
+                f'/pm/import/{batch_id}/raw-data',
+                json_data={
+                    'headers': headers,
+                    'rows': rows,
+                    'sheet_name': sheet_name,
+                    'total_rows': total_rows,
+                    'skipped_rows': skipped_rows,
+                },
+                timeout=120,
+            )
+            return resp.get('success', False)
+        except APIError as e:
+            logger.error(f"Fehler beim Upload der Rohdaten (batch {batch_id}): {e}")
+        return False
+
+    def get_raw_data(self, batch_id: int, row: int = None) -> dict:
+        try:
+            params = {}
+            if row is not None:
+                params['row'] = row
+            resp = self._client.get(
+                f'/pm/import/{batch_id}/raw-data', params=params)
+            if resp.get('success'):
+                return resp.get('data', {})
+        except APIError as e:
+            logger.error(f"Fehler beim Laden der Rohdaten (batch {batch_id}): {e}")
+        return {}
+
     def trigger_auto_match(self, batch_id: int = None) -> Dict:
         try:
             data = {}
             if batch_id:
                 data['batch_id'] = batch_id
-            resp = self._client.post('/pm/import/match', json_data=data, timeout=120)
+            resp = self._client.post('/pm/import/match', json_data=data,
+                                     timeout=120, retries=1)
             if resp.get('success'):
+                self._cache.invalidate_all()
                 return resp.get('data', {}).get('stats', {})
         except APIError as e:
             logger.error(f"Fehler beim Auto-Matching: {e}")
         return {}
 
     def get_import_batches(self) -> List[ImportBatch]:
+        cache_key = "import_batches"
+        cached = self._cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         try:
             resp = self._client.get('/pm/import/batches')
             if resp.get('success'):
-                return [ImportBatch.from_dict(b) for b in resp.get('data', {}).get('batches', [])]
+                result = [ImportBatch.from_dict(b) for b in resp.get('data', {}).get('batches', [])]
+                self._cache.set(cache_key, result, TTL_IMPORT_BATCHES)
+                return result
         except APIError as e:
             logger.error(f"Fehler beim Laden der Import-Historie: {e}")
         return []
@@ -261,10 +427,17 @@ class ProvisionRepository:
     # ── Employees (IEmployeeRepository) ──
 
     def get_employees(self) -> List[Employee]:
+        cache_key = "employees"
+        cached = self._cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         try:
             resp = self._client.get('/pm/employees')
             if resp.get('success'):
-                return [Employee.from_dict(e) for e in resp.get('data', {}).get('employees', [])]
+                result = [Employee.from_dict(e) for e in resp.get('data', {}).get('employees', [])]
+                self._cache.set(cache_key, result, TTL_EMPLOYEES)
+                return result
         except APIError as e:
             logger.error(f"Fehler beim Laden der Mitarbeiter: {e}")
         return []
@@ -282,6 +455,7 @@ class ProvisionRepository:
         try:
             resp = self._client.post('/pm/employees', json_data=data)
             if resp.get('success'):
+                self._cache.invalidate("employees")
                 return Employee.from_dict(resp.get('data', {}).get('employee', {}))
         except APIError as e:
             logger.error(f"Fehler beim Erstellen des Mitarbeiters: {e}")
@@ -291,6 +465,9 @@ class ProvisionRepository:
         try:
             resp = self._client.put(f'/pm/employees/{emp_id}', json_data=data)
             success = resp.get('success', False)
+            if success:
+                self._cache.invalidate("employees")
+                self._cache.invalidate("commissions")
             summary = RecalcSummary.from_dict(resp.get('data', {}).get('recalc_summary'))
             return success, summary
         except APIError as e:
@@ -303,7 +480,10 @@ class ProvisionRepository:
             if hard:
                 url += '?hard=1'
             resp = self._client.delete(url)
-            return resp.get('success', False)
+            ok = resp.get('success', False)
+            if ok:
+                self._cache.invalidate("employees")
+            return ok
         except APIError as e:
             logger.error(f"Fehler beim Deaktivieren des Mitarbeiters {emp_id}: {e}")
             raise
@@ -312,6 +492,12 @@ class ProvisionRepository:
 
     def get_contracts(self, berater_id: int = None, status: str = None,
                       q: str = None, limit: int = 500) -> List[Contract]:
+        cache_key = _make_key("contracts", berater_id=berater_id,
+                              status=status, q=q, limit=limit)
+        cached = self._cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         params = {'limit': limit}
         if berater_id:
             params['berater_id'] = berater_id
@@ -322,7 +508,9 @@ class ProvisionRepository:
         try:
             resp = self._client.get('/pm/contracts', params=params)
             if resp.get('success'):
-                return [Contract.from_dict(c) for c in resp.get('data', {}).get('contracts', [])]
+                result = [Contract.from_dict(c) for c in resp.get('data', {}).get('contracts', [])]
+                self._cache.set(cache_key, result, TTL_CONTRACTS)
+                return result
         except APIError as e:
             logger.error(f"Fehler beim Laden der Verträge: {e}")
         return []
@@ -351,7 +539,10 @@ class ProvisionRepository:
     def assign_berater_to_contract(self, contract_id: int, berater_id: int) -> bool:
         try:
             resp = self._client.put(f'/pm/contracts/{contract_id}', json_data={'berater_id': berater_id})
-            return resp.get('success', False)
+            ok = resp.get('success', False)
+            if ok:
+                self._cache.invalidate("contracts")
+            return ok
         except APIError as e:
             logger.error(f"Fehler beim Zuordnen von Berater {berater_id} zu Vertrag {contract_id}: {e}")
         return False
@@ -359,16 +550,23 @@ class ProvisionRepository:
     # ── Mappings (IMappingRepository) ──
 
     def get_mappings(self, include_unmapped: bool = False) -> Dict:
+        cache_key = _make_key("mappings", include_unmapped=include_unmapped)
+        cached = self._cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         params = {}
         if include_unmapped:
             params['include_unmapped'] = '1'
         try:
             resp = self._client.get('/pm/mappings', params=params)
             if resp.get('success'):
-                return {
+                result = {
                     'mappings': [VermittlerMapping.from_dict(m) for m in resp.get('data', {}).get('mappings', [])],
                     'unmapped': resp.get('data', {}).get('unmapped', []),
                 }
+                self._cache.set(cache_key, result, TTL_MAPPINGS)
+                return result
         except APIError as e:
             logger.error(f"Fehler beim Laden der Vermittler-Mappings: {e}")
         return {'mappings': [], 'unmapped': []}
@@ -380,6 +578,8 @@ class ProvisionRepository:
                 'berater_id': berater_id,
             })
             if resp.get('success'):
+                self._cache.invalidate("mappings")
+                self._cache.invalidate("commissions")
                 return resp.get('data', {}).get('id')
         except APIError as e:
             logger.error(f"Fehler beim Erstellen des Mappings: {e}")
@@ -388,7 +588,11 @@ class ProvisionRepository:
     def delete_mapping(self, mapping_id: int) -> bool:
         try:
             resp = self._client.delete(f'/pm/mappings/{mapping_id}')
-            return resp.get('success', False)
+            ok = resp.get('success', False)
+            if ok:
+                self._cache.invalidate("mappings")
+                self._cache.invalidate("commissions")
+            return ok
         except APIError as e:
             logger.error(f"Fehler beim Löschen des Mappings {mapping_id}: {e}")
         return False
@@ -396,10 +600,17 @@ class ProvisionRepository:
     # ── Models (IModelRepository) ──
 
     def get_models(self) -> List[CommissionModel]:
+        cache_key = "models"
+        cached = self._cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         try:
             resp = self._client.get('/pm/models')
             if resp.get('success'):
-                return [CommissionModel.from_dict(m) for m in resp.get('data', {}).get('models', [])]
+                result = [CommissionModel.from_dict(m) for m in resp.get('data', {}).get('models', [])]
+                self._cache.set(cache_key, result, TTL_MODELS)
+                return result
         except APIError as e:
             logger.error(f"Fehler beim Laden der Provisionsmodelle: {e}")
         return []
@@ -408,6 +619,7 @@ class ProvisionRepository:
         try:
             resp = self._client.post('/pm/models', json_data=data)
             if resp.get('success'):
+                self._cache.invalidate("models")
                 return CommissionModel.from_dict(resp.get('data', {}).get('model', {}))
         except APIError as e:
             logger.error(f"Fehler beim Erstellen des Provisionsmodells: {e}")
@@ -417,6 +629,9 @@ class ProvisionRepository:
         try:
             resp = self._client.put(f'/pm/models/{model_id}', json_data=data)
             success = resp.get('success', False)
+            if success:
+                self._cache.invalidate("models")
+                self._cache.invalidate("commissions")
             summary = RecalcSummary.from_dict(resp.get('data', {}).get('recalc_summary'))
             return success, summary
         except APIError as e:
@@ -426,7 +641,10 @@ class ProvisionRepository:
     def delete_model(self, model_id: int) -> bool:
         try:
             resp = self._client.delete(f'/pm/models/{model_id}')
-            return resp.get('success', False)
+            ok = resp.get('success', False)
+            if ok:
+                self._cache.invalidate("models")
+            return ok
         except APIError as e:
             logger.error(f"Fehler beim Deaktivieren des Provisionsmodells {model_id}: {e}")
         return False
@@ -434,13 +652,20 @@ class ProvisionRepository:
     # ── Abrechnungen (IAbrechnungRepository) ──
 
     def get_abrechnungen(self, monat: str = None) -> List[BeraterAbrechnung]:
+        cache_key = _make_key("abrechnungen", monat=monat)
+        cached = self._cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         params = {}
         if monat:
             params['monat'] = monat
         try:
             resp = self._client.get('/pm/abrechnungen', params=params)
             if resp.get('success'):
-                return [BeraterAbrechnung.from_dict(a) for a in resp.get('data', {}).get('abrechnungen', [])]
+                result = [BeraterAbrechnung.from_dict(a) for a in resp.get('data', {}).get('abrechnungen', [])]
+                self._cache.set(cache_key, result, TTL_ABRECHNUNGEN)
+                return result
         except APIError as e:
             logger.error(f"Fehler beim Laden der Abrechnungen: {e}")
         return []
@@ -449,21 +674,39 @@ class ProvisionRepository:
         try:
             resp = self._client.post('/pm/abrechnungen', json_data={'monat': monat})
             if resp.get('success'):
+                self._cache.invalidate("abrechnungen")
+                self._cache.invalidate("dashboard")
                 return resp.get('data', {})
         except APIError as e:
             logger.error(f"Fehler beim Generieren der Abrechnung: {e}")
         return {}
 
     def update_abrechnung_status(self, abrechnung_id: int, status: str) -> bool:
+        resp = self._client.put(
+            f'/pm/abrechnungen/{abrechnung_id}',
+            json_data={'status': status}
+        )
+        ok = resp.get('success', False)
+        if ok:
+            self._cache.invalidate("abrechnungen")
+            self._cache.invalidate("dashboard")
+        return ok
+
+    def send_statement_email(self, abrechnung_id: int, pdf_base64: str,
+                             filename: str) -> dict:
         try:
-            resp = self._client.put(
-                f'/pm/abrechnungen/{abrechnung_id}',
-                json_data={'status': status}
-            )
-            return resp.get('success', False)
+            resp = self._client.post(
+                f'/pm/abrechnungen/{abrechnung_id}/send-email',
+                json_data={
+                    'pdf_base64': pdf_base64,
+                    'filename': filename,
+                })
+            if resp.get('success'):
+                return {'success': True, **resp.get('data', {})}
+            return {'success': False, 'error': resp.get('message', '')}
         except APIError as e:
-            logger.error(f"Fehler beim Aktualisieren der Abrechnung {abrechnung_id}: {e}")
-        return False
+            logger.error(f"Fehler beim E-Mail-Versand (Abrechnung {abrechnung_id}): {e}")
+            return {'success': False, 'error': str(e)}
 
     # ── Audit (IAuditRepository) ──
 
@@ -480,12 +723,118 @@ class ProvisionRepository:
             logger.error(f"Fehler beim Laden des PM-Audit-Logs: {e}")
         return []
 
+    # ── PM Settings ──
+
+    def get_pm_settings(self) -> dict:
+        cache_key = "pm_settings"
+        cached = self._cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        try:
+            resp = self._client.get('/pm/settings')
+            if resp.get('success'):
+                result = resp.get('data', {}).get('settings', {})
+                self._cache.set(cache_key, result, TTL_EMPLOYEES)
+                return result
+        except APIError as e:
+            logger.error(f"Fehler beim Laden der PM-Einstellungen: {e}")
+        return {}
+
+    def update_pm_settings(self, settings: dict) -> bool:
+        try:
+            resp = self._client.put('/pm/settings', json_data={'settings': settings})
+            ok = resp.get('success', False)
+            if ok:
+                self._cache.invalidate("pm_settings")
+            return ok
+        except APIError as e:
+            logger.error(f"Fehler beim Speichern der PM-Einstellungen: {e}")
+        return False
+
+    # ── Freie Provisionen / Sonderzahlungen ──
+
+    def get_free_commissions(self, von: str = None, bis: str = None) -> list:
+        cache_key = _make_key("free_commissions", von=von, bis=bis)
+        cached = self._cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        try:
+            params = {}
+            if von:
+                params['von'] = von
+            if bis:
+                params['bis'] = bis
+            resp = self._client.get('/pm/free-commissions', params=params)
+            if resp.get('success'):
+                result = resp.get('data', {}).get('free_commissions', [])
+                self._cache.set(cache_key, result, TTL_FREE_COMMISSIONS)
+                return result
+        except APIError as e:
+            logger.error(f"Fehler beim Laden der freien Provisionen: {e}")
+        return []
+
+    def get_free_commission(self, fc_id: int) -> dict:
+        try:
+            resp = self._client.get(f'/pm/free-commissions/{fc_id}')
+            if resp.get('success'):
+                return resp.get('data', {})
+        except APIError as e:
+            logger.error(f"Fehler beim Laden der freien Provision {fc_id}: {e}")
+        return {}
+
+    def create_free_commission(self, data: dict) -> dict:
+        try:
+            resp = self._client.post('/pm/free-commissions', json_data=data)
+            if resp.get('success'):
+                self._cache.invalidate("free_commissions")
+                self._cache.invalidate("abrechnungen")
+                return {'success': True, 'id': resp.get('data', {}).get('id')}
+            return {'success': False, 'message': resp.get('message', '')}
+        except APIError as e:
+            logger.error(f"Fehler beim Erstellen der freien Provision: {e}")
+        return {'success': False}
+
+    def update_free_commission(self, fc_id: int, data: dict) -> dict:
+        try:
+            resp = self._client.put(f'/pm/free-commissions/{fc_id}', json_data=data)
+            if resp.get('success'):
+                self._cache.invalidate("free_commissions")
+                self._cache.invalidate("abrechnungen")
+                return {'success': True}
+            return {'success': False, 'message': resp.get('message', '')}
+        except APIError as e:
+            logger.error(f"Fehler beim Aktualisieren der freien Provision {fc_id}: {e}")
+        return {'success': False}
+
+    def delete_free_commission(self, fc_id: int) -> dict:
+        try:
+            resp = self._client.delete(f'/pm/free-commissions/{fc_id}')
+            if resp.get('success'):
+                self._cache.invalidate("free_commissions")
+                self._cache.invalidate("abrechnungen")
+                return {'success': True}
+            return {'success': False, 'message': resp.get('message', '')}
+        except APIError as e:
+            logger.error(f"Fehler beim Loeschen der freien Provision {fc_id}: {e}")
+        return {'success': False}
+
+    # ── Cache-Helpers ──
+
+    def _invalidate_commission_context(self) -> None:
+        """Invalidiert Commissions + abhaengige Aggregate (Dashboard, Clearance)."""
+        self._cache.invalidate("commissions")
+        self._cache.invalidate("dashboard")
+        self._cache.invalidate("clearance")
+
     # ── Reset ──
 
     def reset_provision_data(self) -> Dict:
         try:
             resp = self._client.post('/pm/reset', {})
             if resp.get('success'):
+                self._cache.invalidate_all()
                 return resp.get('data', {})
             raise APIError(resp.get('message', 'Reset fehlgeschlagen'))
         except APIError as e:

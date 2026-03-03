@@ -41,8 +41,9 @@ a = Analysis(
         # Zentrale Versionsdatei (geladen via sys._MEIPASS in main.py)
         ('VERSION', '.'),
 
-        # App-Icon (fuer QIcon zur Laufzeit)
+        # App-Icon und Grafiken (fuer QIcon / Wartungsmodus zur Laufzeit)
         ('src/ui/assets/icon.ico', 'ui/assets'),
+        ('src/ui/assets/maintenance.gif', 'ui/assets'),
 
         # Fonts (falls .ttf/.otf Dateien im Ordner liegen)
         ('src/ui/assets/fonts', 'ui/assets/fonts'),

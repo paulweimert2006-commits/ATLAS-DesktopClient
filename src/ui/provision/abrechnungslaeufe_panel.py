@@ -15,7 +15,6 @@ from PySide6.QtCore import (
 from typing import List, Optional, Dict
 from datetime import datetime
 import os
-import hashlib
 
 from api.provision import ProvisionAPI
 from domain.provision.entities import ImportBatch, ImportResult
@@ -32,6 +31,7 @@ from ui.provision.widgets import (
 )
 from ui.provision.workers import VuBatchesLoadWorker, VuParseFileWorker, VuImportWorker
 from ui.provision.models import VuBatchesModel
+from infrastructure.threading.worker_utils import run_worker
 from i18n import de as texts
 import logging
 
@@ -82,7 +82,10 @@ class AbrechnungslaeufPanel(QWidget):
 
     def show_loading(self, loading: bool) -> None:
         """View-Interface: Ladezustand."""
-        pass
+        self._loading_overlay.setVisible(loading)
+        if loading:
+            self._loading_overlay.setGeometry(self.rect())
+            self._loading_overlay.raise_()
 
     def show_error(self, message: str) -> None:
         """View-Interface: Fehler anzeigen."""
@@ -245,12 +248,26 @@ class AbrechnungslaeufPanel(QWidget):
         self._start_parse(path)
 
     def _start_parse(self, path: str):
-        from services.provision_import import compute_file_hash
-        self._parsed_hash = compute_file_hash(path)
         self._log.setVisible(True)
         self._log.setText(texts.PROVISION_IMPORT_PROGRESS_PARSING)
         self._file_btn.setEnabled(False)
         self._import_btn.setEnabled(False)
+
+        self._pending_parse_path = path
+        run_worker(
+            self,
+            lambda w, p=path: self._compute_hash_bg(p),
+            self._on_hash_computed,
+        )
+
+    @staticmethod
+    def _compute_hash_bg(path: str) -> str:
+        from services.provision_import import compute_file_hash
+        return compute_file_hash(path)
+
+    def _on_hash_computed(self, file_hash: str):
+        self._parsed_hash = file_hash
+        path = self._pending_parse_path
 
         if self._parse_worker and self._parse_worker.isRunning():
             self._parse_worker.quit()
@@ -266,6 +283,7 @@ class AbrechnungslaeufPanel(QWidget):
         self._parsed_rows = rows
         self._parsed_vu = vu_name
         self._parsed_sheet = sheet_name
+        self._parsed_raw_data_map = getattr(self._parse_worker, 'raw_data_map', {})
         self._log.setText(log_text)
         self._import_btn.setEnabled(len(rows) > 0)
 
@@ -281,6 +299,7 @@ class AbrechnungslaeufPanel(QWidget):
         self._import_btn.setEnabled(False)
         self._progress.setVisible(True)
 
+        raw_map = getattr(self, '_parsed_raw_data_map', {})
         if self._presenter:
             self._presenter.start_import(
                 rows=self._parsed_rows,
@@ -288,11 +307,13 @@ class AbrechnungslaeufPanel(QWidget):
                 sheet_name=self._parsed_sheet,
                 vu_name=self._parsed_vu,
                 file_hash=self._parsed_hash,
+                raw_data_map=raw_map,
             )
         elif self._api:
             self._import_worker = VuImportWorker(
                 self._api, self._parsed_rows, os.path.basename(self._selected_path),
                 self._parsed_sheet, self._parsed_vu, self._parsed_hash,
+                raw_data_map=raw_map,
             )
             self._import_worker.progress.connect(lambda msg: self._log.append(msg))
             self._import_worker.finished.connect(self._on_import_done)

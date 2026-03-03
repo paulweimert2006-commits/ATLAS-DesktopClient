@@ -316,44 +316,72 @@ def main():
         
         logger.info(f"Angemeldet als: {auth_api.current_user.username}")
         
+        # === System-Status Check (Live-Zugang pruefen) ===
+        from api.system_status import SystemStatusAPI, has_access
+        _system_status_api = SystemStatusAPI(api_client)
+        _system_status = _system_status_api.get_status()
+        _dev = is_dev_mode()
+        
+        def _setup_post_login(win):
+            """Update-Check und Forced-Logout fuer ein Hauptfenster einrichten."""
+            if not is_dev_mode():
+                def _on_update_found(update_info, update_service):
+                    try:
+                        if update_info.mandatory:
+                            logger.info(f"Pflicht-Update erforderlich: {update_info.latest_version}")
+                            from ui.auto_update_window import AutoUpdateWindow
+                            auto_update = AutoUpdateWindow(update_info, update_service)
+                            auto_update.show()
+                            win.close()
+                        elif update_info.deprecated and not update_info.update_available:
+                            win._toast_manager.show_warning(
+                                texts.UPDATE_DEPRECATED_MSG.format(version=APP_VERSION),
+                                duration_ms=12000
+                            )
+                        elif update_info.update_available:
+                            from ui.update_dialog import UpdateDialog
+                            dialog = UpdateDialog(update_info, update_service, mode='optional')
+                            if dialog.exec() == QDialog.Accepted:
+                                release_single_instance_mutex()
+                                sys.exit(0)
+                    except Exception as e:
+                        logger.warning(f"Update-Verarbeitung fehlgeschlagen: {e}")
+
+                _user_channel = auth_api.current_user.update_channel if auth_api.current_user else 'stable'
+                win._update_check_bg_worker = _UpdateCheckWorker(api_client, APP_VERSION, channel=_user_channel)
+                win._update_check_bg_worker.update_found.connect(_on_update_found)
+                win._update_check_bg_worker.start()
+            else:
+                logger.info("Dev-Modus erkannt (python run.py) - Update-Check uebersprungen")
+
+            flo_handler = ForcedLogoutHandler(win, auth_api)
+            api_client.set_forced_logout_callback(flo_handler.trigger)
+        
+        if not has_access(_system_status.status, auth_api.current_user.is_admin, _dev):
+            logger.info(f"Kein Zugang: system_status={_system_status.status}, "
+                        f"is_admin={auth_api.current_user.is_admin}, dev_mode={_dev}")
+            from ui.maintenance_overlay import MaintenanceWindow
+            maintenance_win = MaintenanceWindow(
+                api_client, auth_api.current_user,
+                server_message=_system_status.message or ''
+            )
+            
+            def _on_access_granted():
+                logger.info("Zugang wiederhergestellt - MainHub wird geoeffnet")
+                maintenance_win.close()
+                hub = MainHub(api_client=api_client, auth_api=auth_api)
+                hub.show()
+                _setup_post_login(hub)
+            
+            maintenance_win.access_granted.connect(_on_access_granted)
+            maintenance_win.show()
+            sys.exit(app.exec())
+        
         # Neues Hub-Hauptfenster erstellen und anzeigen
         window = MainHub(api_client=api_client, auth_api=auth_api)
         window.show()
         
-        # === Update-Check nach Login (asynchron, blockiert UI nicht) ===
-        if not is_dev_mode():
-            def _on_update_found(update_info, update_service):
-                try:
-                    if update_info.mandatory:
-                        logger.info(f"Pflicht-Update erforderlich: {update_info.latest_version}")
-                        from ui.auto_update_window import AutoUpdateWindow
-                        auto_update = AutoUpdateWindow(update_info, update_service)
-                        auto_update.show()
-                        window.close()
-                    elif update_info.deprecated and not update_info.update_available:
-                        window._toast_manager.show_warning(
-                            texts.UPDATE_DEPRECATED_MSG.format(version=APP_VERSION),
-                            duration_ms=12000
-                        )
-                    elif update_info.update_available:
-                        from ui.update_dialog import UpdateDialog
-                        dialog = UpdateDialog(update_info, update_service, mode='optional')
-                        if dialog.exec() == QDialog.Accepted:
-                            release_single_instance_mutex()
-                            sys.exit(0)
-                except Exception as e:
-                    logger.warning(f"Update-Verarbeitung fehlgeschlagen: {e}")
-            
-            _user_channel = auth_api.current_user.update_channel if auth_api.current_user else 'stable'
-            window._update_check_bg_worker = _UpdateCheckWorker(api_client, APP_VERSION, channel=_user_channel)
-            window._update_check_bg_worker.update_found.connect(_on_update_found)
-            window._update_check_bg_worker.start()
-        else:
-            logger.info("Dev-Modus erkannt (python run.py) - Update-Check uebersprungen")
-        
-        # Forced-Logout-Handler registrieren (Session-Invalidierung)
-        forced_logout_handler = ForcedLogoutHandler(window, auth_api)
-        api_client.set_forced_logout_callback(forced_logout_handler.trigger)
+        _setup_post_login(window)
         
         sys.exit(app.exec())
     else:

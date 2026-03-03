@@ -5,14 +5,16 @@ Ersetzt: mappings_panel.py
 """
 
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QLabel, QTableView,
-    QHeaderView, QPushButton, QDialog, QComboBox,
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTableView,
+    QHeaderView, QPushButton, QDialog, QComboBox, QDateEdit,
     QLineEdit, QMenu, QFormLayout, QDialogButtonBox, QCheckBox,
 )
 from PySide6.QtCore import (
-    Qt, Signal, QModelIndex, QTimer,
+    Qt, Signal, QModelIndex, QTimer, QDate,
 )
 from typing import List, Dict, Optional
+from datetime import date
+import calendar
 
 from api.provision import ProvisionAPI
 from domain.provision.entities import Commission, VermittlerMapping, Employee
@@ -28,6 +30,7 @@ from ui.provision.widgets import (
 from ui.provision.workers import ClearanceLoadWorker, MappingSyncWorker
 from ui.provision.models import UnmatchedModel, MappingsModel, clearance_type
 from ui.provision.dialogs import MatchContractDialog
+from infrastructure.threading.worker_utils import run_worker
 from i18n import de as texts
 import logging
 
@@ -60,7 +63,7 @@ class ZuordnungPanel(QWidget):
         """Verbindet dieses Panel mit dem ClearancePresenter."""
         self._presenter = presenter
         presenter.set_view(self)
-        self._presenter.load_clearance()
+        self._load_data()
 
     # ── IClearanceView ──
 
@@ -104,6 +107,65 @@ class ZuordnungPanel(QWidget):
         auto_btn.clicked.connect(self._trigger_auto_match)
         header.add_action(auto_btn)
         layout.addWidget(header)
+
+        # Zeitraumfilter
+        date_row = QHBoxLayout()
+        date_row.setSpacing(10)
+
+        self._mode_combo = QComboBox()
+        self._mode_combo.setFixedWidth(170)
+        self._mode_combo.setFixedHeight(32)
+        self._mode_combo.addItem(texts.PROVISION_FILTER_MODE_MONTH, "month")
+        self._mode_combo.addItem(texts.PROVISION_FILTER_LAST_3, "last_3")
+        self._mode_combo.addItem(texts.PROVISION_FILTER_LAST_6, "last_6")
+        self._mode_combo.addItem(texts.PROVISION_FILTER_LAST_12, "last_12")
+        self._mode_combo.addItem(texts.PROVISION_FILTER_MODE_RANGE, "range")
+        self._mode_combo.addItem(texts.PROVISION_FILTER_ALL_TIME, "all")
+        self._mode_combo.currentIndexChanged.connect(self._on_date_mode_changed)
+        date_row.addWidget(self._mode_combo)
+
+        self._month_combo = QComboBox()
+        self._month_combo.setFixedWidth(130)
+        self._month_combo.setFixedHeight(32)
+        today = date.today()
+        for offset in range(24):
+            y = today.year
+            m = today.month - offset
+            while m < 1:
+                m += 12
+                y -= 1
+            self._month_combo.addItem(f"{m:02d}/{y}", f"{y}-{m:02d}")
+        self._month_combo.currentIndexChanged.connect(self._on_date_filter_changed)
+        date_row.addWidget(self._month_combo)
+
+        self._von_label = QLabel(texts.PROVISION_FILTER_FROM)
+        self._von_label.setStyleSheet(f"color: {PRIMARY_500};")
+        self._von_label.setVisible(False)
+        date_row.addWidget(self._von_label)
+        self._date_from = QDateEdit()
+        self._date_from.setCalendarPopup(True)
+        self._date_from.setDisplayFormat("dd.MM.yyyy")
+        self._date_from.setDate(QDate(today.year, today.month, 1).addMonths(-3))
+        self._date_from.setFixedHeight(32)
+        self._date_from.setVisible(False)
+        self._date_from.dateChanged.connect(self._on_date_filter_changed)
+        date_row.addWidget(self._date_from)
+
+        self._bis_label = QLabel(texts.PROVISION_FILTER_TO)
+        self._bis_label.setStyleSheet(f"color: {PRIMARY_500};")
+        self._bis_label.setVisible(False)
+        date_row.addWidget(self._bis_label)
+        self._date_to = QDateEdit()
+        self._date_to.setCalendarPopup(True)
+        self._date_to.setDisplayFormat("dd.MM.yyyy")
+        self._date_to.setDate(QDate.currentDate())
+        self._date_to.setFixedHeight(32)
+        self._date_to.setVisible(False)
+        self._date_to.dateChanged.connect(self._on_date_filter_changed)
+        date_row.addWidget(self._date_to)
+
+        date_row.addStretch()
+        layout.addLayout(date_row)
 
         # Klaerfall-Chips
         self._chips = FilterChipBar()
@@ -177,13 +239,58 @@ class ZuordnungPanel(QWidget):
     def refresh(self):
         self._load_data()
 
+    def _get_date_range(self):
+        mode = self._mode_combo.currentData()
+        if mode == "month":
+            val = self._month_combo.currentData()
+            if val:
+                y, m = val.split('-')
+                y, m = int(y), int(m)
+                last_day = calendar.monthrange(y, m)[1]
+                return f"{y}-{m:02d}-01", f"{y}-{m:02d}-{last_day:02d}"
+        elif mode == "range":
+            von = self._date_from.date().toString("yyyy-MM-dd")
+            bis = self._date_to.date().toString("yyyy-MM-dd")
+            return von, bis
+        elif mode == "last_3":
+            bis = date.today().strftime("%Y-%m-%d")
+            von = QDate.currentDate().addMonths(-3).toString("yyyy-MM-dd")
+            return von, bis
+        elif mode == "last_6":
+            bis = date.today().strftime("%Y-%m-%d")
+            von = QDate.currentDate().addMonths(-6).toString("yyyy-MM-dd")
+            return von, bis
+        elif mode == "last_12":
+            bis = date.today().strftime("%Y-%m-%d")
+            von = QDate.currentDate().addMonths(-12).toString("yyyy-MM-dd")
+            return von, bis
+        elif mode == "all":
+            return None, None
+        return None, None
+
+    def _on_date_mode_changed(self, *args):
+        mode = self._mode_combo.currentData()
+        is_month = mode == "month"
+        is_range = mode == "range"
+        self._month_combo.setVisible(is_month)
+        self._von_label.setVisible(is_range)
+        self._date_from.setVisible(is_range)
+        self._bis_label.setVisible(is_range)
+        self._date_to.setVisible(is_range)
+        self._load_data()
+
+    def _on_date_filter_changed(self, *args):
+        self._load_data()
+
     def _load_data(self):
         self._status.setText("")
         self._loading_overlay.setGeometry(self.rect())
         self._loading_overlay.setVisible(True)
 
+        von, bis = self._get_date_range()
+
         if self._presenter:
-            self._presenter.load_clearance()
+            self._presenter.load_clearance(von=von, bis=bis)
             return
 
         if self._worker:
@@ -194,7 +301,7 @@ class ZuordnungPanel(QWidget):
                 self._worker.error.disconnect()
             except RuntimeError:
                 pass
-        self._worker = ClearanceLoadWorker(self._backend)
+        self._worker = ClearanceLoadWorker(self._backend, von=von, bis=bis)
         self._worker.finished.connect(self._on_loaded)
         self._worker.error.connect(self._on_error)
         self._worker.start()
@@ -237,7 +344,12 @@ class ZuordnungPanel(QWidget):
                                             if c.match_status in ('auto_matched', 'manual_matched') and not c.berater_id])
 
     def _trigger_auto_match(self):
-        stats = self._backend.trigger_auto_match()
+        run_worker(
+            self, lambda w: self._backend.trigger_auto_match(),
+            self._on_auto_match_done,
+        )
+
+    def _on_auto_match_done(self, stats):
         if stats:
             matched = stats.get('matched', 0)
             still_open = stats.get('still_unmatched', 0)
@@ -248,6 +360,12 @@ class ZuordnungPanel(QWidget):
             self._load_data()
 
     def _add_mapping(self):
+        run_worker(
+            self, lambda w: self._backend.get_employees(),
+            self._show_add_mapping_dialog,
+        )
+
+    def _show_add_mapping_dialog(self, employees):
         dlg = QDialog(self)
         dlg.setWindowTitle(texts.PROVISION_MAP_DLG_TITLE)
         dlg.setMinimumWidth(400)
@@ -258,7 +376,6 @@ class ZuordnungPanel(QWidget):
         form.addRow(texts.PROVISION_MAP_DLG_NAME, name_edit)
 
         berater_combo = QComboBox()
-        employees = self._backend.get_employees()
         for emp in employees:
             if emp.is_active:
                 berater_combo.addItem(emp.name, emp.id)
@@ -273,10 +390,16 @@ class ZuordnungPanel(QWidget):
             name = name_edit.text().strip()
             berater_id = berater_combo.currentData()
             if name and berater_id:
-                self._backend.create_mapping(name, berater_id)
-                if self._toast_manager:
-                    self._toast_manager.show_success(texts.PROVISION_TOAST_SAVED)
-                self._load_data()
+                run_worker(
+                    self,
+                    lambda w, n=name, b=berater_id: self._backend.create_mapping(n, b),
+                    lambda _: self._on_mapping_write_done(),
+                )
+
+    def _on_mapping_write_done(self):
+        if self._toast_manager:
+            self._toast_manager.show_success(texts.PROVISION_TOAST_SAVED)
+        self._load_data()
 
     def _mapping_context_menu(self, pos):
         idx = self._mappings_table.indexAt(pos)
@@ -291,6 +414,12 @@ class ZuordnungPanel(QWidget):
         menu.exec(self._mappings_table.viewport().mapToGlobal(pos))
 
     def _edit_mapping(self, mapping: VermittlerMapping):
+        run_worker(
+            self, lambda w: self._backend.get_employees(),
+            lambda employees, m=mapping: self._show_edit_mapping_dialog(m, employees),
+        )
+
+    def _show_edit_mapping_dialog(self, mapping: VermittlerMapping, employees):
         dlg = QDialog(self)
         dlg.setWindowTitle(texts.PROVISION_MENU_EDIT)
         dlg.setMinimumWidth(400)
@@ -301,7 +430,6 @@ class ZuordnungPanel(QWidget):
         form.addRow(texts.PROVISION_MAP_DLG_NAME, name_lbl)
 
         berater_combo = QComboBox()
-        employees = self._backend.get_employees()
         for emp in employees:
             if emp.is_active:
                 berater_combo.addItem(emp.name, emp.id)
@@ -317,14 +445,20 @@ class ZuordnungPanel(QWidget):
         if dlg.exec() == QDialog.Accepted:
             new_berater_id = berater_combo.currentData()
             if new_berater_id and new_berater_id != mapping.berater_id:
-                self._backend.delete_mapping(mapping.id)
-                self._backend.create_mapping(mapping.vermittler_name, new_berater_id)
-                if self._toast_manager:
-                    self._toast_manager.show_success(texts.PROVISION_TOAST_SAVED)
-                self._load_data()
+                def _update(w, mid=mapping.id, name=mapping.vermittler_name, bid=new_berater_id):
+                    self._backend.delete_mapping(mid)
+                    self._backend.create_mapping(name, bid)
+                run_worker(self, _update, lambda _: self._on_mapping_write_done())
 
     def _delete_mapping(self, mapping: VermittlerMapping):
-        if self._backend.delete_mapping(mapping.id):
+        run_worker(
+            self,
+            lambda w, mid=mapping.id: self._backend.delete_mapping(mid),
+            self._on_mapping_deleted,
+        )
+
+    def _on_mapping_deleted(self, success):
+        if success:
             if self._toast_manager:
                 self._toast_manager.show_success(texts.PROVISION_TOAST_DELETED)
             self._load_data()
@@ -372,6 +506,15 @@ class ZuordnungPanel(QWidget):
         primary_name = xempus_name or vu_name
         if not primary_name:
             return
+        run_worker(
+            self, lambda w: self._backend.get_employees(),
+            lambda employees, c=comm: self._show_create_mapping_dialog(c, employees),
+        )
+
+    def _show_create_mapping_dialog(self, comm: Commission, employees):
+        xempus_name = comm.xempus_berater_name or ""
+        vu_name = comm.vermittler_name or ""
+        primary_name = xempus_name or vu_name
 
         dlg = QDialog(self)
         dlg.setWindowTitle(texts.PROVISION_MAP_DLG_CREATE_TITLE)
@@ -380,7 +523,7 @@ class ZuordnungPanel(QWidget):
 
         if vu_name:
             vu_lbl = QLabel(texts.PROVISION_MAPPING_DLG_VU_NAME.format(name=vu_name))
-            vu_lbl.setStyleSheet(f"color: {PRIMARY_500}; font-size: {FONT_SIZE_CAPTION};")
+            vu_lbl.setStyleSheet(f"font-size: {FONT_SIZE_CAPTION};")
             vu_lbl.setWordWrap(True)
             form.addRow(vu_lbl)
 
@@ -392,9 +535,8 @@ class ZuordnungPanel(QWidget):
 
         berater_combo = QComboBox()
         berater_combo.addItem("\u2014", None)
-        employees = self._backend.get_employees()
         for emp in employees:
-            if emp.is_active and emp.role in ('consulter', 'teamleiter'):
+            if emp.is_active and emp.role in ('consulter', 'teamleiter', 'geschaeftsfuehrer'):
                 berater_combo.addItem(emp.name, emp.id)
         form.addRow(texts.PROVISION_MAPPING_DLG_SELECT, berater_combo)
 
