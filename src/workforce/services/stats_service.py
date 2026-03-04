@@ -7,16 +7,19 @@ Quelle: app.py Zeilen 2779-2965
 from datetime import datetime
 from collections import Counter
 
-from workforce.helpers import getv, get_from_path, parse_date, person_key
+from workforce.helpers import getv, parse_date
+from i18n import de as texts
 
 
-def calculate_statistics(current_employees: list, previous_employees: list) -> dict:
+def calculate_statistics(current_employees: list) -> dict:
     """
-    Berechnet verschiedene Statistiken basierend auf aktuellen und vorherigen Mitarbeiterlisten.
+    Berechnet verschiedene Statistiken basierend auf aktuellen Mitarbeiterlisten.
+
+    Fluktuation wird per BDA-Formel aus Kuendigungsdaten berechnet:
+    Fluktuation = Abgaenge(12M) / ((Anfangsbestand + Endbestand) / 2) * 100
 
     Args:
         current_employees: Aktuelle Mitarbeiterliste
-        previous_employees: Vorherige Mitarbeiterliste (fuer Fluktuation)
 
     Returns:
         Dict mit Statistiken
@@ -25,14 +28,34 @@ def calculate_statistics(current_employees: list, previous_employees: list) -> d
         return {}
 
     ce = current_employees
-    pe = previous_employees
     ae = [e for e in ce if e.get('isActive')]
     t = datetime.today()
 
     sc = {"total": len(ce), "active": len(ae), "inactive": len(ce) - len(ae)}
-    gd = Counter(getv(e, e.get("details"), "geschlecht", "gender") for e in ae)
-    etd = Counter(getv(e, e.get("details"), "beschaeftigungsart", "employmentType") for e in ae)
-    dd = Counter(getv(e, e.get("details"), "abteilung", "organizationUnit.name") for e in ae)
+
+    gender_map = {
+        "male": "Mann", "m": "Mann", "mr": "Mann", "herr": "Mann",
+        "female": "Frau", "f": "Frau", "mrs": "Frau", "ms": "Frau",
+        "diverse": "Divers", "d": "Divers",
+        "mann": "Mann", "frau": "Frau", "maennlich": "Mann", "weiblich": "Frau",
+    }
+
+    na = texts.WF_STATS_NOT_SPECIFIED
+
+    def _norm_gender(val: str) -> str:
+        if not val:
+            return na
+        return gender_map.get(val.strip().lower(), val.strip())
+
+    gd = Counter(_norm_gender(getv(e, e.get("details"), "geschlecht", "gender")) for e in ae)
+
+    etd = Counter(
+        getv(e, e.get("details"), "beschaeftigungsart", "employmentType") or na for e in ae
+    )
+
+    dd = Counter(
+        getv(e, e.get("details"), "abteilung", "organizationUnit.name") or na for e in ae
+    )
     t5d = dd.most_common(5)
 
     th, ch, tt, tc, tah, hac = 0, 0, 0, 0, 0, 0
@@ -68,7 +91,7 @@ def calculate_statistics(current_employees: list, previous_employees: list) -> d
         if jd and bd:
             tah += (jd - bd).days / 365.25
             hac += 1
-        h_str = get_from_path(e, "workSchedule.weeklyWorkingHours")
+        h_str = getv(e, e.get("details"), "wochenstunden", "workSchedule.weeklyWorkingHours", "weekly_working_hours")
         if h_str:
             try:
                 h = float(str(h_str).replace(",", "."))
@@ -81,14 +104,11 @@ def calculate_statistics(current_employees: list, previous_employees: list) -> d
     at = round(tt / tc, 1) if tc > 0 else 0
     aha = round(tah / hac, 1) if hac > 0 else 0
 
-    tr, tp = 0, "N/A"
-    if pe:
-        tp = "Since Last Snapshot"
-        ci = {person_key(e) for e in ce}
-        pi = {person_key(e) for e in pe}
-        dl = len(pi - ci)
-        hs = len([e for e in pe if e.get('isActive')])
-        tr = round((dl / hs) * 100, 2) if hs > 0 else 0
+    departures_12m = sum(leaves_by_month.get(l, 0) for l in labels)
+    headcount_end = len(ae)
+    headcount_begin = headcount_end + departures_12m
+    avg_headcount = (headcount_begin + headcount_end) / 2
+    tr = round((departures_12m / avg_headcount) * 100, 1) if avg_headcount > 0 else 0
 
     return {
         "status_counts": sc,
@@ -97,7 +117,7 @@ def calculate_statistics(current_employees: list, previous_employees: list) -> d
         "employment_type_distribution": {"labels": list(etd.keys()), "data": list(etd.values())},
         "department_distribution": {"labels": [d[0] for d in t5d], "data": [d[1] for d in t5d]},
         "averages": {"tenure_years": at, "hiring_age": aha},
-        "turnover": {"period": tp, "rate_percent": tr},
+        "turnover": {"rate_percent": tr, "departures_12m": departures_12m},
         "join_leave_trends": jlt
     }
 

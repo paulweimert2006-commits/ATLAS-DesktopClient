@@ -215,19 +215,8 @@ class StatsWorker(QRunnable):
                 provider = ProviderFactory.create(employer['provider_key'], credentials)
                 current, _ = provider.list_employees(only_active=False)
 
-                prev_snapshot = self.api.get_latest_snapshot(self.employer_id)
-                prev_employees = []
-                if prev_snapshot and prev_snapshot.get('data'):
-                    for pid, data in prev_snapshot['data'].items():
-                        core = data.get('core', {})
-                        prev_employees.append({
-                            'personId': pid,
-                            'isActive': core.get('Status', '') == 'Aktiv',
-                            **core
-                        })
-
                 self.signals.progress.emit("Statistiken berechnen...")
-                stats = calculate_statistics(current, prev_employees)
+                stats = calculate_statistics(current)
                 self.signals.finished.emit({'stats_type': 'standard', 'stats': stats})
 
             else:

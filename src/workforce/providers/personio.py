@@ -167,14 +167,20 @@ class PersonioProvider(BaseProvider):
         if isinstance(department_val, dict):
             department_val = department_val.get('attributes', {}).get('name', department_val.get('name'))
 
+        employment_type_val = get_value("employment_type") or get_value("dynamic_16291403")
+        if isinstance(employment_type_val, dict):
+            employment_type_val = employment_type_val.get('attributes', {}).get('name', str(employment_type_val))
+
         return {
             "id": get_value("id"),
             "isActive": str(get_value("status")).lower() == 'active',
             "firstName": get_value("first_name"),
             "lastName": get_value("last_name"),
             "email": get_value("email"),
+            "gender": get_value("gender"),
             "position": get_value("position"),
             "department": department_val,
+            "employmentType": employment_type_val,
             "joinDate": get_value("hire_date"),
             "leaveDate": get_value("termination_date"),
             "profilePictureUrl": self._fetch_profile_picture_as_data_uri(get_value("profile_picture")),

@@ -11,18 +11,18 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QTableWidget, QTableWidgetItem, QComboBox, QHeaderView,
     QFrame, QAbstractItemView, QMessageBox, QScrollArea,
-    QTreeWidget, QTreeWidgetItem,
+    QGridLayout,
 )
 from PySide6.QtCore import Qt, QRunnable, QObject, Signal, QThreadPool
-from PySide6.QtGui import QFont, QColor
 
 from workforce.api_client import WorkforceApiClient
 from ui.styles.tokens import (
-    PRIMARY_500, PRIMARY_900, ACCENT_500, ACCENT_100,
+    PRIMARY_900, ACCENT_500, ACCENT_100,
     FONT_HEADLINE, FONT_BODY, FONT_SIZE_H2, FONT_SIZE_BODY, FONT_SIZE_CAPTION,
-    BG_PRIMARY, BG_SECONDARY, BORDER_DEFAULT, RADIUS_MD, RADIUS_SM,
-    SUCCESS, ERROR, WARNING, TEXT_PRIMARY, TEXT_SECONDARY, TEXT_DISABLED,
-    get_button_primary_style, get_button_secondary_style, get_button_danger_style,
+    BG_PRIMARY, BG_SECONDARY, BG_TERTIARY, BORDER_DEFAULT, RADIUS_MD, RADIUS_SM,
+    SUCCESS, SUCCESS_LIGHT, ERROR, ERROR_LIGHT, WARNING, WARNING_LIGHT,
+    TEXT_PRIMARY, TEXT_SECONDARY, TEXT_DISABLED,
+    FONT_WEIGHT_BOLD, FONT_WEIGHT_MEDIUM,
 )
 from i18n import de as texts
 
@@ -43,6 +43,16 @@ class _SnapshotDiffWorker(QRunnable):
         self._api = wf_api
         self._snap_id_a = snap_id_a
         self._snap_id_b = snap_id_b
+
+    @staticmethod
+    def _extract_person_info(core: dict) -> dict:
+        vorname = core.get('Vorname', '')
+        nachname = core.get('Name', '') or core.get('Nachname', '')
+        return {
+            'name': f"{vorname} {nachname}".strip(),
+            'geburtsdatum': core.get('Geburtsdatum', ''),
+            'personalnummer': core.get('Personalnummer', ''),
+        }
 
     def run(self):
         try:
@@ -70,20 +80,20 @@ class _SnapshotDiffWorker(QRunnable):
                     if str(val_a) != str(val_b):
                         field_changes[key] = {'old': val_a, 'new': val_b}
                 if field_changes:
-                    name_b = core_b.get('Vorname', '') + ' ' + core_b.get('Nachname', '')
-                    changed[pid] = {'name': name_b.strip(), 'fields': field_changes}
+                    changed[pid] = {
+                        **self._extract_person_info(core_b),
+                        'fields': field_changes,
+                    }
 
             added_details = []
             for pid in added:
                 core = data_b[pid].get('core', {})
-                name = core.get('Vorname', '') + ' ' + core.get('Nachname', '')
-                added_details.append({'pid': pid, 'name': name.strip()})
+                added_details.append({'pid': pid, **self._extract_person_info(core)})
 
             removed_details = []
             for pid in removed:
                 core = data_a[pid].get('core', {})
-                name = core.get('Vorname', '') + ' ' + core.get('Nachname', '')
-                removed_details.append({'pid': pid, 'name': name.strip()})
+                removed_details.append({'pid': pid, **self._extract_person_info(core)})
 
             self.signals.finished.emit({
                 'snap_a': snap_a, 'snap_b': snap_b,
@@ -228,51 +238,62 @@ class SnapshotsView(QWidget):
 
         self._diff_frame = QFrame()
         self._diff_frame.setVisible(False)
-        diff_layout = QVBoxLayout(self._diff_frame)
-        diff_layout.setContentsMargins(0, 0, 0, 0)
-        diff_layout.setSpacing(8)
+        diff_outer = QVBoxLayout(self._diff_frame)
+        diff_outer.setContentsMargins(0, 0, 0, 0)
+        diff_outer.setSpacing(12)
 
         self._diff_header = QLabel("")
         self._diff_header.setStyleSheet(f"""
-            font-family: {FONT_BODY}; font-size: 11pt;
+            font-family: {FONT_HEADLINE}; font-size: 11pt;
             color: {PRIMARY_900}; font-weight: bold;
         """)
-        diff_layout.addWidget(self._diff_header)
+        diff_outer.addWidget(self._diff_header)
 
         summary_row = QHBoxLayout()
-        self._added_badge = self._create_badge(SUCCESS)
+        summary_row.setSpacing(10)
+        self._added_badge = self._create_badge(SUCCESS, SUCCESS_LIGHT)
         summary_row.addWidget(self._added_badge)
-        self._removed_badge = self._create_badge(ERROR)
+        self._removed_badge = self._create_badge(ERROR, ERROR_LIGHT)
         summary_row.addWidget(self._removed_badge)
-        self._changed_badge = self._create_badge(WARNING)
+        self._changed_badge = self._create_badge(WARNING, WARNING_LIGHT)
         summary_row.addWidget(self._changed_badge)
         summary_row.addStretch()
-        diff_layout.addLayout(summary_row)
+        diff_outer.addLayout(summary_row)
 
-        self._diff_tree = QTreeWidget()
-        self._diff_tree.setHeaderLabels([
-            texts.WF_DIFF_COL_CATEGORY, texts.WF_DIFF_COL_NAME,
-            texts.WF_DIFF_COL_FIELD, texts.WF_DIFF_COL_OLD, texts.WF_DIFF_COL_NEW,
-        ])
-        self._diff_tree.setAlternatingRowColors(True)
-        self._diff_tree.setRootIsDecorated(True)
-        diff_h = self._diff_tree.header()
-        diff_h.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        diff_h.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        diff_h.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        diff_h.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        diff_h.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
-        diff_layout.addWidget(self._diff_tree)
+        self._no_changes_label = QLabel(texts.WF_DIFF_NO_CHANGES)
+        self._no_changes_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._no_changes_label.setStyleSheet(f"""
+            color: {TEXT_SECONDARY}; font-family: {FONT_BODY};
+            font-size: {FONT_SIZE_BODY}; padding: 24px;
+        """)
+        self._no_changes_label.setVisible(False)
+        diff_outer.addWidget(self._no_changes_label)
 
-        layout.addWidget(self._diff_frame)
+        self._diff_scroll = QScrollArea()
+        self._diff_scroll.setWidgetResizable(True)
+        self._diff_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._diff_scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        self._diff_scroll_content = QWidget()
+        self._diff_scroll_content.setStyleSheet("background: transparent;")
+        self._diff_cards_layout = QVBoxLayout(self._diff_scroll_content)
+        self._diff_cards_layout.setContentsMargins(0, 0, 8, 0)
+        self._diff_cards_layout.setSpacing(10)
+        self._diff_cards_layout.addStretch()
+        self._diff_scroll.setWidget(self._diff_scroll_content)
+        diff_outer.addWidget(self._diff_scroll)
 
-    def _create_badge(self, color: str) -> QLabel:
+        layout.addWidget(self._diff_frame, 1)
+
+    def _create_badge(self, color: str, bg_light: str = "") -> QLabel:
+        bg = bg_light if bg_light else color
+        text_color = color if bg_light else "white"
         badge = QLabel("")
         badge.setStyleSheet(f"""
-            background-color: {color}; color: white;
-            padding: 4px 12px; border-radius: {RADIUS_SM};
+            background-color: {bg}; color: {text_color};
+            padding: 5px 14px; border-radius: 12px;
             font-family: {FONT_BODY}; font-size: {FONT_SIZE_CAPTION};
-            font-weight: bold;
+            font-weight: {FONT_WEIGHT_BOLD};
+            border: 1px solid {color};
         """)
         return badge
 
@@ -416,37 +437,213 @@ class SnapshotsView(QWidget):
         self._removed_badge.setText(texts.WF_DIFF_REMOVED_BADGE.format(count=len(removed)))
         self._changed_badge.setText(texts.WF_DIFF_CHANGED_BADGE.format(count=len(changed)))
 
-        self._diff_tree.clear()
+        self._clear_diff_cards()
 
-        if added:
-            added_root = QTreeWidgetItem(self._diff_tree, [texts.WF_DIFF_CATEGORY_ADDED])
-            added_root.setForeground(0, QColor(SUCCESS))
-            added_root.setFont(0, QFont(FONT_BODY))
-            for person in added:
-                QTreeWidgetItem(added_root, ["", person.get('name', person.get('pid', '?'))])
-            added_root.setExpanded(True)
+        total = len(added) + len(removed) + len(changed)
+        self._no_changes_label.setVisible(total == 0)
+        self._diff_scroll.setVisible(total > 0)
 
-        if removed:
-            removed_root = QTreeWidgetItem(self._diff_tree, [texts.WF_DIFF_CATEGORY_REMOVED])
-            removed_root.setForeground(0, QColor(ERROR))
-            removed_root.setFont(0, QFont(FONT_BODY))
-            for person in removed:
-                QTreeWidgetItem(removed_root, ["", person.get('name', person.get('pid', '?'))])
-            removed_root.setExpanded(True)
+        for person in added:
+            card = self._build_person_card(
+                person_info=person,
+                category=texts.WF_DIFF_EMPLOYEE_CARD_ADDED,
+                accent_color=SUCCESS,
+                accent_bg=SUCCESS_LIGHT,
+                subtitle=texts.WF_DIFF_CATEGORY_ADDED,
+            )
+            self._diff_cards_layout.insertWidget(
+                self._diff_cards_layout.count() - 1, card
+            )
 
-        if changed:
-            changed_root = QTreeWidgetItem(self._diff_tree, [texts.WF_DIFF_CATEGORY_CHANGED])
-            changed_root.setForeground(0, QColor(WARNING))
-            changed_root.setFont(0, QFont(FONT_BODY))
-            for pid, info in changed.items():
-                person_node = QTreeWidgetItem(changed_root, ["", info.get('name', pid)])
-                for field, vals in info.get('fields', {}).items():
-                    QTreeWidgetItem(person_node, [
-                        "", "", field,
-                        str(vals.get('old', '-')), str(vals.get('new', '-')),
-                    ])
-                person_node.setExpanded(True)
-            changed_root.setExpanded(True)
+        for person in removed:
+            card = self._build_person_card(
+                person_info=person,
+                category=texts.WF_DIFF_EMPLOYEE_CARD_REMOVED,
+                accent_color=ERROR,
+                accent_bg=ERROR_LIGHT,
+                subtitle=texts.WF_DIFF_CATEGORY_REMOVED,
+            )
+            self._diff_cards_layout.insertWidget(
+                self._diff_cards_layout.count() - 1, card
+            )
+
+        for pid, info in changed.items():
+            fields = info.get('fields', {})
+            subtitle = texts.WF_DIFF_EMPLOYEE_CARD_FIELDS_CHANGED.format(count=len(fields))
+            card = self._build_person_card(
+                person_info=info,
+                category=texts.WF_DIFF_CATEGORY_CHANGED,
+                accent_color=WARNING,
+                accent_bg=WARNING_LIGHT,
+                subtitle=subtitle,
+                field_changes=fields,
+            )
+            self._diff_cards_layout.insertWidget(
+                self._diff_cards_layout.count() - 1, card
+            )
+
+    def _clear_diff_cards(self):
+        while self._diff_cards_layout.count() > 1:
+            item = self._diff_cards_layout.takeAt(0)
+            w = item.widget()
+            if w:
+                w.deleteLater()
+
+    def _build_person_card(
+        self, person_info: dict, category: str, accent_color: str,
+        accent_bg: str, subtitle: str, field_changes: dict | None = None,
+    ) -> QFrame:
+        name = person_info.get('name', person_info.get('pid', '?'))
+        geburtsdatum = person_info.get('geburtsdatum', '')
+        personalnummer = person_info.get('personalnummer', '')
+
+        card = QFrame()
+        card.setStyleSheet(f"""
+            QFrame#diffCard {{
+                background-color: {BG_PRIMARY};
+                border: 1px solid {BORDER_DEFAULT};
+                border-left: 4px solid {accent_color};
+                border-radius: {RADIUS_MD};
+            }}
+            QFrame#diffCard:hover {{
+                border-color: {accent_color};
+            }}
+        """)
+        card.setObjectName("diffCard")
+
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(16, 12, 16, 12)
+        card_layout.setSpacing(6)
+
+        top_row = QHBoxLayout()
+        top_row.setSpacing(12)
+
+        name_label = QLabel(name)
+        name_label.setStyleSheet(f"""
+            font-family: {FONT_HEADLINE}; font-size: {FONT_SIZE_BODY};
+            color: {TEXT_PRIMARY}; font-weight: {FONT_WEIGHT_BOLD};
+            background: transparent; border: none;
+        """)
+        top_row.addWidget(name_label)
+
+        top_row.addStretch()
+
+        cat_badge = QLabel(category)
+        cat_badge.setStyleSheet(f"""
+            background-color: {accent_bg}; color: {accent_color};
+            padding: 3px 10px; border-radius: 10px;
+            font-family: {FONT_BODY}; font-size: {FONT_SIZE_CAPTION};
+            font-weight: {FONT_WEIGHT_BOLD}; border: none;
+        """)
+        top_row.addWidget(cat_badge)
+
+        card_layout.addLayout(top_row)
+
+        meta_parts = []
+        if geburtsdatum:
+            meta_parts.append(f"{texts.WF_DIFF_LABEL_BIRTHDAY} {geburtsdatum}")
+        if personalnummer:
+            meta_parts.append(f"{texts.WF_DIFF_LABEL_PERSONNEL_NR} {personalnummer}")
+
+        detail_row = QHBoxLayout()
+        detail_row.setSpacing(16)
+
+        if meta_parts:
+            meta_style = f"""
+                color: {TEXT_SECONDARY}; font-family: {FONT_BODY};
+                font-size: {FONT_SIZE_CAPTION}; background: transparent; border: none;
+            """
+            for part in meta_parts:
+                ml = QLabel(part)
+                ml.setStyleSheet(meta_style)
+                detail_row.addWidget(ml)
+
+        detail_row.addStretch()
+
+        sub_label = QLabel(subtitle)
+        sub_label.setStyleSheet(f"""
+            color: {TEXT_SECONDARY}; font-family: {FONT_BODY};
+            font-size: {FONT_SIZE_CAPTION}; background: transparent; border: none;
+        """)
+        detail_row.addWidget(sub_label)
+
+        card_layout.addLayout(detail_row)
+
+        if field_changes:
+            separator = QFrame()
+            separator.setFrameShape(QFrame.Shape.HLine)
+            separator.setStyleSheet(f"background-color: {BORDER_DEFAULT}; border: none; max-height: 1px;")
+            card_layout.addWidget(separator)
+
+            grid = QGridLayout()
+            grid.setContentsMargins(0, 4, 0, 0)
+            grid.setSpacing(0)
+            grid.setColumnStretch(0, 2)
+            grid.setColumnStretch(1, 3)
+            grid.setColumnStretch(2, 0)
+            grid.setColumnStretch(3, 3)
+
+            hdr_style = f"""
+                color: {TEXT_SECONDARY}; font-family: {FONT_BODY};
+                font-size: {FONT_SIZE_CAPTION}; font-weight: {FONT_WEIGHT_BOLD};
+                padding: 4px 8px; background-color: {BG_SECONDARY};
+                border: none;
+            """
+            for col, text in enumerate([
+                texts.WF_DIFF_COL_FIELD, texts.WF_DIFF_COL_OLD,
+                "", texts.WF_DIFF_COL_NEW,
+            ]):
+                h = QLabel(text)
+                h.setStyleSheet(hdr_style)
+                grid.addWidget(h, 0, col)
+
+            arrow_hdr = QLabel("")
+            arrow_hdr.setFixedWidth(28)
+            arrow_hdr.setStyleSheet(hdr_style)
+            grid.addWidget(arrow_hdr, 0, 2)
+
+            for row_idx, (field, vals) in enumerate(field_changes.items(), start=1):
+                old_val = str(vals.get('old', '-')) if vals.get('old', '') != '' else '-'
+                new_val = str(vals.get('new', '-')) if vals.get('new', '') != '' else '-'
+
+                bg = "transparent" if row_idx % 2 == 0 else BG_TERTIARY
+                cell_base = f"""
+                    font-family: {FONT_BODY}; font-size: {FONT_SIZE_BODY};
+                    padding: 6px 8px; background-color: {bg}; border: none;
+                """
+
+                field_label = QLabel(field)
+                field_label.setStyleSheet(f"""
+                    {cell_base} color: {TEXT_PRIMARY};
+                    font-weight: {FONT_WEIGHT_MEDIUM};
+                """)
+                grid.addWidget(field_label, row_idx, 0)
+
+                old_label = QLabel(old_val)
+                old_label.setWordWrap(True)
+                old_label.setStyleSheet(f"""
+                    {cell_base} color: {ERROR};
+                """)
+                grid.addWidget(old_label, row_idx, 1)
+
+                arrow = QLabel(texts.WF_DIFF_FIELD_ARROW)
+                arrow.setFixedWidth(28)
+                arrow.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                arrow.setStyleSheet(f"""
+                    {cell_base} color: {TEXT_SECONDARY};
+                """)
+                grid.addWidget(arrow, row_idx, 2)
+
+                new_label = QLabel(new_val)
+                new_label.setWordWrap(True)
+                new_label.setStyleSheet(f"""
+                    {cell_base} color: {SUCCESS}; font-weight: {FONT_WEIGHT_BOLD};
+                """)
+                grid.addWidget(new_label, row_idx, 3)
+
+            card_layout.addLayout(grid)
+
+        return card
 
     def _on_diff_error(self, error: str):
         self._compare_btn.setEnabled(True)
