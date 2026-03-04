@@ -14,7 +14,7 @@
 |------|------|
 | **Name** | ACENCIA ATLAS ("Der Datenkern.") |
 | **Typ** | Python-Desktop-App (PySide6/Qt) + PHP-REST-API + MySQL + Web-Admin-Panel (Vanilla JS) |
-| **Zweck** | BiPRO-Datenabruf, Dokumentenarchiv, GDV-Editor, Provisionsmanagement, Server-Administration |
+| **Zweck** | BiPRO-Datenabruf, Dokumentenarchiv, GDV-Editor, Provisionsmanagement, Workforce (HR), Server-Administration |
 | **Nutzer** | Versicherungsvermittler-Team (2-5 Personen) |
 | **Entry Point Desktop** | `python run.py` |
 | **Entry Point Admin-Panel** | `https://acencia.info/admin-panel/` |
@@ -91,6 +91,7 @@ Desktop-App (PySide6)             Web-Admin-Panel                  Hetzner Cloud
 ├── UI Layer                      ├── index.html (SPA)             ├── Nginx (HTTPS, HTTP/2, Rate-Limiting)
 │   ├── main_hub.py               ├── css/ (5 Dateien)             ├── PHP 8.3 FPM + REST API (~47 Dateien)
 │   ├── provision/ (10 Panels)    │   └── tokens.css (ACENCIA CI)  │   ├── auth.php (JWT, is_super_admin)
+│   ├── workforce/ (7 Panels)                                      │   ├── hr.php (Workforce, 30 Endpoints)
 │   ├── admin/ (17 Panels)        ├── js/ (41 Dateien)             │   ├── documents.php (Archiv)
 │   └── message_center_view.py    │   ├── api.js (API Client)      │   ├── server_management.php (13 Endpoints)
 ├── Presenters (MVP)              │   ├── auth.js (JWT + Timeout)   │   ├── ai_providers.php (Provider CRUD)
@@ -298,11 +299,18 @@ src/                                Python Desktop-App (~246 Dateien, ~82.000 Ze
   parser/                           GDV-Parser
   layouts/                          GDV-Satzlayouts
   utils/                            Hilfsfunktionen (date_utils)
-  i18n/                             Internationalisierung (~2400 Keys, 2637 Zeilen)
+  workforce/                        Workforce/HR-Modul (~15 Dateien, ~2400 Zeilen)
+    api_client.py                   WorkforceApiClient (PHP-Backend-Kommunikation)
+    workers.py                      QThread-Worker (Sync, Delta, Export, Stats)
+    constants.py                    SCS_HEADERS, Trigger-Events, Operatoren
+    helpers.py                      Utility-Funktionen (Hash, Flatten, Date-Parse)
+    providers/                      HR-API-Anbindungen (Personio, HRworks, SageHR)
+    services/                       Geschaeftslogik (Sync, Delta, Export, Snapshot, Trigger, Stats)
+  i18n/                             Internationalisierung (~2600 Keys, ~2880 Zeilen)
   tests/                            Smoke-, Stability- und Security-Tests (7 Dateien)
 run.py                              Entry Point (+ --background-update Weiche)
 VERSION                             Versionsdatei (aktuell 2.3.1)
-requirements.txt                    Dependencies (15 Pakete)
+requirements.txt                    Dependencies (16 Pakete)
 build_config.spec                   PyInstaller-Konfiguration
 installer.iss                       Inno Setup Installer-Skript
 ```
@@ -371,12 +379,19 @@ In `/etc/php/8.3/fpm/conf.d/99-atlas.ini` sind `exec` und `shell_exec` AKTIV (ni
 
 ### Implementiert
 - Desktop-App: Voll funktionsfaehig (BiPRO, Archiv, GDV, Provision, 17 Admin-Panels)
+- **Workforce-Modul (NEU)**: Eigener Hub mit 7 Panels (Arbeitgeber, Mitarbeiter, Exporte, Snapshots, Statistiken, Trigger, SMTP)
+  - HR-Provider-Integration (Personio, HRworks, SageHR Mock)
+  - Delta-SCS-Export mit Snapshot-Vergleich
+  - Trigger-System (E-Mail + API-Aktionen bei Mitarbeiterdaten-Aenderungen)
+  - PHP-Backend: 30 Endpoints unter /hr/* (api/hr.php)
+  - DB: 9 Tabellen (hr_*), 5 Permissions (hr.view, hr.sync, hr.export, hr.triggers, hr.admin)
+  - Migration: 044_hr_module.php
 - Web-Admin-Panel: 27 Panels deployed und funktionsfaehig
   - 17 bestehende Desktop-Admin-Funktionen ins Web repliziert
   - 9 neue Server-Management-Panels (Super-Admin)
   - 1 System-Status-Panel (bereits vorhanden, erweitert)
-- PHP-API: ~47 Endpoints, inkl. 13 neue Server-Management-Endpoints
-- DB-Migrationen: Bis 043 (is_excluded, is_super_admin, server_audit_log)
+- PHP-API: ~48 Endpoints, inkl. 13 Server-Management + 30 HR/Workforce-Endpoints
+- DB-Migrationen: Bis 044 (is_excluded, is_super_admin, server_audit_log, hr_module)
 - Server: Hetzner Cloud, SSL, Fail2Ban, Backups, sudoers konfiguriert
 
 ### Bekannte Einschraenkungen / Tech Debt
@@ -386,3 +401,47 @@ In `/etc/php/8.3/fpm/conf.d/99-atlas.ini` sind `exec` und `shell_exec` AKTIV (ni
 - Kein Dark Mode im Web-Admin-Panel
 - Kein Release-Upload im Browser
 - Admin-Panel hat keine automatische Cache-Invalidierung (manueller Hard-Refresh noetig)
+- Workforce: SageHR-Provider ist nur Mock (keine echte API)
+- Workforce: Datenmigration aus HR-Hub JSON-Dateien noch nicht durchgefuehrt
+
+---
+
+## Workforce-Modul (HR)
+
+### Ueberblick
+- **UI-Name**: "Workforce" (eigener Hub, wie Provision/Ledger)
+- **DB-Tabellen**: `hr_*` (9 Tabellen, Migration 044)
+- **PHP-Endpoints**: `/hr/*` (30 Endpoints in `api/hr.php`)
+- **Permissions**: `hr.view`, `hr.sync`, `hr.export`, `hr.triggers`, `hr.admin` (explizit, nicht auto-Admin)
+- **Python-Modul**: `src/workforce/` (Provider, Services, API-Client, Worker)
+- **i18n-Prefix**: `WF_` (~200 Keys)
+
+### Architektur
+- **Provider-Calls**: Desktop -> HR-API direkt (Personio, HRworks), NICHT ueber PHP
+- **Persistenz**: Desktop -> PHP-API -> MySQL (CRUD, Bulk-Upsert, Snapshots, Exports)
+- **Credentials**: PHP verschluesselt/entschluesselt (AES-256-GCM via Crypto-Klasse)
+- **Trigger**: Desktop wertet aus + fuehrt aus (E-Mail via smtplib, API via requests)
+- **Exports**: Desktop generiert XLSX (openpyxl), uploaded an PHP/Volume
+
+### Kern-Datenfluss (Delta-Export)
+1. Credentials vom PHP-Backend holen (entschluesselt)
+2. Provider-API direkt aufrufen (Personio/HRworks)
+3. Letzten Snapshot vom PHP-Backend laden
+4. Delta berechnen (Hash-Vergleich lokal)
+5. XLSX generieren (openpyxl lokal)
+6. Neuen Snapshot speichern (PHP)
+7. Export hochladen (PHP/Volume)
+8. Trigger auswerten und ausfuehren (Desktop)
+9. Trigger-Runs loggen (PHP)
+
+### Dateien
+| Datei | Zweck |
+|-------|-------|
+| `src/workforce/api_client.py` | WorkforceApiClient (30+ Methoden) |
+| `src/workforce/workers.py` | QThread-Worker (Sync, Delta, Standard, Stats) |
+| `src/workforce/providers/` | BaseProvider, HRworks, Personio, SageHR |
+| `src/workforce/services/` | Sync, Delta, Export, Snapshot, Trigger, Stats |
+| `src/ui/workforce/workforce_hub.py` | Hub mit Sidebar (7 Panels) |
+| `src/ui/workforce/*_view.py` | 7 View-Panels |
+| `api/hr.php` | 30 PHP-Endpoints |
+| `api/setup/044_hr_module.php` | DB-Migration (9 Tabellen + 5 Permissions) |

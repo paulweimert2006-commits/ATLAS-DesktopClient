@@ -16,6 +16,7 @@ from .client import APIClient, APIError
 logger = logging.getLogger(__name__)
 
 PROVISION_PERMISSIONS = frozenset({'provision_access', 'provision_manage'})
+HR_PERMISSIONS = frozenset({'hr.view', 'hr.sync', 'hr.export', 'hr.triggers', 'hr.admin'})
 
 
 @dataclass
@@ -37,8 +38,8 @@ class User:
 
     def has_permission(self, perm: str) -> bool:
         """Prueft ob der Benutzer ein bestimmtes Recht hat.
-        Admins haben alle Standard-Rechte. Provision-Rechte muessen explizit vergeben werden."""
-        if perm in PROVISION_PERMISSIONS:
+        Admins haben alle Standard-Rechte. Provision- und HR-Rechte muessen explizit vergeben werden."""
+        if perm in PROVISION_PERMISSIONS or perm in HR_PERMISSIONS:
             return perm in self.permissions
         return self.is_admin or perm in self.permissions
 

@@ -170,7 +170,7 @@ class _SettingsOverlay(QWidget):
     """Modales Einstellungs-Overlay mit Backdrop und Fade-Animation."""
 
     close_requested = Signal()
-    save_requested = Signal(str)
+    save_requested = Signal(str, str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -182,7 +182,7 @@ class _SettingsOverlay(QWidget):
         outer.setAlignment(Qt.AlignCenter)
 
         self._panel = QFrame()
-        self._panel.setFixedSize(560, 480)
+        self._panel.setFixedSize(560, 680)
         self._panel.setStyleSheet(f"""
             QFrame {{
                 background-color: {PRIMARY_0};
@@ -318,6 +318,49 @@ class _SettingsOverlay(QWidget):
         self._update_font_card_styles()
         self._font_group.buttonClicked.connect(self._on_font_preset_changed)
 
+        a_layout.addSpacing(8)
+
+        import i18n as _i18n_mod
+        lang_header = QLabel(texts.SETTINGS_LANGUAGE_SECTION)
+        lang_header.setStyleSheet(
+            f"font-family: {_tokens.FONT_HEADLINE}; font-size: {FONT_SIZE_H3}; "
+            f"font-weight: {FONT_WEIGHT_BOLD}; color: {PRIMARY_900}; border: none;"
+        )
+        a_layout.addWidget(lang_header)
+
+        current_lang = _i18n_mod.get_language()
+        self._lang_group = QButtonGroup(self)
+        self._lang_cards: dict[str, tuple[QFrame, QRadioButton]] = {}
+
+        for lang_code, lang_name in _i18n_mod.AVAILABLE_LANGUAGES.items():
+            lcard = _ClickableFrame()
+            lcard.setCursor(Qt.PointingHandCursor)
+            lc_lay = QHBoxLayout(lcard)
+            lc_lay.setContentsMargins(16, 10, 16, 10)
+            lc_lay.setSpacing(12)
+
+            lradio = QRadioButton()
+            lradio.setChecked(lang_code == current_lang)
+            lradio.setProperty("lang_code", lang_code)
+            lradio.setStyleSheet("QRadioButton { border: none; }")
+            lcard.clicked.connect(lambda r=lradio: r.setChecked(True))
+            lc_lay.addWidget(lradio)
+
+            lname = QLabel(lang_name)
+            lname.setStyleSheet(
+                f"font-family: {_tokens.FONT_BODY}; font-weight: {FONT_WEIGHT_BOLD}; "
+                f"color: {PRIMARY_900}; border: none;"
+            )
+            lname.setAttribute(Qt.WA_TransparentForMouseEvents)
+            lc_lay.addWidget(lname, 1)
+
+            self._lang_group.addButton(lradio)
+            self._lang_cards[lang_code] = (lcard, lradio)
+            a_layout.addWidget(lcard)
+
+        self._update_lang_card_styles()
+        self._lang_group.buttonClicked.connect(self._on_lang_changed)
+
         a_layout.addStretch()
 
         save_btn = QPushButton(texts.SAVE)
@@ -354,10 +397,15 @@ class _SettingsOverlay(QWidget):
     def _on_font_preset_changed(self, _button):
         self._update_font_card_styles()
 
+    def _on_lang_changed(self, _button):
+        self._update_lang_card_styles()
+
     def _on_save(self):
-        checked = self._font_group.checkedButton()
-        if checked:
-            self.save_requested.emit(checked.property("preset_id"))
+        font_btn = self._font_group.checkedButton()
+        lang_btn = self._lang_group.checkedButton()
+        font_preset = font_btn.property("preset_id") if font_btn else "classic"
+        lang_code = lang_btn.property("lang_code") if lang_btn else "de"
+        self.save_requested.emit(font_preset, lang_code)
 
     def reset_to_current(self):
         """Setzt die Radio-Buttons auf den aktuell gespeicherten Wert."""
@@ -368,8 +416,33 @@ class _SettingsOverlay(QWidget):
             radio.setChecked(_pid == current)
         self._update_font_card_styles()
 
+        import i18n as _i18n_mod
+        current_lang = _i18n_mod.get_language()
+        for _lid, (card, radio) in self._lang_cards.items():
+            radio.setChecked(_lid == current_lang)
+        self._update_lang_card_styles()
+
     def _update_font_card_styles(self):
         for pid, (card, radio) in self._font_cards.items():
+            if radio.isChecked():
+                card.setStyleSheet(f"""
+                    QFrame {{
+                        background-color: {PRIMARY_0};
+                        border: 2px solid {ACCENT_500};
+                        border-radius: {RADIUS_LG};
+                    }}
+                """)
+            else:
+                card.setStyleSheet(f"""
+                    QFrame {{
+                        background-color: {PRIMARY_0};
+                        border: 1px solid {BORDER_DEFAULT};
+                        border-radius: {RADIUS_LG};
+                    }}
+                """)
+
+    def _update_lang_card_styles(self):
+        for lid, (card, radio) in self._lang_cards.items():
             if radio.isChecked():
                 card.setStyleSheet(f"""
                     QFrame {{
@@ -672,6 +745,14 @@ class DashboardScreen(QWidget):
         tiles_row.addWidget(tile_ledger, alignment=Qt.AlignTop)
         self._tiles["ledger"] = tile_ledger
 
+        # -- Workforce --
+        tile_workforce = _ModuleTile(
+            texts.WF_DASHBOARD_TILE, texts.WF_DASHBOARD_TILE_DESC, _tokens.SUCCESS,
+        )
+        tile_workforce.clicked.connect(lambda: self.module_requested.emit("workforce"))
+        tiles_row.addWidget(tile_workforce, alignment=Qt.AlignTop)
+        self._tiles["workforce"] = tile_workforce
+
         b_layout.addLayout(tiles_row)
         b_layout.addSpacing(4)
 
@@ -714,15 +795,17 @@ class DashboardScreen(QWidget):
             callback=lambda: self._content.setGraphicsEffect(None)
         )
 
-    def _on_settings_saved(self, preset_id: str):
+    def _on_settings_saved(self, preset_id: str, lang_code: str):
         from PySide6.QtWidgets import QApplication
         from PySide6.QtGui import QFont, QFontDatabase
         import ui.styles.tokens as _tok
+        import i18n as _i18n_mod
 
         QSettings("ACENCIA GmbH", "ACENCIA ATLAS").setValue(
             "appearance/font_preset", preset_id
         )
         _tok.apply_font_preset(preset_id)
+        _i18n_mod.set_language(lang_code)
 
         app = QApplication.instance()
         app.setStyleSheet(_tok.get_application_stylesheet())

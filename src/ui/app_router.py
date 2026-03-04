@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 _IDX_DASHBOARD = 0
 _IDX_CORE = 1
 _IDX_LEDGER = 2
+_IDX_WORKFORCE = 3
 
 
 class AppRouter(QMainWindow):
@@ -51,8 +52,9 @@ class AppRouter(QMainWindow):
         self._stack = QStackedWidget()
         self.setCentralWidget(self._stack)
 
-        self._core_widget = None   # MainHub, lazy
-        self._ledger_widget = None  # ProvisionHub, lazy
+        self._core_widget = None      # MainHub, lazy
+        self._ledger_widget = None    # ProvisionHub, lazy
+        self._workforce_widget = None # WorkforceHub, lazy
 
         app_version = self._read_version()
 
@@ -62,6 +64,8 @@ class AppRouter(QMainWindow):
             visible.append("admin")
         if user and user.has_permission('provision_access'):
             visible.append("ledger")
+        if user and user.has_permission('hr.view'):
+            visible.append("workforce")
 
         self._dashboard = DashboardScreen(
             username=username, app_version=app_version,
@@ -76,6 +80,7 @@ class AppRouter(QMainWindow):
 
         self._stack.addWidget(QWidget())  # Placeholder Index 1 (Core)
         self._stack.addWidget(QWidget())  # Placeholder Index 2 (Ledger)
+        self._stack.addWidget(QWidget())  # Placeholder Index 3 (Workforce)
 
         self._toast_manager = ToastManager(self)
 
@@ -108,6 +113,13 @@ class AppRouter(QMainWindow):
                 return
             self._ensure_ledger()
             self._stack.setCurrentIndex(_IDX_LEDGER)
+        elif module_id == "workforce":
+            user = self.auth_api.current_user
+            if not user or not user.has_permission('hr.view'):
+                logger.warning("Workforce-Zugriff ohne hr.view abgelehnt")
+                return
+            self._ensure_workforce()
+            self._stack.setCurrentIndex(_IDX_WORKFORCE)
 
     # ------------------------------------------------------------------
     # Lazy Init
@@ -143,6 +155,36 @@ class AppRouter(QMainWindow):
         self._stack.removeWidget(old)
         old.deleteLater()
         self._stack.insertWidget(_IDX_LEDGER, widget)
+
+    def _ensure_workforce(self):
+        if self._workforce_widget is not None:
+            return
+        try:
+            from ui.workforce.workforce_hub import WorkforceHub
+            widget = WorkforceHub(self.api_client, self.auth_api)
+            widget._toast_manager = self._toast_manager
+            widget.back_requested.connect(self.show_dashboard)
+        except Exception:
+            logger.exception("WorkforceHub konnte nicht geladen werden, zeige Placeholder")
+            widget = self._create_workforce_placeholder()
+        self._workforce_widget = widget
+
+        old = self._stack.widget(_IDX_WORKFORCE)
+        self._stack.removeWidget(old)
+        old.deleteLater()
+        self._stack.insertWidget(_IDX_WORKFORCE, widget)
+
+    def _create_workforce_placeholder(self) -> QWidget:
+        w = QWidget()
+        layout = QVBoxLayout(w)
+        layout.setAlignment(Qt.AlignCenter)
+        lbl = QLabel(texts.WF_DASHBOARD_TILE)
+        lbl.setStyleSheet(
+            f"font-family: {FONT_BODY}; font-size: {FONT_SIZE_BODY}; color: {PRIMARY_500};"
+        )
+        layout.addWidget(lbl, alignment=Qt.AlignCenter)
+        w.setStyleSheet(f"background-color: {BG_PRIMARY};")
+        return w
 
     def _create_ledger_placeholder(self) -> QWidget:
         w = QWidget()
