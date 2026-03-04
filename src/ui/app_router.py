@@ -18,6 +18,7 @@ from api.auth import AuthAPI
 from i18n import de as texts
 from ui.dashboard_screen import DashboardScreen
 from ui.toast import ToastManager
+from services.global_heartbeat import GlobalHeartbeat
 from ui.styles.tokens import (
     FONT_BODY, FONT_SIZE_BODY, PRIMARY_500, BG_PRIMARY,
 )
@@ -83,6 +84,13 @@ class AppRouter(QMainWindow):
         self._stack.addWidget(QWidget())  # Placeholder Index 3 (Workforce)
 
         self._toast_manager = ToastManager(self)
+        self._active_module: str | None = None
+
+        self._heartbeat = GlobalHeartbeat(api_client, auth_api, parent=self)
+        self._heartbeat.session_invalid.connect(self._on_session_invalid)
+        self._heartbeat.notifications_updated.connect(self._on_notifications_updated)
+        self._heartbeat.system_status_changed.connect(self._on_system_status_changed)
+        self._heartbeat.start()
 
     # ------------------------------------------------------------------
     # Navigation
@@ -90,13 +98,18 @@ class AppRouter(QMainWindow):
 
     def show_dashboard(self):
         """Zeigt das Dashboard (Index 0)."""
+        self._stop_active_module_heartbeat()
+        self._active_module = None
         self._stack.setCurrentIndex(_IDX_DASHBOARD)
 
     def _open_module(self, module_id: str):
+        self._stop_active_module_heartbeat()
+
         if module_id == "core":
             self._ensure_core()
             self._core_widget.reset_to_default_view()
             self._stack.setCurrentIndex(_IDX_CORE)
+            self._start_module_heartbeat(self._core_widget, "core")
         elif module_id == "admin":
             user = self.auth_api.current_user
             if not user or not user.is_admin:
@@ -106,6 +119,7 @@ class AppRouter(QMainWindow):
             self._core_widget.reset_to_default_view()
             self._stack.setCurrentIndex(_IDX_CORE)
             self._core_widget.navigate_to_admin()
+            self._start_module_heartbeat(self._core_widget, "core")
         elif module_id == "ledger":
             user = self.auth_api.current_user
             if not user or not user.has_permission('provision_access'):
@@ -113,6 +127,7 @@ class AppRouter(QMainWindow):
                 return
             self._ensure_ledger()
             self._stack.setCurrentIndex(_IDX_LEDGER)
+            self._start_module_heartbeat(self._ledger_widget, "ledger")
         elif module_id == "workforce":
             user = self.auth_api.current_user
             if not user or not user.has_permission('hr.view'):
@@ -120,6 +135,55 @@ class AppRouter(QMainWindow):
                 return
             self._ensure_workforce()
             self._stack.setCurrentIndex(_IDX_WORKFORCE)
+            self._start_module_heartbeat(self._workforce_widget, "workforce")
+
+    # ------------------------------------------------------------------
+    # Module Heartbeat Lifecycle
+    # ------------------------------------------------------------------
+
+    def _start_module_heartbeat(self, widget, module_id: str):
+        self._active_module = module_id
+        if widget and hasattr(widget, 'start_module_heartbeat'):
+            widget.start_module_heartbeat()
+
+    def _stop_active_module_heartbeat(self):
+        if not self._active_module:
+            return
+        widget = self._get_active_module_widget()
+        if widget and hasattr(widget, 'stop_module_heartbeat'):
+            widget.stop_module_heartbeat()
+
+    def _get_active_module_widget(self):
+        if self._active_module == "core":
+            return self._core_widget
+        elif self._active_module == "ledger":
+            return self._ledger_widget
+        elif self._active_module == "workforce":
+            return self._workforce_widget
+        return None
+
+    # ------------------------------------------------------------------
+    # Global Heartbeat Callbacks
+    # ------------------------------------------------------------------
+
+    def _on_session_invalid(self):
+        logger.warning("GlobalHeartbeat: Session ungueltig -- Forced Logout")
+        self._heartbeat.stop()
+        self._stop_active_module_heartbeat()
+        if hasattr(self.api_client, '_trigger_forced_logout'):
+            self.api_client._trigger_forced_logout("Session abgelaufen")
+        else:
+            self.auth_api.logout()
+            self.close()
+
+    def _on_notifications_updated(self, summary: dict):
+        self._dashboard.on_notifications_updated(summary)
+        if self._core_widget and hasattr(self._core_widget, 'on_notifications_updated'):
+            self._core_widget.on_notifications_updated(summary)
+
+    def _on_system_status_changed(self, status: str, message: str):
+        if self._core_widget and hasattr(self._core_widget, 'on_system_status_changed'):
+            self._core_widget.on_system_status_changed(status, message)
 
     # ------------------------------------------------------------------
     # Lazy Init
@@ -212,6 +276,8 @@ class AppRouter(QMainWindow):
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply == QMessageBox.StandardButton.Yes:
+            self._heartbeat.stop()
+            self._stop_active_module_heartbeat()
             self.auth_api.logout()
             self.close()
 

@@ -869,6 +869,7 @@ class DashboardScreen(QWidget):
         """Startet asynchrones Laden der System-Mitteilungen."""
         if self._messages_worker and self._messages_worker.isRunning():
             return
+        self._api_client = api_client
         try:
             from api.messages import MessagesAPI
             messages_api = MessagesAPI(api_client)
@@ -879,9 +880,57 @@ class DashboardScreen(QWidget):
             logger.exception("Mitteilungen konnten nicht geladen werden")
             self._msg_placeholder.setText(texts.DASHBOARD_MESSAGES_EMPTY)
 
+    def on_notifications_updated(self, summary: dict):
+        """Empfaengt Notification-Summary vom GlobalHeartbeat.
+
+        Aktualisiert die System-Mitteilungen auf dem Dashboard neu,
+        wenn sich die Anzahl ungelesener System-Nachrichten aendert.
+        """
+        unread_system = summary.get('unread_system_messages', 0)
+        prev = getattr(self, '_prev_unread_system', -1)
+        if unread_system != prev:
+            self._prev_unread_system = unread_system
+            if hasattr(self, '_api_client') and self._api_client:
+                self._reload_messages()
+
     # ------------------------------------------------------------------
     # Slots
     # ------------------------------------------------------------------
+
+    def _reload_messages(self):
+        """Laedt System-Mitteilungen erneut (z.B. bei Heartbeat-Update)."""
+        if not hasattr(self, '_api_client') or not self._api_client:
+            return
+        if self._messages_worker and self._messages_worker.isRunning():
+            return
+        try:
+            from api.messages import MessagesAPI
+            messages_api = MessagesAPI(self._api_client)
+            self._messages_worker = _LoadMessagesWorker(messages_api, parent=self)
+            self._messages_worker.finished.connect(self._on_messages_reloaded)
+            self._messages_worker.start()
+        except Exception:
+            logger.debug("Mitteilungen-Reload fehlgeschlagen")
+
+    def _on_messages_reloaded(self, messages: list):
+        """Callback fuer Heartbeat-getriebenes Nachladen der Mitteilungen."""
+        layout = self._msg_card.layout()
+        while layout.count():
+            item = layout.takeAt(0)
+            w = item.widget()
+            if w:
+                w.deleteLater()
+
+        if not messages:
+            self._msg_placeholder.setText(texts.DASHBOARD_MESSAGES_EMPTY)
+            self._msg_placeholder.show()
+            return
+
+        self._msg_placeholder.hide()
+        for msg in messages:
+            card = self._build_message_card(msg)
+            layout.addWidget(card)
+        layout.addStretch()
 
     def _on_messages_loaded(self, messages: list):
         layout = self._msg_card.layout()

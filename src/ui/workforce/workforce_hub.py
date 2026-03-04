@@ -87,6 +87,8 @@ class WorkforceHub(QWidget):
         3: "snapshots", 4: "stats", 5: "triggers", 6: "smtp",
     }
 
+    _MODULE_HEARTBEAT_INTERVAL = 15_000
+
     def __init__(self, api_client: APIClient, auth_api: AuthAPI):
         super().__init__()
         self._api_client = api_client
@@ -97,6 +99,10 @@ class WorkforceHub(QWidget):
         self._panels_loaded: set[int] = set()
         self._thread_pool = QThreadPool.globalInstance()
         self._refresh_guard = False
+        self._initial_loaded = False
+
+        self._module_heartbeat_timer = QTimer(self)
+        self._module_heartbeat_timer.timeout.connect(self._on_module_heartbeat_tick)
 
         user = self._auth_api.current_user
         if not user or not user.has_permission('hr.view'):
@@ -209,7 +215,7 @@ class WorkforceHub(QWidget):
                 background-color: {SIDEBAR_HOVER};
             }}
         """)
-        refresh_btn.clicked.connect(self._refresh_all)
+        refresh_btn.clicked.connect(lambda: self._refresh_all(show_toast=True))
         sb.addWidget(refresh_btn)
 
         root.addWidget(sidebar)
@@ -280,7 +286,7 @@ class WorkforceHub(QWidget):
             self._content_stack.insertWidget(index, panel)
             self._content_stack.setCurrentIndex(index)
 
-    def _refresh_all(self):
+    def _refresh_all(self, show_toast: bool = True):
         if self._refresh_guard:
             return
         self._refresh_guard = True
@@ -293,8 +299,38 @@ class WorkforceHub(QWidget):
                     panel.refresh()
                 except Exception as e:
                     logger.debug(f"Refresh Panel {index}: {e}")
-        if self._toast_manager:
+        if show_toast and self._toast_manager:
             self._toast_manager.show_success(texts.WF_REFRESH_DONE)
 
     def _release_refresh_guard(self):
         self._refresh_guard = False
+
+    # ------------------------------------------------------------------
+    # Module Heartbeat (gesteuert durch AppRouter)
+    # ------------------------------------------------------------------
+
+    def start_module_heartbeat(self):
+        """Startet Initial-Load und periodischen Heartbeat (15s)."""
+        if not self._initial_loaded:
+            self._initial_load_all_panels()
+            self._initial_loaded = True
+        if not self._module_heartbeat_timer.isActive():
+            self._module_heartbeat_timer.start(self._MODULE_HEARTBEAT_INTERVAL)
+            logger.debug("Workforce-Modul-Heartbeat gestartet (15s)")
+
+    def stop_module_heartbeat(self):
+        """Stoppt den periodischen Heartbeat."""
+        self._module_heartbeat_timer.stop()
+        logger.debug("Workforce-Modul-Heartbeat gestoppt")
+
+    def _initial_load_all_panels(self):
+        """Laedt ALLE Panels sofort beim ersten Oeffnen des Moduls."""
+        user = self._auth_api.current_user
+        has_trigger_perm = user and user.has_permission('hr.triggers')
+        max_panel = self._TOTAL_PANELS if has_trigger_perm else self.PANEL_STATS + 1
+        for i in range(max_panel):
+            self._ensure_panel_loaded(i)
+
+    def _on_module_heartbeat_tick(self):
+        """Periodischer Refresh aller geladenen Panels (ohne Toast)."""
+        self._refresh_all(show_toast=False)
