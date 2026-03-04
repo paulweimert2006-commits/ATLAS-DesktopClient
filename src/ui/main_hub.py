@@ -974,8 +974,8 @@ class MainHub(QMainWindow):
         if self._module_heartbeat_timer.isActive():
             return
         self._module_heartbeat_timer.start(self._MODULE_HEARTBEAT_INTERVAL)
-        if self._archive_view and hasattr(self._archive_view, '_data_cache'):
-            cache = self._archive_view._data_cache
+        if self._archive_view and hasattr(self._archive_view, '_cache'):
+            cache = self._archive_view._cache
             if cache and hasattr(cache, 'start_auto_refresh'):
                 cache.start_auto_refresh()
         logger.debug("Core-Modul-Heartbeat gestartet (15s)")
@@ -985,18 +985,15 @@ class MainHub(QMainWindow):
         self._module_heartbeat_timer.stop()
         if self._chat_view and hasattr(self._chat_view, 'stop_auto_refresh'):
             self._chat_view.stop_auto_refresh()
-        if self._archive_view and hasattr(self._archive_view, '_data_cache'):
-            cache = self._archive_view._data_cache
+        if self._archive_view and hasattr(self._archive_view, '_cache'):
+            cache = self._archive_view._cache
             if cache and hasattr(cache, 'stop_auto_refresh'):
                 cache.stop_auto_refresh()
         logger.debug("Core-Modul-Heartbeat gestoppt")
 
     def _on_module_heartbeat_tick(self):
         """Periodischer Refresh aller geladenen Core-Views (15s)."""
-        if self._archive_view and hasattr(self._archive_view, '_data_cache'):
-            cache = self._archive_view._data_cache
-            if cache and hasattr(cache, '_auto_refresh_active') and not cache._auto_refresh_active:
-                cache.start_auto_refresh()
+        pass
 
     # ================================================================
     # GlobalHeartbeat Callbacks (via AppRouter)

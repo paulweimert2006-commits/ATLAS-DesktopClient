@@ -5,13 +5,15 @@ Eigener Hub analog ProvisionHub mit 7 Panels in 2 Sektionen
 (DATEN / VERWALTUNG). Lazy-Loading aller Panels.
 """
 
+import json
+import hashlib
 import logging
 
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QFrame, QPushButton,
     QStackedWidget, QLabel,
 )
-from PySide6.QtCore import Signal, Qt, QTimer, QThreadPool
+from PySide6.QtCore import Signal, Qt, QTimer, QThreadPool, QObject, QRunnable
 
 from api.client import APIClient
 from api.auth import AuthAPI
@@ -24,6 +26,35 @@ from ui.styles.tokens import (
 from i18n import de as texts
 
 logger = logging.getLogger(__name__)
+
+
+class _FingerprintSignals(QObject):
+    result = Signal(str)
+
+
+class _DataFingerprintWorker(QRunnable):
+    """Holt im Hintergrund einen Fingerprint der Workforce-Daten."""
+
+    def __init__(self, wf_api):
+        super().__init__()
+        self.signals = _FingerprintSignals()
+        self._wf_api = wf_api
+        self.setAutoDelete(True)
+
+    def run(self):
+        try:
+            employers = self._wf_api.get_employers()
+            if not employers:
+                self.signals.result.emit("empty")
+                return
+            raw = json.dumps(
+                sorted(employers, key=lambda e: e.get('id', 0)),
+                sort_keys=True, default=str,
+            )
+            fp = hashlib.md5(raw.encode()).hexdigest()
+            self.signals.result.emit(fp)
+        except Exception:
+            self.signals.result.emit("")
 
 
 class _WfNavButton(QPushButton):
@@ -100,6 +131,8 @@ class WorkforceHub(QWidget):
         self._thread_pool = QThreadPool.globalInstance()
         self._refresh_guard = False
         self._initial_loaded = False
+        self._last_data_fingerprint = ""
+        self._fingerprint_check_running = False
 
         self._module_heartbeat_timer = QTimer(self)
         self._module_heartbeat_timer.timeout.connect(self._on_module_heartbeat_tick)
@@ -330,7 +363,26 @@ class WorkforceHub(QWidget):
         max_panel = self._TOTAL_PANELS if has_trigger_perm else self.PANEL_STATS + 1
         for i in range(max_panel):
             self._ensure_panel_loaded(i)
+            panel = self._content_stack.widget(i)
+            if panel and hasattr(panel, 'refresh'):
+                try:
+                    panel.refresh()
+                except Exception as e:
+                    logger.debug(f"Initial refresh Panel {i}: {e}")
 
     def _on_module_heartbeat_tick(self):
-        """Periodischer Refresh aller geladenen Panels (ohne Toast)."""
-        self._refresh_all(show_toast=False)
+        """Prueft im Hintergrund ob sich Daten geaendert haben."""
+        if self._fingerprint_check_running:
+            return
+        self._fingerprint_check_running = True
+        worker = _DataFingerprintWorker(self._wf_api)
+        worker.signals.result.connect(self._on_fingerprint_result)
+        self._thread_pool.start(worker)
+
+    def _on_fingerprint_result(self, fingerprint: str):
+        self._fingerprint_check_running = False
+        if not fingerprint:
+            return
+        if fingerprint != self._last_data_fingerprint:
+            self._last_data_fingerprint = fingerprint
+            self._refresh_all(show_toast=False)

@@ -227,8 +227,8 @@ class ArchiveBoxesView(QWidget):
         # Durchschnittliche Verarbeitungskosten laden (fuer Kostenvoranschlag)
         self._load_avg_cost_stats()
         
-        # Auto-Refresh starten (alle 30 Sekunden)
-        self._cache.start_auto_refresh(20)
+        # Auto-Refresh wird NICHT mehr hier gestartet.
+        # Steuerung ueber MainHub.start_module_heartbeat() / stop_module_heartbeat().
     
     @property
     def presenter(self):

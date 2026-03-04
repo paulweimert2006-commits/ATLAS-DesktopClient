@@ -5,11 +5,14 @@ UX-Redesign v3.2: 10 Panels in 2 Sektionen (DATEN / VERWALTUNG),
 Workflow-orientierte Reihenfolge, klare Benennung.
 """
 
+import json
+import hashlib
+
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QFrame, QPushButton,
     QStackedWidget, QLabel, QSizePolicy,
 )
-from PySide6.QtCore import Signal, Qt, QTimer
+from PySide6.QtCore import Signal, Qt, QTimer, QObject, QRunnable, QThreadPool
 
 from api.client import APIClient
 from api.auth import AuthAPI
@@ -35,6 +38,33 @@ from i18n import de as texts
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+class _ProvFingerprintSignals(QObject):
+    result = Signal(str)
+
+
+class _ProvDataFingerprintWorker(QRunnable):
+    """Holt im Hintergrund einen Fingerprint der Provisions-Daten."""
+
+    def __init__(self, provision_api):
+        super().__init__()
+        self.signals = _ProvFingerprintSignals()
+        self._api = provision_api
+        self.setAutoDelete(True)
+
+    def run(self):
+        try:
+            batches = self._api.get_import_batches()
+            raw = json.dumps(
+                [{'id': b.id, 'status': b.status, 'row_count': b.row_count}
+                 for b in batches] if batches else [],
+                sort_keys=True, default=str,
+            )
+            fp = hashlib.md5(raw.encode()).hexdigest()
+            self.signals.result.emit(fp)
+        except Exception:
+            self.signals.result.emit("")
 
 
 class ProvisionNavButton(QPushButton):
@@ -112,6 +142,9 @@ class ProvisionHub(QWidget):
         self._nav_buttons = []
         self._panels_loaded = set()
         self._initial_loaded = False
+        self._last_data_fingerprint = ""
+        self._fingerprint_check_running = False
+        self._thread_pool = QThreadPool.globalInstance()
 
         self._freeze_detector = FreezeDetector(self)
         self._refresh_guard = False
@@ -404,10 +437,30 @@ class ProvisionHub(QWidget):
         """Laedt ALLE Panels sofort beim ersten Oeffnen des Moduls."""
         for i in range(self._TOTAL_PANELS):
             self._ensure_panel_loaded(i)
+            panel = self._content_stack.widget(i)
+            if panel and hasattr(panel, 'refresh'):
+                try:
+                    panel.refresh()
+                except Exception as e:
+                    logger.debug(f"Initial refresh Panel {i}: {e}")
 
     def _on_module_heartbeat_tick(self):
-        """Periodischer Refresh aller geladenen Panels (ohne Toast)."""
-        self._refresh_all(show_toast=False)
+        """Prueft im Hintergrund ob sich Daten geaendert haben."""
+        if self._fingerprint_check_running:
+            return
+        self._fingerprint_check_running = True
+        worker = _ProvDataFingerprintWorker(self._provision_api)
+        worker.signals.result.connect(self._on_fingerprint_result)
+        self._thread_pool.start(worker)
+
+    def _on_fingerprint_result(self, fingerprint: str):
+        self._fingerprint_check_running = False
+        if not fingerprint:
+            return
+        if fingerprint != self._last_data_fingerprint:
+            self._last_data_fingerprint = fingerprint
+            ProvisionCache.instance().invalidate_all()
+            self._refresh_all(show_toast=False)
 
     def get_blocking_operations(self) -> list:
         """Laufende Operationen die das Schliessen blockieren."""
