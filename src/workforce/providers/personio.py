@@ -172,8 +172,11 @@ class PersonioProvider(BaseProvider):
             "isActive": str(get_value("status")).lower() == 'active',
             "firstName": get_value("first_name"),
             "lastName": get_value("last_name"),
+            "email": get_value("email"),
             "position": get_value("position"),
             "department": department_val,
+            "joinDate": get_value("hire_date"),
+            "leaveDate": get_value("termination_date"),
             "profilePictureUrl": self._fetch_profile_picture_as_data_uri(get_value("profile_picture")),
             "details": final_details
         }

@@ -214,14 +214,15 @@ class SnapshotsView(QWidget):
         self._snapshot_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._snapshot_table.setAlternatingRowColors(True)
         self._snapshot_table.verticalHeader().setVisible(False)
-        self._snapshot_table.setMaximumHeight(200)
+        self._snapshot_table.verticalHeader().setDefaultSectionSize(44)
+        self._snapshot_table.setMaximumHeight(250)
 
         h = self._snapshot_table.horizontalHeader()
         h.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         h.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         h.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         h.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
-        self._snapshot_table.setColumnWidth(3, 100)
+        self._snapshot_table.setColumnWidth(3, 160)
 
         layout.addWidget(self._snapshot_table)
 

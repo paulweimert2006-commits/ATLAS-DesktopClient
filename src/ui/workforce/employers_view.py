@@ -64,6 +64,7 @@ class EmployerDialog(QDialog):
         super().__init__(parent)
         self._employer = employer or {}
         self._is_edit = bool(employer)
+        self._address = self._employer.get('address_json') or {}
         title = texts.WF_EMPLOYER_EDIT_TITLE if self._is_edit else texts.WF_EMPLOYER_ADD_TITLE
         self.setWindowTitle(title)
         self.setMinimumWidth(420)
@@ -99,17 +100,17 @@ class EmployerDialog(QDialog):
             self._provider_combo.setEnabled(False)
         form.addRow(QLabel(texts.WF_EMPLOYER_PROVIDER), self._provider_combo)
 
-        self._street_input = QLineEdit(self._employer.get('street', ''))
+        self._street_input = QLineEdit(self._address.get('street', ''))
         self._street_input.setPlaceholderText(texts.WF_EMPLOYER_STREET_PLACEHOLDER)
         form.addRow(QLabel(texts.WF_EMPLOYER_STREET), self._street_input)
 
         addr_row = QHBoxLayout()
-        self._zip_input = QLineEdit(self._employer.get('zip_code', ''))
+        self._zip_input = QLineEdit(self._address.get('zip_code', ''))
         self._zip_input.setPlaceholderText(texts.WF_EMPLOYER_ZIP_PLACEHOLDER)
         self._zip_input.setMaximumWidth(100)
         addr_row.addWidget(self._zip_input)
 
-        self._city_input = QLineEdit(self._employer.get('city', ''))
+        self._city_input = QLineEdit(self._address.get('city', ''))
         self._city_input.setPlaceholderText(texts.WF_EMPLOYER_CITY_PLACEHOLDER)
         addr_row.addWidget(self._city_input)
 
@@ -144,9 +145,11 @@ class EmployerDialog(QDialog):
         return {
             'name': self._name_input.text().strip(),
             'provider_key': self._provider_combo.currentData(),
-            'street': self._street_input.text().strip(),
-            'zip_code': self._zip_input.text().strip(),
-            'city': self._city_input.text().strip(),
+            'address': {
+                'street': self._street_input.text().strip(),
+                'zip_code': self._zip_input.text().strip(),
+                'city': self._city_input.text().strip(),
+            },
         }
 
 
