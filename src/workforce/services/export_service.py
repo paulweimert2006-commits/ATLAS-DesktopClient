@@ -87,8 +87,33 @@ def map_to_scs_schema(e: dict, employer_name: str, provider_key: str) -> dict:
     }
 
 
+def _add_employer_sheet(wb: openpyxl.Workbook, employer_name: str,
+                        employer_cfg: dict = None) -> None:
+    """Fuegt ein Arbeitgeber-Blatt zur Workbook hinzu."""
+    ws_org = wb.create_sheet("Arbeitgeber")
+    org_headers = ["Name", "Strasse", "PLZ", "Ort", "Land", "Kommentar", "Email", "Telefon", "Fax"]
+    ws_org.append(org_headers)
+    cfg = employer_cfg or {}
+    addr = cfg.get("address_json") or cfg.get("address") or {}
+    if not isinstance(addr, dict):
+        addr = {}
+    org_row = {
+        "Name": employer_name,
+        "Strasse": addr.get("street") or "",
+        "PLZ": addr.get("zip_code") or addr.get("zipCode") or "",
+        "Ort": addr.get("city") or "",
+        "Land": addr.get("country") or "D",
+        "Kommentar": cfg.get("comment") or "",
+        "Email": cfg.get("email") or "",
+        "Telefon": cfg.get("phone") or "",
+        "Fax": cfg.get("fax") or "",
+    }
+    ws_org.append([org_row.get(h, "") for h in org_headers])
+
+
 def generate_standard_export(employees: list[dict], employer_name: str,
-                             provider_key: str, exports_dir: str) -> str:
+                             provider_key: str, exports_dir: str,
+                             employer_cfg: dict = None) -> str:
     """
     Generiert einen vollstaendigen XLSX-Export aller Mitarbeiterdaten.
 
@@ -97,6 +122,7 @@ def generate_standard_export(employees: list[dict], employer_name: str,
         employer_name: Name des Arbeitgebers
         provider_key: Provider-Schluessel
         exports_dir: Verzeichnis fuer Exporte
+        employer_cfg: Vollstaendiger Arbeitgeber-Dict (fuer Arbeitgeber-Blatt)
 
     Returns:
         Dateipfad der generierten Excel-Datei
@@ -109,6 +135,8 @@ def generate_standard_export(employees: list[dict], employer_name: str,
     ws.append(hl)
     for rd in rows:
         ws.append([rd.get(h) for h in hl])
+
+    _add_employer_sheet(wb, employer_name, employer_cfg)
 
     t = datetime.now().strftime("%Y%m%d-%H%M%S")
     fn = f"standard_{get_safe_employer_name(employer_name)}_{provider_key}_{t}.xlsx"
@@ -142,22 +170,7 @@ def generate_delta_excel(changed_employees: dict, employer_cfg: dict,
     for pid in sorted(changed_employees.keys()):
         ws_emp.append([changed_employees[pid]["core"].get(h, "") for h in SCS_HEADERS])
 
-    ws_org = wb.create_sheet("Arbeitgeber")
-    org_headers = ["Name", "Strasse", "PLZ", "Ort", "Land", "Kommentar", "Email", "Telefon", "Fax"]
-    ws_org.append(org_headers)
-    addr = employer_cfg.get("address", {}) if isinstance(employer_cfg.get("address"), dict) else {}
-    org_row = {
-        "Name": employer_name,
-        "Strasse": addr.get("street") or "",
-        "PLZ": addr.get("zip_code") or addr.get("zipCode") or "",
-        "Ort": addr.get("city") or "",
-        "Land": addr.get("country") or "D",
-        "Kommentar": employer_cfg.get("comment") or "",
-        "Email": employer_cfg.get("email") or "",
-        "Telefon": employer_cfg.get("phone") or "",
-        "Fax": employer_cfg.get("fax") or "",
-    }
-    ws_org.append([org_row.get(h, "") for h in org_headers])
+    _add_employer_sheet(wb, employer_name, employer_cfg)
 
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
     os.makedirs(exports_dir, exist_ok=True)

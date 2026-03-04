@@ -4,6 +4,7 @@ Workforce QThread-Worker fuer nicht-blockierende IO-Operationen.
 Alle Provider-Calls, API-Calls und Export-Generierung laufen in Worker-Threads.
 """
 
+import json
 import os
 import logging
 import tempfile
@@ -88,7 +89,7 @@ class DeltaExportWorker(QRunnable):
                 export_meta = {
                     'export_type': 'delta_scs',
                     'filename': os.path.basename(result['filepath']),
-                    'diff_summary': str(result['diff']),
+                    'diff_summary': json.dumps(result.get('diff', {}), ensure_ascii=False, default=str),
                 }
                 self.api.upload_export(self.employer_id, result['filepath'], export_meta)
 
@@ -171,7 +172,8 @@ class StandardExportWorker(QRunnable):
             exports_dir = os.path.join(tempfile.gettempdir(), 'atlas_workforce_exports')
             self.signals.progress.emit("Export generieren...")
             filepath = generate_standard_export(
-                employees, employer['name'], employer['provider_key'], exports_dir
+                employees, employer['name'], employer['provider_key'], exports_dir,
+                employer_cfg=employer
             )
 
             self.signals.progress.emit("Export hochladen...")

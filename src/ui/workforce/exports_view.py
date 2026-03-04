@@ -195,6 +195,7 @@ class ExportsView(QWidget):
         self._history_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._history_table.setAlternatingRowColors(True)
         self._history_table.verticalHeader().setVisible(False)
+        self._history_table.verticalHeader().setDefaultSectionSize(44)
 
         h = self._history_table.horizontalHeader()
         h.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
@@ -202,7 +203,7 @@ class ExportsView(QWidget):
         h.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         h.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         h.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
-        self._history_table.setColumnWidth(4, 120)
+        self._history_table.setColumnWidth(4, 160)
 
         layout.addWidget(self._history_table)
 
