@@ -222,6 +222,34 @@ Die `.gitignore` ignoriert `.env` und `.env.*` praeventiv.
 
 ---
 
+## Modul-Konfiguration
+
+### Modul-Zugriffssteuerung (Migrationen 045-050)
+
+Die Module (Core, Provision, Workforce) werden serverseitig verwaltet:
+
+| Parameter | Konfigurationsort | Beschreibung |
+|-----------|------------------|-------------|
+| **Module** | DB: `modules` | Registrierte Module (core, provision, workforce) |
+| **User-Module** | DB: `user_modules` | Modul-Freischaltung pro User |
+| **Rollen** | DB: `roles` | Modul-spezifische Rollen |
+| **Berechtigungen** | DB: `role_permissions` | Rechte pro Rolle |
+| **Account-Typ** | DB: `users.account_type` | user, admin, super_admin |
+
+### Zugangslevel
+
+| Level | Beschreibung |
+|-------|-------------|
+| `user` | Standard-Zugriff auf das Modul |
+| `admin` | Modul-Admin: Kann Zugriff, Rollen und Konfiguration verwalten |
+
+Die Modul-Verwaltung erfolgt ueber:
+- Desktop: ModuleAdminShell (`src/ui/module_admin/`)
+- API: AdminModulesAPI (`src/api/admin_modules.py`)
+- PHP: `admin_modules.php` (Endpoints unter `/admin/modules`)
+
+---
+
 ## Internationalisierung (i18n)
 
 | Parameter | Wert |
@@ -231,6 +259,7 @@ Die `.gitignore` ignoriert `.env` und `.env.*` praeventiv.
 | **Keys** | ~2600 (Deutsch als Hauptkatalog) |
 | **Persistenz** | QSettings `appearance/language` |
 | **Mechanismus** | Module-basiertes Patching zur Laufzeit |
+| **Neue Prefixe** | `MODULE_ADMIN_*`, `ACCOUNT_TYPE_*`, `ACCESS_LEVEL_*`, `ROLE_*` |
 
 ### Verwendung
 

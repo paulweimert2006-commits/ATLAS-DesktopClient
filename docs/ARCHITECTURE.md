@@ -21,15 +21,15 @@ die ueber eine REST-API mit einem PHP-Backend auf Hetzner Cloud kommuniziert.
 │  │  - Provision        │            │  │  (HTTPS, HTTP/2) │    │   │
 │  │  - Workforce        │            │  └────────┬─────────┘    │   │
 │  │  - Admin            │            │           │              │   │
+│  │  - Module-Admin     │            │  ┌────────▼─────────┐    │   │
+│  └────────────────────┘            │  │  PHP 8.3 FPM     │    │   │
+│                                     │  │  REST API         │    │   │
+│  ┌────────────────────┐            │  │  (~48 Endpoints)  │    │   │
+│  │  Web-Admin-Panel    │◄──────────►│  └────────┬─────────┘    │   │
+│  │  (Vanilla JS SPA)   │  HTTPS/JWT │           │              │   │
 │  └────────────────────┘            │  ┌────────▼─────────┐    │   │
-│                                     │  │  PHP 8.3 FPM     │    │   │
-│  ┌────────────────────┐            │  │  REST API         │    │   │
-│  │  Web-Admin-Panel    │◄──────────►│  │  (~48 Endpoints)  │    │   │
-│  │  (Vanilla JS SPA)   │  HTTPS/JWT │  └────────┬─────────┘    │   │
-│  └────────────────────┘            │           │              │   │
-│                                     │  ┌────────▼─────────┐    │   │
-│  ┌────────────────────┐            │  │  MySQL 8.0        │    │   │
-│  │  HR-Provider APIs   │            │  │  (~63 Tabellen)   │    │   │
+│                                     │  │  MySQL 8.0        │    │   │
+│  ┌────────────────────┐            │  │  (~68 Tabellen)   │    │   │
 │  │  (Personio, HRworks)│◄──────────►│  └──────────────────┘    │   │
 │  └────────────────────┘  Desktop   │                          │   │
 │                          direkt    │  Volume 100 GB           │   │
@@ -55,6 +55,7 @@ Die Desktop-App folgt einer strikten Schichtenarchitektur:
 │  provision_hub.py → 10 Panels                         │
 │  workforce_hub.py → 7 Panels                          │
 │  admin_shell.py → 17 Panels                           │
+│  module_admin_shell.py → 3 Tabs (Zugriff, Rollen, Config) │
 ├──────────────────────────────────────────────────────┤
 │                  Presenter Layer (MVP)                 │
 │  archive/archive_presenter.py                         │
@@ -78,7 +79,8 @@ Die Desktop-App folgt einer strikten Schichtenarchitektur:
 │                  API Client Layer                      │
 │  client.py (Basis-HTTP-Client, JWT, Retry)            │
 │  auth.py, documents.py, provision.py, messages.py     │
-│  admin.py, xempus.py, bipro_events.py, smartscan.py  │
+│  admin.py, admin_modules.py (Module+Rollen)           │
+│  xempus.py, bipro_events.py, smartscan.py             │
 │  openrouter/ (KI-Integration)                         │
 │  workforce/api_client.py (HR-Endpoints)               │
 ├──────────────────────────────────────────────────────┤
@@ -160,9 +162,52 @@ WorkforceHub (QWidget)
 
 ### 4. Admin-Modul (AdminShell)
 
-**Zugriff**: Nur fuer Admins (`account_type = 'admin'`).
+**Zugriff**: Nur fuer Admins (`account_type = 'admin'` oder `super_admin`).
 
 17 Panels in 5 Sektionen: Verwaltung (4), Monitoring (3), Verarbeitung (4), E-Mail (4), System (2).
+
+### 5. Modul-Admin (ModuleAdminShell)
+
+**Zugriff**: Modul-Admin-Zugangslevel (`access_level = 'admin'` in `user_modules`).
+
+```
+ModuleAdminShell (QWidget, pro Modul instanziiert)
+├── Header (Zurueck-Button + Modul-Name)
+├── QTabWidget
+│   ├── [0] ModuleAccessPanel    - User-Tabelle mit Rollen-Zuweisung
+│   ├── [1] ModuleRolesPanel     - Rollen-CRUD + Rechte-Verwaltung
+│   └── [2] ModuleConfigPanel    - Modul-spezifische Config-Panels (optional)
+└── Lazy Tab Loading (load_data bei Tab-Wechsel)
+```
+
+**Besonderheit Core-Modul**: Das Config-Tab bettet bestehende Admin-Panels ein (KI-Klassifikation, KI-Provider, Modell-Preise, Dokumenten-Regeln, E-Mail-Konten, SmartScan-Einstellungen, SmartScan-Historie, E-Mail-Posteingang).
+
+---
+
+## Modul-Zugriffssteuerung
+
+### Account-Typen (3-stufig)
+
+| Typ | Zugriffsrechte |
+|-----|---------------|
+| `user` | Nur freigeschaltete Module, keine Admin-Panels |
+| `admin` | Alle Standard-Rechte + Admin-Panels (nicht Server-Management) |
+| `super_admin` | Alles inkl. Server-Management-Panels |
+
+### Modul-Freischaltung
+
+```
+User                  user_modules                    Dashboard
+├── id ──────────── ├── user_id                      ├── Zeigt nur Module
+│                    ├── module_key ─── modules       │   wo is_enabled=true
+│                    ├── is_enabled     ├── core      │
+│                    └── access_level   ├── provision  │   Module-Admin-Kachel nur
+│                        user/admin     └── workforce  │   wenn access_level=admin
+```
+
+### Heartbeat-Integration
+
+`GlobalHeartbeat` prueft per `modules_updated`-Signal alle 5 Sekunden ob Modul-Zugriff noch gueltig. Bei Entzug wird der User sofort zum Dashboard zurueckgeleitet.
 
 ---
 
@@ -173,9 +218,12 @@ WorkforceHub (QWidget)
 ```
 AppRouter (QMainWindow + QStackedWidget)
 ├── [0] DashboardScreen          - Startbildschirm mit Modul-Kacheln
-├── [1] MainHub                  - Core-Modul (Lazy Load)
-├── [2] ProvisionHub             - Provision-Modul (Lazy Load)
-└── [3] WorkforceHub             - Workforce-Modul (Lazy Load)
+├── [1] MainHub                  - Core-Modul (Lazy Load, hat_module("core"))
+├── [2] ProvisionHub             - Provision-Modul (Lazy Load, has_module("provision"))
+├── [3] WorkforceHub             - Workforce-Modul (Lazy Load, has_module("workforce"))
+├── [N] ModuleAdminShell(core)   - Core Modul-Admin (Lazy, is_module_admin("core"))
+├── [N] ModuleAdminShell(prov.)  - Provision Modul-Admin (Lazy, is_module_admin("provision"))
+└── [N] ModuleAdminShell(wf)     - Workforce Modul-Admin (Lazy, is_module_admin("workforce"))
 ```
 
 **Signals**: `module_requested(str)`, `back_requested`, `logout_requested`
@@ -295,11 +343,14 @@ Alle langandauernden Operationen laufen in Hintergrund-Threads:
 - Forced Logout bei Session-Ende oder Sperrung
 
 ### Berechtigungssystem
-- `account_type`: `admin` oder `user`
+- `account_type`: `user`, `admin` oder `super_admin` (3-stufig)
+- **Modul-Zugriff**: Pro User in `user_modules`-Tabelle (is_enabled, access_level)
+- **Modul-Rollen**: Pro Modul konfigurierbar (roles + role_permissions Tabellen)
 - Standard-Rechte: Admins haben alle (ausser Provision/HR)
 - Provision-Rechte: `provision_access`, `provision_manage` (explizit)
 - HR-Rechte: `hr.view`, `hr.sync`, `hr.export`, `hr.triggers`, `hr.admin` (explizit)
 - Web-Admin-Panel: `is_super_admin` fuer Server-Management-Panels
+- **Modul-Admin**: `access_level = 'admin'` in `user_modules` fuer Modul-Verwaltung
 
 ### Verschluesselung
 - Credentials in DB: AES-256-GCM (PHP `Crypto`-Klasse)
@@ -317,10 +368,14 @@ Alle langandauernden Operationen laufen in Hintergrund-Threads:
 | `src/ui/app_router.py` | Top-Level-Routing (Dashboard, Core, Ledger, Workforce) |
 | `src/ui/main_hub.py` | Hauptfenster mit Sidebar und Views |
 | `src/api/client.py` | Basis-HTTP-Client mit JWT und Retry |
-| `src/api/auth.py` | Login/Logout, User-Model, Permissions |
+| `src/api/auth.py` | Login/Logout, User-Model, Permissions, Module |
+| `src/api/admin_modules.py` | Modul- und Rollenverwaltung API (10 Methoden) |
+| `src/ui/module_admin/module_admin_shell.py` | Generische Modul-Admin-Shell |
 | `src/services/document_processor.py` | KI-Klassifikation Pipeline |
 | `src/services/global_heartbeat.py` | Session-Pruefung + Benachrichtigungen |
 | `src/workforce/api_client.py` | HR-API-Client (30+ Methoden) |
-| `src/i18n/de.py` | Deutsche UI-Texte (~2600 Keys) |
+| `src/i18n/de.py` | Deutsche UI-Texte (~2600 Keys, Hauptkatalog) |
+| `src/i18n/en.py` | Englische UI-Texte (~2600 Keys) |
+| `src/i18n/ru.py` | Russische UI-Texte (~2600 Keys) |
 | `src/ui/styles/tokens.py` | Design-Tokens (Farben, Fonts, Spacing) |
 | `VERSION` | Zentrale Versionsdatei |

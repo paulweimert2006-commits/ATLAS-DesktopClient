@@ -76,9 +76,9 @@ ATLAS-DesktopClient/
 │   ├── DEVELOPMENT.md         # Diese Datei
 │   ├── CONFIGURATION.md       # Konfiguration
 │   └── DOMAIN.md              # Fachdomaene
-└── src/                       # Quellcode
+└── src/                       # Quellcode (~280 Dateien, ~90.000 Zeilen)
     ├── main.py                # Qt-Anwendung
-    ├── api/                   # API-Clients (~29 Module)
+    ├── api/                   # API-Clients (~30 Module inkl. admin_modules.py)
     ├── bipro/                 # BiPRO SOAP Client
     ├── services/              # Business-Logik
     ├── domain/                # Datenmodelle
@@ -87,8 +87,12 @@ ATLAS-DesktopClient/
     ├── usecases/              # Use Cases
     ├── workforce/             # HR-Modul
     ├── ui/                    # Benutzeroberflaeche
+    │   ├── admin/             # Admin-Bereich (17 Panels)
+    │   ├── module_admin/      # Modul-Admin-Verwaltung (Shell + 3 Panels)
+    │   ├── provision/         # Provision (10 Panels)
+    │   └── workforce/         # Workforce (7 Panels)
     ├── config/                # Konfiguration
-    ├── i18n/                  # Internationalisierung
+    ├── i18n/                  # Internationalisierung (3 Sprachen: de, en, ru)
     ├── parser/                # GDV-Parser
     ├── layouts/               # GDV-Layouts
     ├── utils/                 # Hilfsfunktionen

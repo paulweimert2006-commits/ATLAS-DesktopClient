@@ -95,7 +95,7 @@
 - **Berechtigungen**: `hr.view`, `hr.sync`, `hr.export`, `hr.triggers`, `hr.admin`
 
 ### Administration (Vollbild-Ansicht mit vertikaler Sidebar, 17 Panels)
-- **Nutzerverwaltung**: Erstellen, Bearbeiten, Sperren, 9 granulare Berechtigungen
+- **Nutzerverwaltung**: Erstellen, Bearbeiten, Sperren, 9 granulare Berechtigungen, Modul-Freischaltung
 - **Session-Management**: Aktive Sessions einsehen und beenden
 - **Passwort-Verwaltung**: PDF/ZIP-Passwoerter zentral verwalten
 - **Aktivitaetslog**: Alle API-Aktionen protokolliert
@@ -109,6 +109,14 @@
 - **Smart!Scan-Historie**: Revisionssichere Versandhistorie
 - **E-Mail-Posteingang**: IMAP Inbox mit Anhang-Details
 - **Mitteilungen**: System-/Admin-Mitteilungen erstellen und verwalten (NEU v2.0.0)
+
+### Modul-Admin (NEU v2.3.1)
+- **Modulare Zugriffssteuerung**: Core, Provision, Workforce als eigenstaendige Module
+- **Account-Typen**: user, admin, super_admin (3-stufig)
+- **Modul-Freischaltung**: Pro User einzeln freischaltbar, Dashboard zeigt nur freigeschaltete Module
+- **Modul-Rollen**: Pro Modul konfigurierbare Rollen mit granularen Berechtigungen
+- **Modul-Admin-Shell**: Eigenstaendige Verwaltungsoberflaeche mit 3 Tabs (Zugriff, Rollen, Konfiguration)
+- **Live-Entzug**: Modul-Zugriff kann zur Laufzeit entzogen werden (Heartbeat-gesteuert)
 
 ---
 
@@ -230,7 +238,7 @@ ATLAS-DesktopClient/
 ├── build_config.spec          # PyInstaller Build-Konfiguration
 ├── installer.iss              # Inno Setup Installer-Konfiguration
 │
-├── src/                       # Quellcode (~130 Dateien, ~63.000 Zeilen)
+├── src/                       # Quellcode (~280 Dateien, ~90.000 Zeilen)
 │   ├── main.py               # Qt-Anwendung
 │   ├── background_updater.py # Headless Hintergrund-Updater
 │   │
@@ -238,7 +246,8 @@ ATLAS-DesktopClient/
 │   │   ├── client.py         # Base-Client mit JWT-Auth + Retry
 │   │   ├── documents.py      # Dokumenten-Operationen (Box-Support)
 │   │   ├── provision.py      # Provisions-API
-│   │   ├── auth.py           # Login/Logout, User-Model, Permissions
+│   │   ├── auth.py           # Login/Logout, User-Model, Permissions, Module
+│   │   ├── admin_modules.py  # Modul- und Rollenverwaltung API (NEU)
 │   │   ├── xempus.py         # Xempus Insight Engine API
 │   │   ├── bipro_events.py   # BiPRO-Events API
 │   │   ├── smartscan.py      # SmartScan + EmailAccounts API
@@ -260,7 +269,7 @@ ATLAS-DesktopClient/
 │   │
 │   ├── domain/               # Datenmodelle (GDV + Xempus)
 │   ├── config/               # Konfiguration (VU-Endpoints, Zertifikate)
-│   ├── i18n/                 # Internationalisierung (~1.917 Keys)
+│   ├── i18n/                 # Internationalisierung (~2.600 Keys, 3 Sprachen: de, en, ru)
 │   ├── layouts/              # GDV-Satzart-Definitionen
 │   ├── parser/               # GDV Fixed-Width Parser
 │   ├── tests/                # Tests (7 Dateien: Smoke, Security, Stability, Provision)
@@ -276,6 +285,11 @@ ATLAS-DesktopClient/
 │       ├── admin/             # Admin-Bereich (17 Panels)
 │       │   ├── admin_shell.py    # Shell mit Sidebar
 │       │   └── panels/          # 17 Panel-Dateien
+│       ├── module_admin/      # Modul-Admin-Verwaltung (NEU)
+│       │   ├── module_admin_shell.py  # Shell mit 3 Tabs
+│       │   ├── access_panel.py  # User-Zugriff + Rollen
+│       │   ├── roles_panel.py   # Rollen-CRUD
+│       │   └── config_panel.py  # Modul-Konfiguration
 │       ├── provision/         # Provisionsmanagement (10 Panels)
 │       │   ├── provision_hub.py  # Hub mit Sidebar
 │       │   ├── dashboard_panel.py # KPI + Berater-Ranking
@@ -386,6 +400,19 @@ Proprietär - Nur für internen Gebrauch bei ACENCIA GmbH.
 ---
 
 ## Changelog
+
+### v2.3.1 (05. Maerz 2026)
+- **NEU**: Modul-System: Modulare Zugriffssteuerung fuer Core, Provision und Workforce
+- **NEU**: Account-Typen erweitert: user, admin, super_admin (3-stufig)
+- **NEU**: Modul-Freischaltung pro User: Dashboard zeigt nur freigeschaltete Module
+- **NEU**: Modul-Admin-Shell: Eigenstaendige Verwaltung mit 3 Tabs (Zugriff, Rollen, Konfiguration)
+- **NEU**: Modul-Rollen: Pro Modul konfigurierbare Rollen mit granularen Berechtigungen
+- **NEU**: AdminModulesAPI: 10 neue API-Methoden fuer Modul- und Rollenverwaltung
+- **NEU**: PHP-Backend admin_modules.php: Module, Rollen, User-Module, User-Rollen Endpoints
+- **NEU**: Live-Modul-Entzug: GlobalHeartbeat ueberwacht Modul-Aenderungen in Echtzeit
+- **NEU**: DB-Migrationen 045-050: modules, user_modules, roles, role_permissions, user_roles, backfill
+- **NEU**: i18n erweitert auf 3 Sprachen (Deutsch, Englisch, Russisch), ~2600 Keys
+- **NEU**: ~30 neue i18n-Keys (MODULE_ADMIN_*, ACCOUNT_TYPE_*, ACCESS_LEVEL_*, ROLE_*)
 
 ### v3.0.0 (19. Februar 2026)
 - **NEU**: Provisionsmanagement (GF-Bereich): Eigenstaendiger Hub mit 7 Panels

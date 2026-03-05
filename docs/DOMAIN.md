@@ -100,17 +100,24 @@ User
 ├── id: int
 ├── username: str
 ├── email: str (optional)
-├── account_type: 'admin' | 'user'
+├── account_type: 'user' | 'admin' | 'super_admin'
 ├── update_channel: 'stable' | 'beta'
 ├── permissions: List[str]
+├── modules: List[UserModule]    -- freigeschaltete Module mit Zugangslevel
 ├── is_locked: bool
 └── last_login_at: str (optional)
 ```
+
+**Account-Typen**:
+- `user`: Standard-Nutzer, nur freigeschaltete Module
+- `admin`: Admin-Rechte + alle Standard-Panels
+- `super_admin`: Alles inkl. Server-Management-Panels
 
 **Berechtigungen**:
 - Standard: Admins haben alle (ausser Provision/HR)
 - Provision: `provision_access`, `provision_manage` (explizit)
 - HR: `hr.view`, `hr.sync`, `hr.export`, `hr.triggers`, `hr.admin` (explizit)
+- Modul-spezifisch: Ueber Rollen konfigurierbar (role_permissions)
 
 ### Document (Dokument)
 
@@ -153,6 +160,46 @@ Commission
 ├── split_tl: Decimal (optional)
 ├── split_ag: Decimal (optional)
 └── created_at: datetime
+```
+
+### Module (Modul)
+
+```
+Module
+├── id: int
+├── module_key: str ('core' | 'provision' | 'workforce')
+├── name: str
+├── description: str (optional)
+├── is_active: bool
+├── created_at: datetime
+└── updated_at: datetime
+```
+
+### UserModule (Modul-Zugriff pro User)
+
+```
+UserModule
+├── id: int
+├── user_id: int (FK → users)
+├── module_key: str (FK → modules)
+├── is_enabled: bool
+├── access_level: 'user' | 'admin'
+├── created_at: datetime
+└── updated_at: datetime
+```
+
+### Role (Modul-Rolle)
+
+```
+Role
+├── id: int
+├── module_key: str (FK → modules)
+├── role_key: str (z.B. 'provision.manager', 'hr.admin')
+├── name: str
+├── description: str (optional)
+├── permissions: List[Permission]
+├── created_at: datetime
+└── updated_at: datetime
 ```
 
 ### HR Employer (Arbeitgeber)
@@ -322,7 +369,7 @@ VU-Verbindung waehlen → STS-Authentifizierung (Norm 410)
 
 | Tabelle | Beschreibung |
 |---------|-------------|
-| `users` | Benutzer mit account_type, permissions, is_super_admin |
+| `users` | Benutzer mit account_type (user/admin/super_admin), permissions |
 | `sessions` | Aktive JWT-Sessions |
 | `documents` | Dokumente im Archiv (Box-System) |
 | `document_ai_data` | KI-Daten zu Dokumenten (1:1) |
@@ -369,6 +416,17 @@ VU-Verbindung waehlen → STS-Authentifizierung (Norm 410)
 | `processing_settings` | KI-Klassifikation-Einstellungen |
 | `document_rules_settings` | Regeln fuer Duplikate/leere Seiten |
 
+### Modul-Tabellen (Migrationen 045-050)
+
+| Tabelle | Migration | Beschreibung |
+|---------|-----------|-------------|
+| `modules` | 046 | Registrierte Module (core, provision, workforce) |
+| `user_modules` | 047 | User ↔ Modul (is_enabled, access_level: user/admin) |
+| `roles` | 048 | Modul-spezifische Rollen (role_key, name, description) |
+| `permissions` | 048 | Erweitert um module_key-Zuordnung |
+| `role_permissions` | 049 | Rolle ↔ Permission Mapping |
+| `user_roles` | 049 | User ↔ Rolle Mapping pro Modul |
+
 ### System-Tabellen
 
 | Tabelle | Beschreibung |
@@ -381,7 +439,7 @@ VU-Verbindung waehlen → STS-Authentifizierung (Norm 410)
 | `bipro_events` | BiPRO-Events |
 | `notifications` | Benachrichtigungs-Summary |
 | `server_audit_log` | Server-Audit-Log (Super-Admin) |
-| `migrations` | Durchgefuehrte DB-Migrationen (005-044) |
+| `migrations` | Durchgefuehrte DB-Migrationen (005-050) |
 
 ---
 
@@ -405,6 +463,10 @@ Schema: `Versicherer_Typ_Datum.pdf` (automatisch durch KI, manuell ueberschreibb
 
 ### Berechtigungen
 
+- **Account-Typen**: `user` → `admin` → `super_admin` (3-stufig, Migration 045)
+- **Modul-Zugriff**: Pro User konfigurierbar (user_modules-Tabelle, Migration 047)
+- **Modul-Rollen**: Pro Modul definierbare Rollen mit granularen Rechten (roles + role_permissions)
+- **Zugangslevel**: `user` (Standard) oder `admin` (Modul-Verwaltungsrechte) pro Modul
 - Provision/HR-Rechte: Muessen explizit vergeben werden (auch fuer Admins)
 - Standard-Rechte: Admins erhalten automatisch alle (ausser Provision/HR)
-- Super-Admin (`is_super_admin`): Zugriff auf Server-Management-Panels
+- Super-Admin (`account_type = 'super_admin'`): Zugriff auf Server-Management-Panels
