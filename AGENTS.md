@@ -1,7 +1,7 @@
 # AGENTS.md
 # ACENCIA ATLAS -- Desktop Client + Web-Admin-Panel
 
-> **Version**: siehe `VERSION`-Datei (aktuell 2.3.1) | **Stand**: 04.03.2026
+> **Version**: siehe `VERSION`-Datei (aktuell 2.3.1) | **Stand**: 05.03.2026
 > Detaillierte Dokumentation liegt im privaten Submodule `ATLAS_private - Doku - Backend/`.
 
 **Agent's Responsibility:** Dieses Dokument ist die Single Source of Truth fuer Agent-Zusammenarbeit an diesem Projekt. Bei jedem neuen Feature, Bugfix oder Refactor **muss** dieses Dokument aktualisiert werden.
@@ -375,24 +375,36 @@ In `/etc/php/8.3/fpm/conf.d/99-atlas.ini` sind `exec` und `shell_exec` AKTIV (ni
 
 ---
 
-## Aktueller Stand (04.03.2026)
+## Definition of Done (DoD)
 
-### Implementiert
-- Desktop-App: Voll funktionsfaehig (BiPRO, Archiv, GDV, Provision, 17 Admin-Panels)
-- **Workforce-Modul (NEU)**: Eigener Hub mit 7 Panels (Arbeitgeber, Mitarbeiter, Exporte, Snapshots, Statistiken, Trigger, SMTP)
-  - HR-Provider-Integration (Personio, HRworks, SageHR Mock)
-  - Delta-SCS-Export mit Snapshot-Vergleich
-  - Trigger-System (E-Mail + API-Aktionen bei Mitarbeiterdaten-Aenderungen)
-  - PHP-Backend: 30 Endpoints unter /hr/* (api/hr.php)
-  - DB: 9 Tabellen (hr_*), 5 Permissions (hr.view, hr.sync, hr.export, hr.triggers, hr.admin)
-  - Migration: 044_hr_module.php
-- Web-Admin-Panel: 27 Panels deployed und funktionsfaehig
-  - 17 bestehende Desktop-Admin-Funktionen ins Web repliziert
-  - 9 neue Server-Management-Panels (Super-Admin)
-  - 1 System-Status-Panel (bereits vorhanden, erweitert)
-- PHP-API: ~48 Endpoints, inkl. 13 Server-Management + 30 HR/Workforce-Endpoints
-- DB-Migrationen: Bis 044 (is_excluded, is_super_admin, server_audit_log, hr_module)
-- Server: Hetzner Cloud, SSL, Fail2Ban, Backups, sudoers konfiguriert
+Jede Aenderung am Projekt muss folgende Kriterien erfuellen:
+
+- [ ] **Build laeuft**: `python -m PyInstaller build_config.spec --clean --noconfirm` erfolgreich
+- [ ] **Tests laufen**: `python src/tests/run_smoke_tests.py` + `pytest src/tests/` gruen
+- [ ] **Lint ok**: `ruff check src/` ohne Fehler
+- [ ] **i18n**: Alle neuen UI-Texte in `src/i18n/de.py` (Desktop) bzw. `admin-panel/i18n/de.js` (Web)
+- [ ] **Keine Secrets im Repo**: Keine API-Keys, Passwoerter, Tokens im Code
+- [ ] **Keine modalen Popups**: `ToastManager` statt `QMessageBox.information/warning/critical`
+- [ ] **Kein blockierender Code auf Main-Thread**: Lange Operationen via QThread-Worker
+- [ ] **Docs aktualisiert**: AGENTS.md und README.md bei Feature-Aenderungen aktualisieren
+- [ ] **VERSION**: Bei Release-wuerdigen Aenderungen VERSION-Datei aktualisieren
+- [ ] **PR-Checkliste**: `.github/pull_request_template.md` abarbeiten
+
+---
+
+## Aktueller Stand (05.03.2026)
+
+### Implementiert (Komplett)
+- **Desktop-App**: Voll funktionsfaehig mit 4 Hauptmodulen:
+  - **Core** (MainHub): BiPRO-Datenabruf, Dokumentenarchiv mit KI, GDV-Editor, Mitteilungszentrale, Chat
+  - **Provision** (ProvisionHub): 10 Panels - Dashboard, Performance, Import, VU-Zuordnung, Xempus, Freie Provisionen, Klaerung, Verteilung, Auszahlungen, Einstellungen
+  - **Workforce** (WorkforceHub): 7 Panels - Arbeitgeber, Mitarbeiter, Exporte, Snapshots, Statistiken, Trigger, SMTP
+  - **Admin** (AdminShell): 17 Panels - Nutzer, Sessions, Passwoerter, Aktivitaet, KI-Kosten, Releases, KI-Klassifikation, KI-Provider, Modell-Preise, Dokumenten-Regeln, E-Mail-Konten, SmartScan-Einstellungen, SmartScan-Historie, E-Mail-Posteingang, Mitteilungen, Server-Gesundheit, Migrationen
+- **Workforce-Modul**: HR-Provider-Integration (Personio, HRworks, SageHR Mock), Delta-SCS-Export, Trigger-System (E-Mail + API), 30 PHP-Endpoints (/hr/*), 9 DB-Tabellen (hr_*), 5 Permissions, Migration 044
+- **Web-Admin-Panel**: 27 Panels deployed (17 Desktop-Admin repliziert + 9 Server-Management + 1 System-Status)
+- **PHP-API**: ~48 Endpoints inkl. 13 Server-Management + 30 HR/Workforce-Endpoints
+- **DB-Migrationen**: Bis 044 (is_excluded, is_super_admin, server_audit_log, hr_module)
+- **Server**: Hetzner Cloud (CCX13), SSL, Fail2Ban, Backups, sudoers konfiguriert
 
 ### Bekannte Einschraenkungen / Tech Debt
 - KI-Provider und Modell-Preise: Muessen im Web-Panel manuell konfiguriert werden (Desktop-Client nutzt config.php-Fallback)
@@ -445,3 +457,47 @@ In `/etc/php/8.3/fpm/conf.d/99-atlas.ini` sind `exec` und `shell_exec` AKTIV (ni
 | `src/ui/workforce/*_view.py` | 7 View-Panels |
 | `api/hr.php` | 30 PHP-Endpoints |
 | `api/setup/044_hr_module.php` | DB-Migration (9 Tabellen + 5 Permissions) |
+
+---
+
+## Bekannte TODOs im Code
+
+| Datei | TODO |
+|-------|------|
+| `src/bipro/bipro_connector.py` L.211 | SmartAdmin Transfer-Service implementieren |
+| `src/ui/admin/panels/email_inbox.py` L.320 | API-Call zum Ignorieren |
+| `src/api/smartadmin_auth.py` L.346 | Vollstaendige X.509 WS-Security Implementation |
+| `src/api/smartadmin_auth.py` L.595 | listShipments SOAP-Call implementieren |
+
+---
+
+## Tasks (Roadmap)
+
+### Kurzfristig (naechste Sprints)
+1. **SageHR-Provider realisieren**: Mock durch echte API-Anbindung ersetzen
+2. **HR-Datenmigration**: Bestehende JSON-Daten aus HR-Hub in neue DB-Tabellen migrieren
+3. **SmartAdmin BiPRO**: Transfer-Service fuer SmartAdmin-Anbindung implementieren (TODO im Code)
+4. **E-Mail-Inbox Ignorieren**: API-Call zum Ignorieren von E-Mails im Posteingang
+
+### Mittelfristig
+5. **Dark Mode (Web-Admin-Panel)**: Aktuell nur Light-Theme
+6. **WebSocket-Support**: Polling-basierte Benachrichtigungen durch WebSockets ersetzen
+7. **Release-Upload im Browser**: Aktuell nur per Desktop-Client moeglich
+8. **Cache-Invalidierung (Admin-Panel)**: Automatische Aktualisierung statt manueller Hard-Refresh
+
+### Langfristig
+9. **Weitere BiPRO-Versicherer**: Anbindung weiterer VUs ueber BiPRO-Standard
+10. **X.509 WS-Security**: Vollstaendige Implementation fuer SmartAdmin
+
+---
+
+## Weitere Dokumentation
+
+| Dokument | Beschreibung |
+|----------|-------------|
+| [README.md](README.md) | Projektuebersicht, Features, Quickstart, Changelog |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Detaillierte Architektur mit Datenfluss-Diagrammen |
+| [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Lokales Setup, Build, Test, Debugging |
+| [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Alle Konfigurationsoptionen und Umgebungsvariablen |
+| [docs/DOMAIN.md](docs/DOMAIN.md) | Fachdomaene: Begriffe, Entitaeten, Workflows |
+| `ATLAS_private - Doku - Backend/docs/` | Interne Kern- und Entwickler-Dokumentation (53 Dateien) |

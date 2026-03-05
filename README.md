@@ -5,8 +5,9 @@
 - **BiPRO-Datenabruf** - Automatisierter Abruf von Lieferungen von Versicherern + IMAP Mail-Import
 - **Dokumentenarchiv mit Box-System** - Zentrales Archiv mit KI-Klassifikation und Smart!Scan
 - **Provisionsmanagement** - VU-Provisionen importieren, Berater verwalten, automatisch zuordnen, abrechnen
+- **Workforce / HR** - Arbeitgeber- und Mitarbeiterverwaltung, HR-Provider-Anbindung, Delta-Exporte, Trigger
 - **GDV-Editor** - Erstellung, Ansicht und Bearbeitung von GDV-Datensaetzen
-- **Administration** - Nutzerverwaltung, E-Mail-Konten, KI-Kosten, Releases, Mitteilungen
+- **Administration** - Nutzerverwaltung, E-Mail-Konten, KI-Kosten, Releases, Mitteilungen (17 Panels)
 
 ![Python 3.10+](https://img.shields.io/badge/Python-3.10+-blue.svg)
 ![PySide6](https://img.shields.io/badge/GUI-PySide6-green.svg)
@@ -81,7 +82,19 @@
 - **Daten bearbeiten und speichern**
 - **Neue Saetze erstellen**: 0001, 0100, 0200, 0210, 0220, 0230, 9999
 
-### Administration (Vollbild-Ansicht mit vertikaler Sidebar)
+### Workforce / HR (NEU v2.3.0)
+- **Eigener Hub**: Vollbild-Ansicht mit 7 Panels (wie Provision)
+- **Arbeitgeber-Verwaltung**: CRUD, Credentials, Provider-Anbindung (HRworks, Personio, SageHR)
+- **Mitarbeiter**: Paginierte Ansicht, Suche, Status-Filter
+- **HR-Provider-Integration**: Direktanbindung an HRworks und Personio APIs
+- **Delta-SCS-Export**: Automatischer Snapshot-Vergleich, XLSX-Generierung, Upload
+- **Trigger-System**: Automatisierte Aktionen bei Mitarbeiterdaten-Aenderungen (E-Mail + API)
+- **Snapshots**: HR-Daten-Snapshots speichern und vergleichen
+- **Statistiken**: HR-Uebersichten und Kennzahlen
+- **SMTP-Konfiguration**: E-Mail-Einstellungen fuer Trigger-Benachrichtigungen
+- **Berechtigungen**: `hr.view`, `hr.sync`, `hr.export`, `hr.triggers`, `hr.admin`
+
+### Administration (Vollbild-Ansicht mit vertikaler Sidebar, 17 Panels)
 - **Nutzerverwaltung**: Erstellen, Bearbeiten, Sperren, 9 granulare Berechtigungen
 - **Session-Management**: Aktive Sessions einsehen und beenden
 - **Passwort-Verwaltung**: PDF/ZIP-Passwoerter zentral verwalten
@@ -179,15 +192,27 @@ python run.py
 6. **Dashboard**: KPI-Karten und Berater-Ranking pruefen
 7. **Abrechnungen**: Monatsabrechnungen generieren und freigeben
 
+### Workforce / HR
+
+1. **Navigation** → **Workforce** (nur mit `hr.view` Berechtigung)
+2. **Arbeitgeber**: Provider-Anbindung konfigurieren (HRworks, Personio), Credentials verwalten
+3. **Mitarbeiter**: Paginierte Liste, Suche, Status-Filter, Detail-Ansicht
+4. **Sync**: Mitarbeiterdaten von HR-Provider synchronisieren
+5. **Exporte**: Delta-SCS-Exporte generieren und herunterladen (XLSX)
+6. **Snapshots**: HR-Daten-Snapshots erstellen und vergleichen
+7. **Trigger**: Automatisierte Aktionen bei Aenderungen (E-Mail, API-Calls)
+8. **SMTP**: E-Mail-Konfiguration fuer Trigger-Benachrichtigungen
+
 ### Administration
 
 1. **Navigation** → **Administration** (nur fuer Admins sichtbar)
-2. Vertikale Sidebar links mit 15 Panels in 5 Sektionen
+2. Vertikale Sidebar links mit 17 Panels in 5 Sektionen
 3. **Verwaltung**: Nutzer, Sessions, Passwoerter
 4. **Monitoring**: Aktivitaetslog, KI-Kosten, Releases
-5. **Verarbeitung**: KI-Klassifikation, KI-Provider, Modell-Preise, Dokumenten-Regeln (NEU v2.1.3)
+5. **Verarbeitung**: KI-Klassifikation, KI-Provider, Modell-Preise, Dokumenten-Regeln
 6. **E-Mail**: Konten, SmartScan-Settings, Historie, Posteingang
-7. **Kommunikation**: Mitteilungen erstellen und verwalten (NEU v2.0.0)
+7. **Kommunikation**: Mitteilungen erstellen und verwalten
+8. **System**: Server-Gesundheit, Migrationen
 
 ---
 
@@ -196,7 +221,7 @@ python run.py
 ```
 ATLAS-DesktopClient/
 ├── run.py                     # Entry Point
-├── VERSION                    # Zentrale Versionsdatei (aktuell 2.2.6)
+├── VERSION                    # Zentrale Versionsdatei (aktuell 2.3.1)
 ├── requirements.txt           # Python-Abhaengigkeiten
 ├── requirements-dev.txt       # Dev-Dependencies (pytest, ruff)
 ├── requirements-lock.txt      # Gelockte Dependencies
@@ -209,16 +234,16 @@ ATLAS-DesktopClient/
 │   ├── main.py               # Qt-Anwendung
 │   ├── background_updater.py # Headless Hintergrund-Updater
 │   │
-│   ├── api/                  # Server-API Clients (~22 Dateien)
+│   ├── api/                  # Server-API Clients (~29 Dateien)
 │   │   ├── client.py         # Base-Client mit JWT-Auth + Retry
 │   │   ├── documents.py      # Dokumenten-Operationen (Box-Support)
 │   │   ├── provision.py      # Provisions-API
-│   │   ├── auth.py           # Login/Logout, User-Model
+│   │   ├── auth.py           # Login/Logout, User-Model, Permissions
 │   │   ├── xempus.py         # Xempus Insight Engine API
 │   │   ├── bipro_events.py   # BiPRO-Events API
 │   │   ├── smartscan.py      # SmartScan + EmailAccounts API
 │   │   ├── openrouter/       # KI-Integration (Klassifikation, OCR)
-│   │   └── ...               # (15 weitere Module)
+│   │   └── ...               # (20 weitere Module)
 │   │
 │   ├── bipro/                # BiPRO SOAP Client (7 Dateien)
 │   │   ├── transfer_service.py  # BiPRO 410 STS + 430 Transfer
@@ -238,22 +263,28 @@ ATLAS-DesktopClient/
 │   ├── i18n/                 # Internationalisierung (~1.917 Keys)
 │   ├── layouts/              # GDV-Satzart-Definitionen
 │   ├── parser/               # GDV Fixed-Width Parser
-│   ├── tests/                # Tests (6 Dateien: Smoke, Security, Stability, Provision)
+│   ├── tests/                # Tests (7 Dateien: Smoke, Security, Stability, Provision)
 │   │
-│   └── ui/                   # Benutzeroberflaeche (~50 Dateien)
+│   └── ui/                   # Benutzeroberflaeche (~60 Dateien)
+│       ├── app_router.py     # Routing-Shell (QStackedWidget: Dashboard, Core, Ledger, Workforce)
+│       ├── dashboard_screen.py # Startbildschirm mit Modul-Kacheln
 │       ├── main_hub.py       # Navigation + Drag & Drop + NotificationPoller
-│       ├── bipro_view.py     # BiPRO Datenabruf (~4.178 Z.)
-│       ├── archive_boxes_view.py  # Dokumentenarchiv (~5.660 Z.)
+│       ├── bipro_view.py     # BiPRO Datenabruf
+│       ├── archive_boxes_view.py  # Dokumentenarchiv
 │       ├── message_center_view.py # Mitteilungszentrale
 │       ├── chat_view.py      # Vollbild-Chat 1:1
-│       ├── admin/             # Admin-Bereich (16 Panels)
+│       ├── admin/             # Admin-Bereich (17 Panels)
 │       │   ├── admin_shell.py    # Shell mit Sidebar
-│       │   └── panels/          # 16 Panel-Dateien (inkl. server_health.py)
-│       ├── provision/         # Provisionsmanagement (9 Panels)
+│       │   └── panels/          # 17 Panel-Dateien
+│       ├── provision/         # Provisionsmanagement (10 Panels)
 │       │   ├── provision_hub.py  # Hub mit Sidebar
 │       │   ├── dashboard_panel.py # KPI + Berater-Ranking
 │       │   └── ...               # (12 weitere Dateien)
-│       ├── archive/           # Archiv-Worker
+│       ├── workforce/         # Workforce/HR (7 Panels)
+│       │   ├── workforce_hub.py  # Hub mit Sidebar
+│       │   └── *_view.py        # 7 View-Panels
+│       ├── archive/           # Archiv-Worker + Widgets
+│       ├── viewers/           # PDF- und Spreadsheet-Viewer
 │       ├── gdv_editor_view.py # GDV-Editor
 │       ├── toast.py           # Toast-Benachrichtigungen + Progress
 │       └── styles/tokens.py   # Design-Tokens (Farben, Fonts)
@@ -338,9 +369,13 @@ Keine erforderlich (Konfiguration in App).
 
 ## Entwicklung
 
-Siehe [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) für Setup und Workflow.
+Siehe [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) fuer Setup, Build und Workflow.
 
-Siehe [AGENTS.md](AGENTS.md) für Agent-Anweisungen und aktuelle Architektur.
+Weitere Dokumentation:
+- [AGENTS.md](AGENTS.md) - Agent-Anweisungen und aktuelle Architektur (Single Source of Truth)
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) - Detaillierte Architektur mit Datenfluss-Diagrammen
+- [docs/CONFIGURATION.md](docs/CONFIGURATION.md) - Alle Konfigurationsoptionen
+- [docs/DOMAIN.md](docs/DOMAIN.md) - Fachdomaene: Begriffe, Entitaeten, Workflows
 
 ---
 
