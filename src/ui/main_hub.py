@@ -26,6 +26,7 @@ from PySide6.QtCore import Qt, Signal, QTimer, QThread
 from PySide6.QtGui import QFont, QIcon, QPixmap, QDragEnterEvent, QDropEvent
 
 logger = logging.getLogger(__name__)
+hb_logger = logging.getLogger('heartbeat.core')
 
 from api.client import APIClient
 from api.auth import AuthAPI
@@ -978,7 +979,7 @@ class MainHub(QMainWindow):
             cache = self._archive_view._cache
             if cache and hasattr(cache, 'start_auto_refresh'):
                 cache.start_auto_refresh()
-        logger.debug("Core-Modul-Heartbeat gestartet (15s)")
+        hb_logger.info(f"[CORE] START (Intervall={self._MODULE_HEARTBEAT_INTERVAL}ms)")
 
     def stop_module_heartbeat(self):
         """Stoppt den Modul-Heartbeat. Wird vom AppRouter aufgerufen."""
@@ -989,11 +990,11 @@ class MainHub(QMainWindow):
             cache = self._archive_view._cache
             if cache and hasattr(cache, 'stop_auto_refresh'):
                 cache.stop_auto_refresh()
-        logger.debug("Core-Modul-Heartbeat gestoppt")
+        hb_logger.info("[CORE] STOP")
 
     def _on_module_heartbeat_tick(self):
         """Periodischer Refresh aller geladenen Core-Views (15s)."""
-        pass
+        hb_logger.info("[CORE] TICK")
 
     # ================================================================
     # GlobalHeartbeat Callbacks (via AppRouter)

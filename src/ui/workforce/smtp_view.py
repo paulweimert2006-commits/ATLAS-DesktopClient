@@ -86,11 +86,11 @@ class SmtpView(QWidget):
         super().__init__()
         self._wf_api = wf_api
         self._toast_manager = None
-        self._active_thread = None
+        self._load_thread = None
+        self._action_thread = None
         self._dirty = False
 
         self._setup_ui()
-        self._load_config()
 
     def _setup_ui(self):
         root = QVBoxLayout(self)
@@ -217,11 +217,13 @@ class SmtpView(QWidget):
         self._dirty = True
 
     def _load_config(self):
+        if self._load_thread and self._load_thread.isRunning():
+            return
         self._set_loading(True)
         thread = _SmtpLoadThread(self._wf_api)
         thread.finished.connect(self._on_config_loaded)
         thread.error.connect(self._on_load_error)
-        self._active_thread = thread
+        self._load_thread = thread
         thread.start()
 
     def _on_config_loaded(self, config: dict):
@@ -277,7 +279,7 @@ class SmtpView(QWidget):
         thread = _SmtpSaveThread(self._wf_api, data)
         thread.finished.connect(self._on_save_done)
         thread.error.connect(self._on_save_error)
-        self._active_thread = thread
+        self._action_thread = thread
         thread.start()
 
     def _on_save_done(self, _result: dict):
@@ -303,7 +305,7 @@ class SmtpView(QWidget):
         thread = _SmtpTestThread(self._wf_api, data)
         thread.finished.connect(self._on_test_done)
         thread.error.connect(self._on_test_error)
-        self._active_thread = thread
+        self._action_thread = thread
         thread.start()
 
     def _on_test_done(self, result: dict):

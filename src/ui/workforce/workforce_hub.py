@@ -26,6 +26,7 @@ from ui.styles.tokens import (
 from i18n import de as texts
 
 logger = logging.getLogger(__name__)
+hb_logger = logging.getLogger('heartbeat.workforce')
 
 
 class _FingerprintSignals(QObject):
@@ -349,12 +350,12 @@ class WorkforceHub(QWidget):
             self._initial_loaded = True
         if not self._module_heartbeat_timer.isActive():
             self._module_heartbeat_timer.start(self._MODULE_HEARTBEAT_INTERVAL)
-            logger.debug("Workforce-Modul-Heartbeat gestartet (15s)")
+            hb_logger.info(f"[WORKFORCE] START (Intervall={self._MODULE_HEARTBEAT_INTERVAL}ms)")
 
     def stop_module_heartbeat(self):
         """Stoppt den periodischen Heartbeat."""
         self._module_heartbeat_timer.stop()
-        logger.debug("Workforce-Modul-Heartbeat gestoppt")
+        hb_logger.info("[WORKFORCE] STOP")
 
     def _initial_load_all_panels(self):
         """Laedt ALLE Panels sofort beim ersten Oeffnen des Moduls."""
@@ -372,6 +373,7 @@ class WorkforceHub(QWidget):
 
     def _on_module_heartbeat_tick(self):
         """Prueft im Hintergrund ob sich Daten geaendert haben."""
+        hb_logger.info("[WORKFORCE] TICK")
         if self._fingerprint_check_running:
             return
         self._fingerprint_check_running = True

@@ -26,6 +26,7 @@ from ui.styles.tokens import (
 APP_VERSION_FILE = "VERSION"
 
 logger = logging.getLogger(__name__)
+hb_logger = logging.getLogger('heartbeat.router')
 
 _IDX_DASHBOARD = 0
 _IDX_CORE = 1
@@ -144,6 +145,7 @@ class AppRouter(QMainWindow):
     def _start_module_heartbeat(self, widget, module_id: str):
         self._active_module = module_id
         if widget and hasattr(widget, 'start_module_heartbeat'):
+            hb_logger.info(f"[MODULE:{module_id.upper()}] START angefordert")
             widget.start_module_heartbeat()
 
     def _stop_active_module_heartbeat(self):
@@ -151,6 +153,7 @@ class AppRouter(QMainWindow):
             return
         widget = self._get_active_module_widget()
         if widget and hasattr(widget, 'stop_module_heartbeat'):
+            hb_logger.info(f"[MODULE:{self._active_module.upper()}] STOP angefordert")
             widget.stop_module_heartbeat()
 
     def _get_active_module_widget(self):

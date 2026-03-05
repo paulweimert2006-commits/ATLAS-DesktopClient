@@ -15,6 +15,7 @@ from typing import Optional
 from PySide6.QtCore import QObject, QTimer, QThread, Signal
 
 logger = logging.getLogger(__name__)
+hb_logger = logging.getLogger('heartbeat.global')
 
 HEARTBEAT_INTERVAL_MS = 5_000
 
@@ -127,13 +128,13 @@ class GlobalHeartbeat(QObject):
         ) if self._auth_api.current_user else []
         self._timer.start(HEARTBEAT_INTERVAL_MS)
         QTimer.singleShot(1_000, self._tick)
-        logger.info(f"GlobalHeartbeat gestartet ({HEARTBEAT_INTERVAL_MS}ms)")
+        hb_logger.info(f"[GLOBAL] START (Intervall={HEARTBEAT_INTERVAL_MS}ms)")
 
     def stop(self):
         """Stoppt den Heartbeat."""
         self._running = False
         self._timer.stop()
-        logger.info("GlobalHeartbeat gestoppt")
+        hb_logger.info("[GLOBAL] STOP")
 
     def force_check(self):
         """Einmaliger sofortiger Check."""
@@ -144,6 +145,7 @@ class GlobalHeartbeat(QObject):
             return
         if self._worker and self._worker.isRunning():
             return
+        hb_logger.info("[GLOBAL] TICK")
 
         self._worker = _HeartbeatWorker(
             self._api_client, self._auth_api,

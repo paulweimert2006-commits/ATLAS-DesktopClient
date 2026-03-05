@@ -282,10 +282,11 @@ class TriggersView(QWidget):
         self._wf_api = wf_api
         self._toast_manager = None
         self._triggers: list[dict] = []
-        self._active_thread = None
+        self._load_thread = None
+        self._runs_thread = None
+        self._action_thread = None
 
         self._setup_ui()
-        self._load_triggers()
 
     def _setup_ui(self):
         root = QVBoxLayout(self)
@@ -418,10 +419,12 @@ class TriggersView(QWidget):
             self._load_runs()
 
     def _load_triggers(self):
+        if self._load_thread and self._load_thread.isRunning():
+            return
         thread = _TriggerLoadThread(self._wf_api)
         thread.finished.connect(self._on_triggers_loaded)
         thread.error.connect(self._on_load_error)
-        self._active_thread = thread
+        self._load_thread = thread
         thread.start()
 
     def _on_triggers_loaded(self, triggers: list):
@@ -499,7 +502,7 @@ class TriggersView(QWidget):
             thread = _TriggerSaveThread(self._wf_api, data)
             thread.finished.connect(self._on_trigger_saved)
             thread.error.connect(self._on_save_error)
-            self._active_thread = thread
+            self._action_thread = thread
             thread.start()
 
     def _open_edit_dialog(self, trigger: dict):
@@ -509,7 +512,7 @@ class TriggersView(QWidget):
             thread = _TriggerSaveThread(self._wf_api, data, trigger.get('id'))
             thread.finished.connect(self._on_trigger_saved)
             thread.error.connect(self._on_save_error)
-            self._active_thread = thread
+            self._action_thread = thread
             thread.start()
 
     def _on_trigger_saved(self, _result: dict):
@@ -526,7 +529,7 @@ class TriggersView(QWidget):
         thread = _TriggerToggleThread(self._wf_api, trigger_id)
         thread.finished.connect(lambda _: self._load_triggers())
         thread.error.connect(self._on_load_error)
-        self._active_thread = thread
+        self._action_thread = thread
         thread.start()
 
     def _delete_trigger(self, trigger_id: int):
@@ -540,7 +543,7 @@ class TriggersView(QWidget):
         thread = _TriggerDeleteThread(self._wf_api, trigger_id)
         thread.finished.connect(self._on_trigger_deleted)
         thread.error.connect(self._on_load_error)
-        self._active_thread = thread
+        self._action_thread = thread
         thread.start()
 
     def _on_trigger_deleted(self, success: bool):
@@ -549,6 +552,8 @@ class TriggersView(QWidget):
         self._load_triggers()
 
     def _load_runs(self):
+        if self._runs_thread and self._runs_thread.isRunning():
+            return
         trigger_id = self._filter_trigger.currentData()
         status = self._filter_status.currentData()
         thread = _RunsLoadThread(
@@ -557,7 +562,7 @@ class TriggersView(QWidget):
         )
         thread.finished.connect(self._on_runs_loaded)
         thread.error.connect(self._on_load_error)
-        self._active_thread = thread
+        self._runs_thread = thread
         thread.start()
 
     def _on_runs_loaded(self, result: dict):

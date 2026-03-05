@@ -38,6 +38,7 @@ from i18n import de as texts
 import logging
 
 logger = logging.getLogger(__name__)
+hb_logger = logging.getLogger('heartbeat.ledger')
 
 
 class _ProvFingerprintSignals(QObject):
@@ -426,12 +427,12 @@ class ProvisionHub(QWidget):
             self._initial_loaded = True
         if not self._module_heartbeat_timer.isActive():
             self._module_heartbeat_timer.start(self._MODULE_HEARTBEAT_INTERVAL)
-            logger.debug("Ledger-Modul-Heartbeat gestartet (15s)")
+            hb_logger.info(f"[LEDGER] START (Intervall={self._MODULE_HEARTBEAT_INTERVAL}ms)")
 
     def stop_module_heartbeat(self):
         """Stoppt den periodischen Heartbeat."""
         self._module_heartbeat_timer.stop()
-        logger.debug("Ledger-Modul-Heartbeat gestoppt")
+        hb_logger.info("[LEDGER] STOP")
 
     def _initial_load_all_panels(self):
         """Laedt ALLE Panels sofort beim ersten Oeffnen des Moduls."""
@@ -446,6 +447,7 @@ class ProvisionHub(QWidget):
 
     def _on_module_heartbeat_tick(self):
         """Prueft im Hintergrund ob sich Daten geaendert haben."""
+        hb_logger.info("[LEDGER] TICK")
         if self._fingerprint_check_running:
             return
         self._fingerprint_check_running = True
