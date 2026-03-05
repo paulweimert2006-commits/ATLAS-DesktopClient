@@ -6,7 +6,7 @@ Vollbild-Layout mit eigener Sidebar-Navigation (16 Bereiche):
 VERWALTUNG:
 0. Nutzerverwaltung (CRUD)
 1. Sessions (Einsicht + Kill)
-2. Passwoerter (PDF/ZIP Passwort-Verwaltung)
+2. Passwoerter (PDF/ZIP Passwort-Verwaltung) #####- musss in die Core Admin verwaltung
 
 MONITORING:
 3. Aktivitaetslog (Filter + Pagination)

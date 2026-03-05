@@ -111,7 +111,13 @@ class ModuleAdminShell(QWidget):
             )
             self._tabs.addTab(self._config_panel, texts.MODULE_ADMIN_TAB_CONFIG)
 
+        self._tabs.currentChanged.connect(self._on_tab_changed)
         layout.addWidget(self._tabs)
+
+    def _on_tab_changed(self, index: int):
+        w = self._tabs.widget(index)
+        if hasattr(w, 'load_data'):
+            w.load_data()
 
     def load_data(self):
         idx = self._tabs.currentIndex()
