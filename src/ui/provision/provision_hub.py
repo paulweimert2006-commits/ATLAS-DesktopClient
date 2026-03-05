@@ -263,6 +263,17 @@ class ProvisionHub(QWidget):
 
         add_nav("\u26A0\uFE0F", texts.PROVISION_PANEL_SETTINGS, texts.PROVISION_PANEL_SETTINGS_DESC, self.PANEL_SETTINGS)
 
+        user_pm = self._auth_api.current_user
+        if user_pm and user_pm.is_module_admin('provision'):
+            sep_admin = QFrame()
+            sep_admin.setFixedHeight(1)
+            sep_admin.setStyleSheet(f"background-color: {ACCENT_500}; margin: 8px 16px;")
+            sb_layout.addWidget(sep_admin)
+
+            admin_btn = ProvisionNavButton("\U0001F6E0", texts.MODULE_ADMIN_BTN, "")
+            admin_btn.clicked.connect(self._show_provision_module_admin)
+            sb_layout.addWidget(admin_btn)
+
         sb_layout.addStretch()
 
         refresh_btn = QPushButton(f"  \u21BB  {texts.PROVISION_HUB_REFRESH}")
@@ -488,6 +499,24 @@ class ProvisionHub(QWidget):
                     ops.append(texts.PROVISION_BLOCKING_WORKER)
                     break
         return ops
+
+    def _show_provision_module_admin(self):
+        """Oeffnet die Provision-Modul-Verwaltung."""
+        if not hasattr(self, '_module_admin_view') or self._module_admin_view is None:
+            from ui.module_admin import ModuleAdminShell
+            self._module_admin_view = ModuleAdminShell(
+                module_key='provision', module_name='Provision',
+                api_client=self._api_client, auth_api=self._auth_api,
+            )
+            self._module_admin_view._toast_manager = getattr(self, '_toast_manager', None)
+            self._module_admin_view.back_requested.connect(self._leave_provision_module_admin)
+            self._content_stack.addWidget(self._module_admin_view)
+        idx = self._content_stack.indexOf(self._module_admin_view)
+        self._content_stack.setCurrentIndex(idx)
+        self._module_admin_view.load_data()
+
+    def _leave_provision_module_admin(self):
+        self._navigate_to(self.PANEL_OVERVIEW)
 
     def cleanup(self) -> None:
         """Alle laufenden Worker sicher beenden."""

@@ -599,6 +599,24 @@ class DashboardScreen(QWidget):
         settings_btn.clicked.connect(self._open_settings)
         right_area.addWidget(settings_btn, alignment=Qt.AlignVCenter)
 
+        self._admin_header_btn = QPushButton(f"\U0001F6E0  {texts.DASHBOARD_TILE_ADMIN}")
+        self._admin_header_btn.setCursor(Qt.PointingHandCursor)
+        self._admin_header_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent;
+                border: 1px solid {ACCENT_500};
+                border-radius: {RADIUS_LG};
+                font-family: {_tokens.FONT_BODY}; font-size: {FONT_SIZE_BODY};
+                color: {ACCENT_500}; padding: 8px 24px; font-weight: 600;
+            }}
+            QPushButton:hover {{
+                color: {PRIMARY_0}; background: {ACCENT_500};
+            }}
+        """)
+        self._admin_header_btn.clicked.connect(lambda: self.module_requested.emit("admin"))
+        self._admin_header_btn.setVisible(False)
+        right_area.addWidget(self._admin_header_btn, alignment=Qt.AlignVCenter)
+
         logout_btn = QPushButton(texts.NAV_ABMELDEN)
         logout_btn.setCursor(Qt.PointingHandCursor)
         logout_btn.setStyleSheet(f"""
@@ -703,10 +721,24 @@ class DashboardScreen(QWidget):
         tiles_row.setSpacing(16)
         tiles_row.setAlignment(Qt.AlignLeft)
 
-        # -- Core-Gruppe (Core + optionaler Admin-Subtile) --
+        _ma_btn_style = f"""
+            QPushButton {{
+                background-color: {PRIMARY_0};
+                border: 1px solid {BORDER_DEFAULT};
+                border-radius: {RADIUS_MD};
+                padding: 5px 14px;
+                text-align: left;
+                font-family: {_tokens.FONT_BODY}; font-size: {FONT_SIZE_CAPTION};
+                color: {PRIMARY_500};
+            }}
+            QPushButton:hover {{
+                border-color: {ACCENT_500}; color: {ACCENT_500};
+            }}
+        """
+
+        # -- Core --
         core_group = QVBoxLayout()
         core_group.setSpacing(6)
-
         tile_core = _ModuleTile(
             texts.DASHBOARD_TILE_CORE, texts.DASHBOARD_TILE_CORE_DESC, PRIMARY_900,
         )
@@ -714,44 +746,58 @@ class DashboardScreen(QWidget):
         core_group.addWidget(tile_core)
         self._tiles["core"] = tile_core
 
-        admin_btn = QPushButton(f"  \U0001F6E0  {texts.DASHBOARD_TILE_ADMIN}")
-        admin_btn.setCursor(Qt.PointingHandCursor)
-        admin_btn.setFixedWidth(200)
-        admin_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {PRIMARY_0};
-                border: 1px solid {BORDER_DEFAULT};
-                border-radius: {RADIUS_MD};
-                padding: 6px 16px;
-                text-align: left;
-                font-family: {_tokens.FONT_BODY}; font-size: {FONT_SIZE_CAPTION};
-                color: {PRIMARY_500};
-            }}
-            QPushButton:hover {{
-                border-color: {PRIMARY_900}; color: {PRIMARY_900};
-            }}
-        """)
-        admin_btn.clicked.connect(lambda: self.module_requested.emit("admin"))
-        core_group.addWidget(admin_btn)
-        self._tiles["admin"] = admin_btn
+        self._core_admin_btn = QPushButton(f"  \U0001F6E0  {texts.MODULE_ADMIN_BTN}")
+        self._core_admin_btn.setCursor(Qt.PointingHandCursor)
+        self._core_admin_btn.setFixedWidth(200)
+        self._core_admin_btn.setStyleSheet(_ma_btn_style)
+        self._core_admin_btn.clicked.connect(lambda: self.module_requested.emit("core_admin"))
+        self._core_admin_btn.setVisible(False)
+        core_group.addWidget(self._core_admin_btn)
+        self._tiles["core_admin"] = self._core_admin_btn
 
         tiles_row.addLayout(core_group)
 
         # -- Ledger --
+        ledger_group = QVBoxLayout()
+        ledger_group.setSpacing(6)
         tile_ledger = _ModuleTile(
             texts.DASHBOARD_TILE_LEDGER, texts.DASHBOARD_TILE_LEDGER_DESC, ACCENT_500,
         )
         tile_ledger.clicked.connect(lambda: self.module_requested.emit("ledger"))
-        tiles_row.addWidget(tile_ledger, alignment=Qt.AlignTop)
+        ledger_group.addWidget(tile_ledger)
         self._tiles["ledger"] = tile_ledger
 
+        self._ledger_admin_btn = QPushButton(f"  \U0001F6E0  {texts.MODULE_ADMIN_BTN}")
+        self._ledger_admin_btn.setCursor(Qt.PointingHandCursor)
+        self._ledger_admin_btn.setFixedWidth(200)
+        self._ledger_admin_btn.setStyleSheet(_ma_btn_style)
+        self._ledger_admin_btn.clicked.connect(lambda: self.module_requested.emit("ledger_admin"))
+        self._ledger_admin_btn.setVisible(False)
+        ledger_group.addWidget(self._ledger_admin_btn)
+        self._tiles["ledger_admin"] = self._ledger_admin_btn
+
+        tiles_row.addLayout(ledger_group)
+
         # -- Workforce --
+        wf_group = QVBoxLayout()
+        wf_group.setSpacing(6)
         tile_workforce = _ModuleTile(
             texts.WF_DASHBOARD_TILE, texts.WF_DASHBOARD_TILE_DESC, _tokens.SUCCESS,
         )
         tile_workforce.clicked.connect(lambda: self.module_requested.emit("workforce"))
-        tiles_row.addWidget(tile_workforce, alignment=Qt.AlignTop)
+        wf_group.addWidget(tile_workforce)
         self._tiles["workforce"] = tile_workforce
+
+        self._wf_admin_btn = QPushButton(f"  \U0001F6E0  {texts.MODULE_ADMIN_BTN}")
+        self._wf_admin_btn.setCursor(Qt.PointingHandCursor)
+        self._wf_admin_btn.setFixedWidth(200)
+        self._wf_admin_btn.setStyleSheet(_ma_btn_style)
+        self._wf_admin_btn.clicked.connect(lambda: self.module_requested.emit("workforce_admin"))
+        self._wf_admin_btn.setVisible(False)
+        wf_group.addWidget(self._wf_admin_btn)
+        self._tiles["workforce_admin"] = self._wf_admin_btn
+
+        tiles_row.addLayout(wf_group)
 
         b_layout.addLayout(tiles_row)
         b_layout.addSpacing(4)

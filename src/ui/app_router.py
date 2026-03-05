@@ -71,6 +71,12 @@ class AppRouter(QMainWindow):
                 visible.append("ledger")
             if user.has_module("workforce"):
                 visible.append("workforce")
+            if user.is_module_admin("core"):
+                visible.append("core_admin")
+            if user.is_module_admin("provision"):
+                visible.append("ledger_admin")
+            if user.is_module_admin("workforce"):
+                visible.append("workforce_admin")
 
         self._dashboard = DashboardScreen(
             username=username, app_version=app_version,
@@ -140,6 +146,89 @@ class AppRouter(QMainWindow):
             self._ensure_workforce()
             self._stack.setCurrentIndex(_IDX_WORKFORCE)
             self._start_module_heartbeat(self._workforce_widget, "workforce")
+        elif module_id == "core_admin":
+            self._open_module_admin("core", "Core")
+        elif module_id == "ledger_admin":
+            self._open_module_admin("provision", "Provision")
+        elif module_id == "workforce_admin":
+            self._open_module_admin("workforce", "Workforce")
+
+    def _open_module_admin(self, module_key: str, module_name: str):
+        """Oeffnet die Modul-Admin-Verwaltung als eigenstaendige Ansicht."""
+        user = self.auth_api.current_user
+        if not user or not user.is_module_admin(module_key):
+            logger.warning(f"Modul-Admin-Zugriff fuer {module_key} abgelehnt")
+            return
+
+        attr = f'_module_admin_{module_key}'
+        if not hasattr(self, attr) or getattr(self, attr) is None:
+            from ui.module_admin import ModuleAdminShell
+            config_panels = []
+            if module_key == 'core':
+                config_panels = self._get_core_admin_config_panels()
+            shell = ModuleAdminShell(
+                module_key=module_key, module_name=module_name,
+                api_client=self.api_client, auth_api=self.auth_api,
+                config_panels=config_panels,
+            )
+            shell._toast_manager = self._toast_manager
+            shell.back_requested.connect(self.show_dashboard)
+            setattr(self, attr, shell)
+            self._stack.addWidget(shell)
+
+        widget = getattr(self, attr)
+        idx = self._stack.indexOf(widget)
+        self._stack.setCurrentIndex(idx)
+        widget.load_data()
+
+    def _get_core_admin_config_panels(self):
+        """Config-Panel-Factories fuer das Core-Modul."""
+        from api.processing_settings import ProcessingSettingsAPI
+        from api.ai_providers import AIProvidersAPI
+        from api.model_pricing import ModelPricingAPI
+        from api.smartscan import SmartScanAPI, EmailAccountsAPI as EmailAccAPI
+
+        psa = ProcessingSettingsAPI(self.api_client)
+        apa = AIProvidersAPI(self.api_client)
+        mpa = ModelPricingAPI(self.api_client)
+        ssa = SmartScanAPI(self.api_client)
+        eaa = EmailAccAPI(self.api_client)
+
+        def _ai_class(ac, tm):
+            from ui.admin.panels.ai_classification import AiClassificationPanel
+            return AiClassificationPanel(api_client=ac, toast_manager=tm, processing_settings_api=psa, ai_providers_api=apa)
+        def _ai_prov(ac, tm):
+            from ui.admin.panels.ai_providers import AiProvidersPanel
+            return AiProvidersPanel(api_client=ac, toast_manager=tm, ai_providers_api=apa)
+        def _model_price(ac, tm):
+            from ui.admin.panels.model_pricing import ModelPricingPanel
+            return ModelPricingPanel(api_client=ac, toast_manager=tm, model_pricing_api=mpa)
+        def _doc_rules(ac, tm):
+            from ui.admin.panels.document_rules import DocumentRulesPanel
+            return DocumentRulesPanel(api_client=ac, toast_manager=tm)
+        def _email_acc(ac, tm):
+            from ui.admin.panels.email_accounts import EmailAccountsPanel
+            return EmailAccountsPanel(api_client=ac, toast_manager=tm, email_accounts_api=eaa)
+        def _ss_settings(ac, tm):
+            from ui.admin.panels.smartscan_settings import SmartScanSettingsPanel
+            return SmartScanSettingsPanel(api_client=ac, toast_manager=tm, smartscan_api=ssa, email_accounts_api=eaa)
+        def _ss_history(ac, tm):
+            from ui.admin.panels.smartscan_history import SmartScanHistoryPanel
+            return SmartScanHistoryPanel(api_client=ac, toast_manager=tm, smartscan_api=ssa)
+        def _email_inbox(ac, tm):
+            from ui.admin.panels.email_inbox import EmailInboxPanel
+            return EmailInboxPanel(api_client=ac, toast_manager=tm, email_accounts_api=eaa)
+
+        return [
+            ("KI-Klassifikation", _ai_class),
+            ("KI-Provider", _ai_prov),
+            ("Modell-Preise", _model_price),
+            ("Dokumenten-Regeln", _doc_rules),
+            ("E-Mail-Konten", _email_acc),
+            ("Smart!Scan Einstellungen", _ss_settings),
+            ("Smart!Scan Historie", _ss_history),
+            ("E-Mail Posteingang", _email_inbox),
+        ]
 
     # ------------------------------------------------------------------
     # Module Heartbeat Lifecycle

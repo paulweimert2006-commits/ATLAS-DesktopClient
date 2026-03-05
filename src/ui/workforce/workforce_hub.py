@@ -228,6 +228,16 @@ class WorkforceHub(QWidget):
             add_nav("\u203A", texts.WF_NAV_TRIGGERS, texts.WF_NAV_TRIGGERS_DESC, self.PANEL_TRIGGERS)
             add_nav("\u203A", texts.WF_NAV_SMTP, texts.WF_NAV_SMTP_DESC, self.PANEL_SMTP)
 
+        if user and user.is_module_admin('workforce'):
+            sep_ma = QFrame()
+            sep_ma.setFixedHeight(1)
+            sep_ma.setStyleSheet(f"background-color: {ACCENT_500}; margin: 8px 16px;")
+            sb.addWidget(sep_ma)
+
+            ma_btn = _WfNavButton("\U0001F6E0", texts.MODULE_ADMIN_BTN, "")
+            ma_btn.clicked.connect(self._show_workforce_module_admin)
+            sb.addWidget(ma_btn)
+
         sb.addStretch()
 
         refresh_btn = QPushButton(f"  \u21BB  {texts.WF_REFRESH}")
@@ -389,3 +399,21 @@ class WorkforceHub(QWidget):
         if fingerprint != self._last_data_fingerprint:
             self._last_data_fingerprint = fingerprint
             self._refresh_all(show_toast=False)
+
+    def _show_workforce_module_admin(self):
+        """Oeffnet die Workforce-Modul-Verwaltung."""
+        if not hasattr(self, '_module_admin_view') or self._module_admin_view is None:
+            from ui.module_admin import ModuleAdminShell
+            self._module_admin_view = ModuleAdminShell(
+                module_key='workforce', module_name='Workforce',
+                api_client=self._api_client, auth_api=self._auth_api,
+            )
+            self._module_admin_view._toast_manager = getattr(self, '_toast_manager', None)
+            self._module_admin_view.back_requested.connect(self._leave_workforce_module_admin)
+            self._content_stack.addWidget(self._module_admin_view)
+        idx = self._content_stack.indexOf(self._module_admin_view)
+        self._content_stack.setCurrentIndex(idx)
+        self._module_admin_view.load_data()
+
+    def _leave_workforce_module_admin(self):
+        self._navigate_to(self.PANEL_EMPLOYERS)
