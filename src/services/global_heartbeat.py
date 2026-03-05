@@ -53,6 +53,8 @@ class _HeartbeatWorker(QThread):
                 result['account_type'] = verify_resp.get('account_type', 'user')
                 result['update_channel'] = verify_resp.get('update_channel', 'stable')
                 result['username'] = verify_resp.get('username', '')
+                result['modules'] = verify_resp.get('modules', [])
+                result['roles'] = verify_resp.get('roles', [])
             else:
                 self.result_ready.emit(result)
                 return
@@ -103,6 +105,7 @@ class GlobalHeartbeat(QObject):
 
     session_invalid = Signal()
     permissions_updated = Signal(list)
+    modules_updated = Signal()
     notifications_updated = Signal(dict)
     system_status_changed = Signal(str, str)
 
@@ -113,6 +116,7 @@ class GlobalHeartbeat(QObject):
         self._worker: Optional[_HeartbeatWorker] = None
         self._last_message_ts: Optional[str] = None
         self._prev_permissions: list = []
+        self._prev_module_keys: list = []
         self._running = False
 
         self._timer = QTimer(self)
@@ -161,36 +165,48 @@ class GlobalHeartbeat(QObject):
             self.session_invalid.emit()
             return
 
+        user = self._auth_api.current_user
         new_perms = data.get('permissions', [])
-        if sorted(new_perms) != sorted(self._prev_permissions):
+        perms_changed = sorted(new_perms) != sorted(self._prev_permissions)
+
+        from api.auth import UserModule, UserRole
+        raw_modules = data.get('modules', [])
+        new_module_keys = sorted(
+            m.get('module_key', '') for m in raw_modules if m.get('is_enabled')
+        )
+        modules_changed = new_module_keys != self._prev_module_keys
+
+        if user:
+            user.permissions = new_perms
+            user.account_type = data.get('account_type', user.account_type)
+            user.update_channel = data.get('update_channel', user.update_channel)
+            if raw_modules:
+                user.modules = [
+                    UserModule(
+                        module_key=m.get('module_key', ''),
+                        group_key=m.get('group_key', ''),
+                        name=m.get('name', ''),
+                        is_enabled=bool(m.get('is_enabled', False)),
+                        access_level=m.get('access_level', 'user')
+                    ) for m in raw_modules
+                ]
+            raw_roles = data.get('roles', [])
+            if raw_roles:
+                user.roles = [
+                    UserRole(
+                        role_id=int(r.get('role_id', 0)),
+                        role_key=r.get('role_key', ''),
+                        module_key=r.get('module_key', '')
+                    ) for r in raw_roles
+                ]
+
+        if perms_changed:
             self._prev_permissions = list(new_perms)
             self.permissions_updated.emit(new_perms)
-            user = self._auth_api.current_user
-            if user:
-                user.permissions = new_perms
-                user.account_type = data.get('account_type', user.account_type)
-                user.update_channel = data.get('update_channel', user.update_channel)
-                from api.auth import UserModule, UserRole
-                raw_modules = data.get('modules', [])
-                if raw_modules:
-                    user.modules = [
-                        UserModule(
-                            module_key=m.get('module_key', ''),
-                            group_key=m.get('group_key', ''),
-                            name=m.get('name', ''),
-                            is_enabled=bool(m.get('is_enabled', False)),
-                            access_level=m.get('access_level', 'user')
-                        ) for m in raw_modules
-                    ]
-                raw_roles = data.get('roles', [])
-                if raw_roles:
-                    user.roles = [
-                        UserRole(
-                            role_id=int(r.get('role_id', 0)),
-                            role_key=r.get('role_key', ''),
-                            module_key=r.get('module_key', '')
-                        ) for r in raw_roles
-                    ]
+
+        if modules_changed:
+            self._prev_module_keys = new_module_keys
+            self.modules_updated.emit()
 
         notif = data.get('notifications', {})
         if notif:

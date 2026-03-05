@@ -100,6 +100,7 @@ class AppRouter(QMainWindow):
         self._heartbeat.session_invalid.connect(self._on_session_invalid)
         self._heartbeat.notifications_updated.connect(self._on_notifications_updated)
         self._heartbeat.system_status_changed.connect(self._on_system_status_changed)
+        self._heartbeat.modules_updated.connect(self._on_modules_updated)
         self._heartbeat.start()
 
     # ------------------------------------------------------------------
@@ -279,6 +280,44 @@ class AppRouter(QMainWindow):
     def _on_system_status_changed(self, status: str, message: str):
         if self._core_widget and hasattr(self._core_widget, 'on_system_status_changed'):
             self._core_widget.on_system_status_changed(status, message)
+
+    def _on_modules_updated(self):
+        """Reagiert auf Modul-Aenderungen: Dashboard-Tiles aktualisieren, ggf. Modul schliessen."""
+        user = self.auth_api.current_user
+        if not user:
+            return
+
+        visible = []
+        if user.has_module("core"):
+            visible.append("core")
+        if user.is_admin:
+            visible.append("admin")
+        if user.has_module("provision"):
+            visible.append("ledger")
+        if user.has_module("workforce"):
+            visible.append("workforce")
+        if user.is_module_admin("core"):
+            visible.append("core_admin")
+        if user.is_module_admin("provision"):
+            visible.append("ledger_admin")
+        if user.is_module_admin("workforce"):
+            visible.append("workforce_admin")
+
+        self._dashboard.set_modules(visible)
+
+        module_check = {
+            "core": lambda: user.has_module("core"),
+            "ledger": lambda: user.has_module("provision"),
+            "workforce": lambda: user.has_module("workforce"),
+        }
+
+        if self._active_module and self._active_module in module_check:
+            if not module_check[self._active_module]():
+                logger.warning(f"Modul-Zugriff entzogen: {self._active_module} -- zurueck zum Dashboard")
+                self.show_dashboard()
+                if hasattr(self, '_toast_manager') and self._toast_manager:
+                    from i18n import de as texts
+                    self._toast_manager.show_warning(texts.MODULE_NOT_ENABLED)
 
     # ------------------------------------------------------------------
     # Lazy Init
