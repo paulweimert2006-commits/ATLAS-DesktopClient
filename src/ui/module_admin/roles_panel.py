@@ -19,7 +19,7 @@ from api.client import APIClient, APIError
 from api.admin_modules import AdminModulesAPI
 from i18n import de as texts
 from ui.styles.tokens import (
-    PRIMARY_900, PRIMARY_500, ACCENT_500, ERROR,
+    PRIMARY_900, PRIMARY_500, PRIMARY_100, ACCENT_500, ERROR,
     FONT_HEADLINE, FONT_BODY,
     FONT_SIZE_H3, FONT_SIZE_BODY, FONT_SIZE_CAPTION,
     RADIUS_MD,
@@ -129,6 +129,18 @@ class ModuleRolesPanel(QWidget):
 
         self._create_btn = QPushButton(f"+  {texts.ROLE_CREATE}")
         self._create_btn.setCursor(Qt.PointingHandCursor)
+        self._create_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {ACCENT_500};
+                color: white;
+                border: none;
+                border-radius: {RADIUS_MD};
+                padding: 8px 20px;
+                font-family: {FONT_BODY};
+                font-weight: 700;
+            }}
+            QPushButton:hover {{ background-color: #e88a2d; }}
+        """)
         self._create_btn.clicked.connect(self._on_create)
         header.addWidget(self._create_btn)
         layout.addLayout(header)
@@ -140,7 +152,8 @@ class ModuleRolesPanel(QWidget):
         ])
         self._table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self._table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Fixed)
-        self._table.setColumnWidth(4, 160)
+        self._table.setColumnWidth(4, 300)
+        self._table.verticalHeader().setDefaultSectionSize(44)
         self._table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self._table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self._table.setAlternatingRowColors(True)
@@ -171,12 +184,43 @@ class ModuleRolesPanel(QWidget):
 
             edit_btn = QPushButton(texts.ROLE_EDIT)
             edit_btn.setCursor(Qt.PointingHandCursor)
+            edit_btn.setFixedHeight(32)
+            edit_btn.setMinimumWidth(100)
+            edit_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {PRIMARY_900};
+                    color: white;
+                    border: none;
+                    border-radius: 4px;
+                    padding: 4px 16px;
+                    font-family: {FONT_BODY};
+                    font-size: 12px;
+                    font-weight: 700;
+                }}
+                QPushButton:hover {{ background-color: {PRIMARY_500}; }}
+            """)
             edit_btn.clicked.connect(lambda _, r=role: self._on_edit(r))
             actions_layout.addWidget(edit_btn)
 
             del_btn = QPushButton(texts.ROLE_DELETE)
             del_btn.setCursor(Qt.PointingHandCursor)
+            del_btn.setFixedHeight(32)
+            del_btn.setMinimumWidth(100)
             is_system = bool(role.get('is_system'))
+            del_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: transparent;
+                    color: {ERROR};
+                    border: 1px solid {ERROR};
+                    border-radius: 4px;
+                    padding: 4px 16px;
+                    font-family: {FONT_BODY};
+                    font-size: 12px;
+                    font-weight: 700;
+                }}
+                QPushButton:hover {{ background-color: {ERROR}; color: white; }}
+                QPushButton:disabled {{ color: {PRIMARY_500}; border-color: {PRIMARY_100}; }}
+            """)
             if is_system:
                 del_btn.setEnabled(False)
                 del_btn.setToolTip(texts.ROLE_SYSTEM_LOCKED)
