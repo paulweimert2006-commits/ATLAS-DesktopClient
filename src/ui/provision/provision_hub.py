@@ -444,6 +444,7 @@ class ProvisionHub(QWidget):
                     panel.refresh()
                 except Exception as e:
                     logger.debug(f"Initial refresh Panel {i}: {e}")
+        self._navigate_to(self.PANEL_OVERVIEW)
 
     def _on_module_heartbeat_tick(self):
         """Prueft im Hintergrund ob sich Daten geaendert haben."""

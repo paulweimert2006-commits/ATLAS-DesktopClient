@@ -370,6 +370,7 @@ class WorkforceHub(QWidget):
                     panel.refresh()
                 except Exception as e:
                     logger.debug(f"Initial refresh Panel {i}: {e}")
+        self._navigate_to(self.PANEL_EMPLOYERS)
 
     def _on_module_heartbeat_tick(self):
         """Prueft im Hintergrund ob sich Daten geaendert haben."""
