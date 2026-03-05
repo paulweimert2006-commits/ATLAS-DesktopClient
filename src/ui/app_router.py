@@ -61,13 +61,16 @@ class AppRouter(QMainWindow):
         app_version = self._read_version()
 
         user = auth_api.current_user
-        visible = ["core"]
-        if user and user.is_admin:
-            visible.append("admin")
-        if user and user.has_permission('provision_access'):
-            visible.append("ledger")
-        if user and user.has_permission('hr.view'):
-            visible.append("workforce")
+        visible = []
+        if user:
+            if user.has_module("core"):
+                visible.append("core")
+            if user.is_admin:
+                visible.append("admin")
+            if user.has_module("provision"):
+                visible.append("ledger")
+            if user.has_module("workforce"):
+                visible.append("workforce")
 
         self._dashboard = DashboardScreen(
             username=username, app_version=app_version,
@@ -123,16 +126,16 @@ class AppRouter(QMainWindow):
             self._start_module_heartbeat(self._core_widget, "core")
         elif module_id == "ledger":
             user = self.auth_api.current_user
-            if not user or not user.has_permission('provision_access'):
-                logger.warning("Ledger-Zugriff ohne provision_access abgelehnt")
+            if not user or not user.has_module('provision'):
+                logger.warning("Ledger-Zugriff ohne Modul-Freischaltung abgelehnt")
                 return
             self._ensure_ledger()
             self._stack.setCurrentIndex(_IDX_LEDGER)
             self._start_module_heartbeat(self._ledger_widget, "ledger")
         elif module_id == "workforce":
             user = self.auth_api.current_user
-            if not user or not user.has_permission('hr.view'):
-                logger.warning("Workforce-Zugriff ohne hr.view abgelehnt")
+            if not user or not user.has_module('workforce'):
+                logger.warning("Workforce-Zugriff ohne Modul-Freischaltung abgelehnt")
                 return
             self._ensure_workforce()
             self._stack.setCurrentIndex(_IDX_WORKFORCE)

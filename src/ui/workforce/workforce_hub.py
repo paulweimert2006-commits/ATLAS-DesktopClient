@@ -139,8 +139,8 @@ class WorkforceHub(QWidget):
         self._module_heartbeat_timer.timeout.connect(self._on_module_heartbeat_tick)
 
         user = self._auth_api.current_user
-        if not user or not user.has_permission('hr.view'):
-            logger.warning("WorkforceHub ohne hr.view geladen")
+        if not user or not user.has_module('workforce'):
+            logger.warning("WorkforceHub ohne Modul-Freischaltung geladen")
             return
 
         self._setup_ui()
@@ -209,7 +209,7 @@ class WorkforceHub(QWidget):
         add_nav("\u203A", texts.WF_NAV_STATS, texts.WF_NAV_STATS_DESC, self.PANEL_STATS)
 
         user = self._auth_api.current_user
-        has_trigger_perm = user and user.has_permission('hr.triggers')
+        has_trigger_perm = user and (user.has_permission('hr.triggers') or user.is_module_admin('workforce'))
 
         if has_trigger_perm:
             sep = QFrame()
@@ -360,7 +360,7 @@ class WorkforceHub(QWidget):
     def _initial_load_all_panels(self):
         """Laedt ALLE Panels sofort beim ersten Oeffnen des Moduls."""
         user = self._auth_api.current_user
-        has_trigger_perm = user and user.has_permission('hr.triggers')
+        has_trigger_perm = user and (user.has_permission('hr.triggers') or user.is_module_admin('workforce'))
         max_panel = self._TOTAL_PANELS if has_trigger_perm else self.PANEL_STATS + 1
         for i in range(max_panel):
             self._ensure_panel_loaded(i)

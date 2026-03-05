@@ -170,6 +170,27 @@ class GlobalHeartbeat(QObject):
                 user.permissions = new_perms
                 user.account_type = data.get('account_type', user.account_type)
                 user.update_channel = data.get('update_channel', user.update_channel)
+                from api.auth import UserModule, UserRole
+                raw_modules = data.get('modules', [])
+                if raw_modules:
+                    user.modules = [
+                        UserModule(
+                            module_key=m.get('module_key', ''),
+                            group_key=m.get('group_key', ''),
+                            name=m.get('name', ''),
+                            is_enabled=bool(m.get('is_enabled', False)),
+                            access_level=m.get('access_level', 'user')
+                        ) for m in raw_modules
+                    ]
+                raw_roles = data.get('roles', [])
+                if raw_roles:
+                    user.roles = [
+                        UserRole(
+                            role_id=int(r.get('role_id', 0)),
+                            role_key=r.get('role_key', ''),
+                            module_key=r.get('module_key', '')
+                        ) for r in raw_roles
+                    ]
 
         notif = data.get('notifications', {})
         if notif:

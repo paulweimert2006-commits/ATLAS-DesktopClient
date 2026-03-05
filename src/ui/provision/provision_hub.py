@@ -166,8 +166,8 @@ class ProvisionHub(QWidget):
         }
 
         user = self._auth_api.current_user
-        if not user or not user.has_permission('provision_access'):
-            logger.warning("ProvisionHub ohne provision_access geladen — Zugriff verweigert")
+        if not user or not user.has_module('provision'):
+            logger.warning("ProvisionHub ohne Modul-Freischaltung geladen")
             return
 
         self._setup_ui()

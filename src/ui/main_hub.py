@@ -566,15 +566,21 @@ class MainHub(QMainWindow):
         self.btn_gdv.clicked.connect(self._show_gdv)
         sidebar_layout.addWidget(self.btn_gdv)
         
-        # Provision-Flag (Sidebar-Eintrag entfernt -- Ledger wird ueber Dashboard gestartet)
+        user_core = self.auth_api.current_user
+        if user_core and user_core.is_module_admin('core'):
+            self.btn_core_admin = NavButton("\U0001F6E0", texts.MODULE_ADMIN_BTN)
+            self.btn_core_admin.clicked.connect(self._show_core_module_admin)
+            sidebar_layout.addWidget(self.btn_core_admin)
+        else:
+            self.btn_core_admin = None
+
         user_prov = self.auth_api.current_user
-        if user_prov and user_prov.has_permission('provision_access'):
-            self.btn_provision = NavButton("💰", texts.PROVISION_NAV_TITLE)
+        if user_prov and user_prov.has_module('provision'):
+            self.btn_provision = NavButton("\U0001F4B0", texts.PROVISION_NAV_TITLE)
             self.btn_provision.clicked.connect(self._show_provision)
         else:
             self.btn_provision = None
-        
-        # Spacer
+
         sidebar_layout.addStretch()
         
         # Admin-Flag (Sidebar-Eintrag entfernt -- Admin wird ueber Dashboard gestartet)
@@ -857,6 +863,86 @@ class MainHub(QMainWindow):
             self._archive_view._load_smartscan_status()
             self._archive_view.sidebar._smartscan_enabled = self._archive_view._smartscan_enabled
         self.back_to_dashboard_requested.emit()
+
+    def _show_core_module_admin(self):
+        """Oeffnet die Core-Modul-Verwaltung (Vollbild)."""
+        if not hasattr(self, '_core_module_admin_view') or self._core_module_admin_view is None:
+            from ui.module_admin import ModuleAdminShell
+            config_panels = self._get_core_config_panels()
+            self._core_module_admin_view = ModuleAdminShell(
+                module_key='core', module_name='Core',
+                api_client=self.api_client, auth_api=self.auth_api,
+                config_panels=config_panels,
+            )
+            self._core_module_admin_view._toast_manager = self._toast_manager
+            self._core_module_admin_view.back_requested.connect(self._leave_core_module_admin)
+            self.content_stack.addWidget(self._core_module_admin_view)
+
+        self._sidebar.hide()
+        idx = self.content_stack.indexOf(self._core_module_admin_view)
+        self.content_stack.setCurrentIndex(idx)
+        self._core_module_admin_view.load_data()
+
+    def _leave_core_module_admin(self):
+        self._sidebar.show()
+        self._show_message_center()
+
+    def _get_core_config_panels(self):
+        """Config-Panel-Factories fuer das Core-Modul."""
+        from api.processing_settings import ProcessingSettingsAPI
+        from api.ai_providers import AIProvidersAPI
+        from api.model_pricing import ModelPricingAPI
+
+        psa = ProcessingSettingsAPI(self.api_client)
+        apa = AIProvidersAPI(self.api_client)
+        mpa = ModelPricingAPI(self.api_client)
+
+        from api.smartscan import SmartScanAPI, EmailAccountsAPI as EmailAccAPI
+        ssa = SmartScanAPI(self.api_client)
+        eaa = EmailAccAPI(self.api_client)
+
+        def _ai_class(ac, tm):
+            from ui.admin.panels.ai_classification import AiClassificationPanel
+            return AiClassificationPanel(api_client=ac, toast_manager=tm, processing_settings_api=psa, ai_providers_api=apa)
+
+        def _ai_prov(ac, tm):
+            from ui.admin.panels.ai_providers import AiProvidersPanel
+            return AiProvidersPanel(api_client=ac, toast_manager=tm, ai_providers_api=apa)
+
+        def _model_price(ac, tm):
+            from ui.admin.panels.model_pricing import ModelPricingPanel
+            return ModelPricingPanel(api_client=ac, toast_manager=tm, model_pricing_api=mpa)
+
+        def _doc_rules(ac, tm):
+            from ui.admin.panels.document_rules import DocumentRulesPanel
+            return DocumentRulesPanel(api_client=ac, toast_manager=tm)
+
+        def _email_acc(ac, tm):
+            from ui.admin.panels.email_accounts import EmailAccountsPanel
+            return EmailAccountsPanel(api_client=ac, toast_manager=tm, email_accounts_api=eaa)
+
+        def _ss_settings(ac, tm):
+            from ui.admin.panels.smartscan_settings import SmartScanSettingsPanel
+            return SmartScanSettingsPanel(api_client=ac, toast_manager=tm, smartscan_api=ssa, email_accounts_api=eaa)
+
+        def _ss_history(ac, tm):
+            from ui.admin.panels.smartscan_history import SmartScanHistoryPanel
+            return SmartScanHistoryPanel(api_client=ac, toast_manager=tm, smartscan_api=ssa)
+
+        def _email_inbox(ac, tm):
+            from ui.admin.panels.email_inbox import EmailInboxPanel
+            return EmailInboxPanel(api_client=ac, toast_manager=tm, email_accounts_api=eaa)
+
+        return [
+            ("KI-Klassifikation", _ai_class),
+            ("KI-Provider", _ai_prov),
+            ("Modell-Preise", _model_price),
+            ("Dokumenten-Regeln", _doc_rules),
+            ("E-Mail-Konten", _email_acc),
+            ("Smart!Scan Einstellungen", _ss_settings),
+            ("Smart!Scan Historie", _ss_history),
+            ("E-Mail Posteingang", _email_inbox),
+        ]
     
     # ================================================================
     # Permission Guards
