@@ -62,7 +62,7 @@ from ui.styles.tokens import (
 
 logger = logging.getLogger(__name__)
 
-NUM_PANELS = 9
+NUM_PANELS = 10
 
 
 class AdminNavButton(QPushButton):
@@ -224,6 +224,13 @@ class AdminView(QWidget):
         add_section(texts.ADMIN_SECTION_SYSTEM)
         self._btn_server_health = add_nav("›", texts.ADMIN_TAB_SERVER_HEALTH, 7)
         self._btn_migrations    = add_nav("›", texts.ADMIN_TAB_MIGRATIONS, 8)
+
+        user = self._auth_api.current_user if self._auth_api else None
+        if user and user.is_super_admin:
+            add_section(texts.SRVMGMT_SECTION)
+            self._btn_server_mgmt = add_nav("›", texts.SRVMGMT_TITLE, 9)
+        else:
+            self._btn_server_mgmt = None
         
         sb_layout.addStretch()
         root.addWidget(admin_sidebar)
@@ -317,6 +324,9 @@ class AdminView(QWidget):
             return MigrationsPanel(
                 api_client=ac, toast_manager=tm, admin_api=self._admin_api
             )
+        elif index == 9:
+            from ui.admin.panels.server_mgmt_panel import ServerMgmtPanel
+            return ServerMgmtPanel(api_client=ac, toast_manager=tm)
 
         return None
     

@@ -910,6 +910,8 @@ class DashboardScreen(QWidget):
     def set_modules(self, visible_modules: list[str]):
         for module_id, tile in self._tiles.items():
             tile.setVisible(module_id in visible_modules)
+        if hasattr(self, '_admin_header_btn'):
+            self._admin_header_btn.setVisible('admin' in visible_modules)
 
     def load_messages(self, api_client):
         """Startet asynchrones Laden der System-Mitteilungen."""
