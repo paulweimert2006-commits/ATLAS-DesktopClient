@@ -1664,6 +1664,22 @@ class BiPROView(QWidget):
         self._standard_only_widgets: list = []
         
         self._setup_ui()
+
+        # Keyboard Shortcuts für globale Erreichbarkeit in der View
+        self._sc_fetch_single = QShortcut(QKeySequence("Shift+F5"), self)
+        self._sc_fetch_single.activated.connect(self._fetch_selected_vu)
+
+        self._sc_mail_fetch = QShortcut(QKeySequence("Ctrl+M"), self)
+        self._sc_mail_fetch.activated.connect(self._fetch_mails)
+
+        self._sc_refresh = QShortcut(QKeySequence("Ctrl+R"), self)
+        self._sc_refresh.activated.connect(self._on_manual_refresh)
+
+        self._sc_toggle_view = QShortcut(QKeySequence("Ctrl+T"), self)
+        self._sc_toggle_view.activated.connect(self._admin_toggle.toggle)
+
+        self._sc_ack_all = QShortcut(QKeySequence("Ctrl+Alt+A"), self)
+        self._sc_ack_all.activated.connect(self._acknowledge_all_listed)
         
         # Progress-Overlay erstellen
         self._progress_overlay = BiPROProgressOverlay(self)
@@ -1766,7 +1782,8 @@ class BiPROView(QWidget):
         self._refresh_btn = QPushButton(BIPRO_PREVIEW_REFRESH)
         self._refresh_btn.setFixedHeight(28)
         self._refresh_btn.setStyleSheet(get_button_ghost_style())
-        self._refresh_btn.setToolTip("Vorschau manuell aktualisieren (max. 1x / 30s)")
+        self._refresh_btn.setToolTip("Vorschau manuell aktualisieren (max. 1x / 30s) (Ctrl+R)")
+        self._refresh_btn.setAccessibleName("Vorschau aktualisieren")
         self._refresh_btn.clicked.connect(self._on_manual_refresh)
         header_row.addWidget(self._refresh_btn)
 
@@ -1776,6 +1793,8 @@ class BiPROView(QWidget):
         self._admin_toggle.setFixedHeight(28)
         self._admin_toggle.setCheckable(True)
         self._admin_toggle.setChecked(False)
+        self._admin_toggle.setToolTip("Ansicht zwischen Standard und Admin umschalten (Ctrl+T)")
+        self._admin_toggle.setAccessibleName("Admin-Ansicht umschalten")
         self._admin_toggle.setStyleSheet(f"""
             QPushButton {{
                 background: {BG_SECONDARY};
@@ -1812,8 +1831,9 @@ class BiPROView(QWidget):
         self.fetch_all_vus_btn = QPushButton(BIPRO_FETCH_ALL)
         self.fetch_all_vus_btn.setFixedHeight(44)
         self.fetch_all_vus_btn.setStyleSheet(get_button_primary_style())
-        self.fetch_all_vus_btn.setToolTip(BIPRO_FETCH_ALL_TOOLTIP)
+        self.fetch_all_vus_btn.setToolTip(f"{BIPRO_FETCH_ALL_TOOLTIP} (F5)")
         self.fetch_all_vus_btn.setShortcut("F5")
+        self.fetch_all_vus_btn.setAccessibleName(BIPRO_FETCH_ALL)
         self.fetch_all_vus_btn.clicked.connect(self._unified_fetch)
         action_bar.addWidget(self.fetch_all_vus_btn)
 
@@ -1825,13 +1845,16 @@ class BiPROView(QWidget):
         self.mail_fetch_btn = QPushButton(BIPRO_FETCH_ONLY_MAIL)
         self.mail_fetch_btn.setFixedHeight(30)
         self.mail_fetch_btn.setStyleSheet(get_button_secondary_style())
-        self.mail_fetch_btn.setToolTip(BIPRO_MAIL_FETCH_TOOLTIP)
+        self.mail_fetch_btn.setToolTip(f"{BIPRO_MAIL_FETCH_TOOLTIP} (Ctrl+M)")
+        self.mail_fetch_btn.setAccessibleName(BIPRO_FETCH_ONLY_MAIL)
         self.mail_fetch_btn.clicked.connect(self._fetch_mails)
         action_bar.addWidget(self.mail_fetch_btn)
 
         self.fetch_single_vu_btn = QPushButton(BIPRO_FETCH_ONLY_VU)
         self.fetch_single_vu_btn.setFixedHeight(30)
         self.fetch_single_vu_btn.setStyleSheet(get_button_secondary_style())
+        self.fetch_single_vu_btn.setToolTip(f"{BIPRO_FETCH_ONLY_VU} (Shift+F5)")
+        self.fetch_single_vu_btn.setAccessibleName(BIPRO_FETCH_ONLY_VU)
         self.fetch_single_vu_btn.clicked.connect(self._fetch_selected_vu)
         action_bar.addWidget(self.fetch_single_vu_btn)
 
@@ -1842,8 +1865,9 @@ class BiPROView(QWidget):
         self._ack_btn.setStyleSheet(get_button_danger_style())
         self._ack_btn.setToolTip(
             "Quittiert ALLE gelisteten Lieferungen bei allen Versicherern.\n"
-            "ACHTUNG: Quittierte Lieferungen werden vom Server geloescht!"
+            "ACHTUNG: Quittierte Lieferungen werden vom Server geloescht! (Ctrl+Alt+A)"
         )
+        self._ack_btn.setAccessibleName("Alle Lieferungen quittieren")
         self._ack_btn.clicked.connect(self._acknowledge_all_listed)
         action_bar.addWidget(self._ack_btn)
 
@@ -1937,12 +1961,12 @@ class BiPROView(QWidget):
         self._archive_link_btn = QPushButton(BIPRO_GO_TO_ARCHIVE)
         self._archive_link_btn.setStyleSheet(f"""
             QPushButton {{
-                background: transparent; color: {ACCENT_500};
+                background: transparent; color: {PRIMARY_900};
                 border: none; font-weight: 600;
                 font-size: {FONT_SIZE_BODY};
                 text-decoration: underline; padding: 0;
             }}
-            QPushButton:hover {{ color: {PRIMARY_900}; }}
+            QPushButton:hover {{ color: {ACCENT_500}; }}
         """)
         self._archive_link_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._archive_link_btn.setVisible(False)
