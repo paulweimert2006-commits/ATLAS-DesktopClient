@@ -12,6 +12,8 @@ from typing import Optional, Dict, Any, Callable
 from dataclasses import dataclass
 import logging
 
+from config.server_config import API_BASE_URL, API_VERIFY_SSL
+
 logger = logging.getLogger(__name__)
 
 # Retry-Konfiguration
@@ -23,9 +25,9 @@ RETRY_BACKOFF_FACTOR = 1.0
 @dataclass
 class APIConfig:
     """API-Konfiguration"""
-    base_url: str = "https://acencia.info/api"
+    base_url: str = API_BASE_URL
     timeout: int = 30
-    verify_ssl: bool = True
+    verify_ssl: bool = API_VERIFY_SSL
 
 
 class APIError(Exception):

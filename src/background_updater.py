@@ -26,7 +26,7 @@ from typing import Optional, Dict
 
 import requests
 
-API_BASE_URL = "https://acencia.info/api"
+from config.server_config import API_BASE_URL
 UPDATE_TEMP_DIR = os.path.join(tempfile.gettempdir(), 'bipro_updates')
 LOCK_FILE = os.path.join(tempfile.gettempdir(), 'atlas_updater.lock')
 TOKEN_FILE = Path.home() / '.bipro_gdv_token.json'

@@ -27,9 +27,10 @@ if _src_dir not in sys.path:
 def test_api_client_creation():
     """APIClient kann erstellt werden mit Default-Config."""
     from api.client import APIClient, APIConfig
+    from config.server_config import API_BASE_URL
     client = APIClient()
     assert client.config.timeout == 30
-    assert client.config.base_url == "https://acencia.info/api"
+    assert client.config.base_url == API_BASE_URL
     assert client.is_authenticated() == False
 
 

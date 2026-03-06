@@ -25,6 +25,11 @@ WARNING = "Предупреждение"
 INFO = "Информация"
 SUCCESS = "Успешно"
 
+# === Режим сервера ===
+SERVER_MODE_LIVE = "LIVE"
+SERVER_MODE_DEV = "DEV LOCAL"
+SERVER_MODE_BANNER = "ЛОКАЛЬНЫЙ СЕРВЕР РАЗРАБОТКИ"
+
 # === Навигация ===
 NAV_BEREICHE = "РАЗДЕЛЫ"
 NAV_SYSTEM = "СИСТЕМА"

@@ -433,11 +433,11 @@ class TestAPIIntegration:
     
     def test_documents_api_list(self):
         """DocumentsAPI kann Dokumente auflisten."""
-        from api.client import APIClient
+        from api.client import APIClient, APIConfig
         from api.documents import DocumentsAPI
+        from config.server_config import API_BASE_URL
         
-        # Hier muessen echte Credentials verwendet werden
-        client = APIClient(base_url='https://acencia.info/api')
+        client = APIClient(APIConfig(base_url=API_BASE_URL))
         client.login('test', 'test')
         
         docs_api = DocumentsAPI(client)
