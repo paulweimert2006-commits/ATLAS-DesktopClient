@@ -1744,6 +1744,8 @@ class BiPROView(QWidget):
             BIPRO_SHOW_DETAILS, BIPRO_HIDE_DETAILS, BIPRO_GO_TO_ARCHIVE,
             BIPRO_ACK_BUTTON, BIPRO_ACK_LAST_INFO,
             BIPRO_PREVIEW_REFRESH, BIPRO_PREVIEW_LOADING, BIPRO_PREVIEW_EMPTY,
+            BIPRO_PREVIEW_REFRESH_TOOLTIP, BIPRO_FETCH_SINGLE_VU_TOOLTIP,
+            BIPRO_ACK_TOOLTIP, BIPRO_TOGGLE_VIEW_TOOLTIP
         )
 
         layout = QVBoxLayout(self)
@@ -1766,7 +1768,9 @@ class BiPROView(QWidget):
         self._refresh_btn = QPushButton(BIPRO_PREVIEW_REFRESH)
         self._refresh_btn.setFixedHeight(28)
         self._refresh_btn.setStyleSheet(get_button_ghost_style())
-        self._refresh_btn.setToolTip("Vorschau manuell aktualisieren (max. 1x / 30s)")
+        self._refresh_btn.setToolTip(BIPRO_PREVIEW_REFRESH_TOOLTIP)
+        self._refresh_btn.setShortcut("Ctrl+R")
+        self._refresh_btn.setAccessibleName(BIPRO_PREVIEW_REFRESH)
         self._refresh_btn.clicked.connect(self._on_manual_refresh)
         header_row.addWidget(self._refresh_btn)
 
@@ -1776,6 +1780,9 @@ class BiPROView(QWidget):
         self._admin_toggle.setFixedHeight(28)
         self._admin_toggle.setCheckable(True)
         self._admin_toggle.setChecked(False)
+        self._admin_toggle.setShortcut("Ctrl+T")
+        self._admin_toggle.setToolTip(BIPRO_TOGGLE_VIEW_TOOLTIP)
+        self._admin_toggle.setAccessibleName(BIPRO_VIEW_TOGGLE_STANDARD)
         self._admin_toggle.setStyleSheet(f"""
             QPushButton {{
                 background: {BG_SECONDARY};
@@ -1814,6 +1821,7 @@ class BiPROView(QWidget):
         self.fetch_all_vus_btn.setStyleSheet(get_button_primary_style())
         self.fetch_all_vus_btn.setToolTip(BIPRO_FETCH_ALL_TOOLTIP)
         self.fetch_all_vus_btn.setShortcut("F5")
+        self.fetch_all_vus_btn.setAccessibleName(BIPRO_FETCH_ALL)
         self.fetch_all_vus_btn.clicked.connect(self._unified_fetch)
         action_bar.addWidget(self.fetch_all_vus_btn)
 
@@ -1826,12 +1834,17 @@ class BiPROView(QWidget):
         self.mail_fetch_btn.setFixedHeight(30)
         self.mail_fetch_btn.setStyleSheet(get_button_secondary_style())
         self.mail_fetch_btn.setToolTip(BIPRO_MAIL_FETCH_TOOLTIP)
+        self.mail_fetch_btn.setShortcut("Ctrl+M")
+        self.mail_fetch_btn.setAccessibleName(BIPRO_FETCH_ONLY_MAIL)
         self.mail_fetch_btn.clicked.connect(self._fetch_mails)
         action_bar.addWidget(self.mail_fetch_btn)
 
         self.fetch_single_vu_btn = QPushButton(BIPRO_FETCH_ONLY_VU)
         self.fetch_single_vu_btn.setFixedHeight(30)
         self.fetch_single_vu_btn.setStyleSheet(get_button_secondary_style())
+        self.fetch_single_vu_btn.setToolTip(BIPRO_FETCH_SINGLE_VU_TOOLTIP)
+        self.fetch_single_vu_btn.setShortcut("Shift+F5")
+        self.fetch_single_vu_btn.setAccessibleName(BIPRO_FETCH_ONLY_VU)
         self.fetch_single_vu_btn.clicked.connect(self._fetch_selected_vu)
         action_bar.addWidget(self.fetch_single_vu_btn)
 
@@ -1840,10 +1853,9 @@ class BiPROView(QWidget):
         self._ack_btn = QPushButton(BIPRO_ACK_BUTTON)
         self._ack_btn.setFixedHeight(36)
         self._ack_btn.setStyleSheet(get_button_danger_style())
-        self._ack_btn.setToolTip(
-            "Quittiert ALLE gelisteten Lieferungen bei allen Versicherern.\n"
-            "ACHTUNG: Quittierte Lieferungen werden vom Server geloescht!"
-        )
+        self._ack_btn.setToolTip(BIPRO_ACK_TOOLTIP)
+        self._ack_btn.setShortcut("Ctrl+Alt+A")
+        self._ack_btn.setAccessibleName(BIPRO_ACK_BUTTON)
         self._ack_btn.clicked.connect(self._acknowledge_all_listed)
         action_bar.addWidget(self._ack_btn)
 
@@ -1937,13 +1949,14 @@ class BiPROView(QWidget):
         self._archive_link_btn = QPushButton(BIPRO_GO_TO_ARCHIVE)
         self._archive_link_btn.setStyleSheet(f"""
             QPushButton {{
-                background: transparent; color: {ACCENT_500};
+                background: transparent; color: {PRIMARY_900};
                 border: none; font-weight: 600;
                 font-size: {FONT_SIZE_BODY};
                 text-decoration: underline; padding: 0;
             }}
-            QPushButton:hover {{ color: {PRIMARY_900}; }}
+            QPushButton:hover {{ color: {ACCENT_500}; }}
         """)
+        self._archive_link_btn.setAccessibleName(BIPRO_GO_TO_ARCHIVE)
         self._archive_link_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._archive_link_btn.setVisible(False)
         self._archive_link_btn.clicked.connect(self.request_archive_view.emit)
@@ -2641,6 +2654,7 @@ class BiPROView(QWidget):
         last_docs = settings.value("bipro/last_fetch_docs", 0, type=int)
         
         if last_ts:
+            self._status_card.setVisible(True)
             self._status_title_label.setText(BIPRO_STATUS_LAST_FETCH.format(timestamp=last_ts))
             self._status_docs_label.setText(BIPRO_STATUS_LAST_DOCS.format(count=last_docs))
             self._archive_link_btn.setVisible(last_docs > 0)
