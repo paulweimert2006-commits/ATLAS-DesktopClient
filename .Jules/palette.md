@@ -1,0 +1,3 @@
+## 2026-03-06 - [BiPRO View Keyboard Shortcuts & Accessibility]
+**Learning:** In PySide6, ensuring that primary actions are accessible via intuitive keyboard shortcuts significantly enhances productivity for power users, while `setAccessibleName` is crucial for screen reader compatibility. Additionally, making historical status information immediately visible improves the user's "at-a-glance" understanding of the system state.
+**Action:** Always include standard keyboard shortcuts (e.g., F5 for Refresh/Fetch) and their hints in tooltips, set accessible names for all primary buttons, and ensure relevant state cards are visible during initialization if they contain historical data.
