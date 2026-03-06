@@ -368,6 +368,18 @@ class AuthAPI:
                 self.client.set_token(token)
                 self._current_user = _build_user(user_data)
 
+                tenant_data = response['data'].get('tenant')
+                if tenant_data:
+                    self._active_tenant = TenantInfo(
+                        tenant_id=tenant_data.get('tenant_id', 0),
+                        tenant_key=tenant_data.get('tenant_key', ''),
+                        tenant_name=tenant_data.get('tenant_name', ''),
+                        role='tenant_user',
+                        status='active',
+                    )
+                else:
+                    self._extract_tenant_from_token(token)
+
                 if remember:
                     self._save_token(token, user_data)
 
@@ -377,7 +389,8 @@ class AuthAPI:
                     is_authenticated=True,
                     user=self._current_user,
                     token=token,
-                    expires_in=expires_in
+                    expires_in=expires_in,
+                    selected_tenant=self._active_tenant,
                 )
             else:
                 raise APIError(response.get('error', 'Login fehlgeschlagen'))
@@ -385,6 +398,31 @@ class AuthAPI:
         except APIError as e:
             logger.error(f"Login-Fehler: {e}")
             raise
+
+    def _extract_tenant_from_token(self, token: str) -> None:
+        """Extrahiert Tenant-Info aus dem JWT-Payload (Base64-Decode, keine Signaturpruefung)."""
+        import base64
+        try:
+            parts = token.split('.')
+            if len(parts) != 3:
+                return
+            padding = '=' * (4 - len(parts[1]) % 4)
+            payload_json = base64.urlsafe_b64decode(parts[1] + padding)
+            payload = json.loads(payload_json)
+
+            tenant_key = payload.get('tenant_key')
+            tenant_id = payload.get('tenant_id')
+            if tenant_key and tenant_id:
+                self._active_tenant = TenantInfo(
+                    tenant_id=int(tenant_id),
+                    tenant_key=tenant_key,
+                    tenant_name=tenant_key.replace('_', ' ').title(),
+                    role=payload.get('tenant_role', 'tenant_user'),
+                    status='active',
+                )
+                logger.debug(f"Tenant aus Token extrahiert: {tenant_key}")
+        except Exception as e:
+            logger.debug(f"Tenant-Extraktion aus Token fehlgeschlagen: {e}")
     
     def logout(self) -> bool:
         """
