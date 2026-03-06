@@ -17,6 +17,7 @@ from PySide6.QtGui import QFont, QPixmap
 
 from api.client import APIClient, APIError
 from api.auth import AuthAPI, AuthState
+from ui.universe_selector import UniverseSelectorDialog
 
 logger = logging.getLogger(__name__)
 
@@ -256,11 +257,60 @@ class LoginDialog(QDialog):
             self.status_label.setText(f"Willkommen, {state.user.username}!")
             self.status_label.setStyleSheet("color: green;")
             self.accept()
+        elif state.tenants and len(state.tenants) > 1:
+            self._show_universe_selector(state)
+        elif state.tenants and len(state.tenants) == 0:
+            self.status_label.setText("Kein Universe zugeordnet")
+            self.status_label.setStyleSheet("color: red;")
+            self._enable_inputs()
         else:
             self.status_label.setText("Anmeldung fehlgeschlagen")
             self.status_label.setStyleSheet("color: red;")
             self.password_input.clear()
             self.password_input.setFocus()
+            self._enable_inputs()
+
+    def _show_universe_selector(self, state: AuthState):
+        """Zeigt den Universe-Auswahl-Dialog bei mehreren Tenants."""
+        active_tenants = [t for t in state.tenants if t.status == 'active']
+
+        if not active_tenants:
+            self.status_label.setText("Keine aktiven Universes verfuegbar")
+            self.status_label.setStyleSheet("color: red;")
+            self._enable_inputs()
+            return
+
+        dialog = UniverseSelectorDialog(state.tenants, self)
+        if dialog.exec() == UniverseSelectorDialog.Accepted and dialog.selected_tenant_id:
+            self.status_label.setText("Universe wird geladen...")
+            self.status_label.setStyleSheet("color: #6b7280;")
+            self.progress.show()
+
+            try:
+                select_state = self.auth_api.select_tenant(
+                    dialog.selected_tenant_id,
+                    remember=self.remember_check.isChecked()
+                )
+                self.progress.hide()
+
+                if select_state.is_authenticated:
+                    self.status_label.setText(
+                        f"Willkommen, {select_state.user.username}!"
+                    )
+                    self.status_label.setStyleSheet("color: green;")
+                    self.accept()
+                else:
+                    self.status_label.setText("Universe-Auswahl fehlgeschlagen")
+                    self.status_label.setStyleSheet("color: red;")
+                    self._enable_inputs()
+
+            except Exception as e:
+                self.progress.hide()
+                logger.error(f"Universe-Auswahl Fehler: {e}")
+                self.status_label.setText(str(e))
+                self.status_label.setStyleSheet("color: red;")
+                self._enable_inputs()
+        else:
             self._enable_inputs()
     
     def _on_login_error(self, error_msg: str):
