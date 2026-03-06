@@ -44,7 +44,11 @@ class AppRouter(QMainWindow):
         self.auth_api = auth_api
 
         username = auth_api.current_user.username if auth_api.current_user else ""
-        self.setWindowTitle(f"ACENCIA ATLAS - {username}")
+        tenant_name = auth_api.active_tenant.tenant_name if auth_api.active_tenant else ""
+        if tenant_name:
+            self.setWindowTitle(f"ACENCIA ATLAS - {tenant_name} - {username}")
+        else:
+            self.setWindowTitle(f"ACENCIA ATLAS - {username}")
         self.setMinimumSize(1400, 900)
 
         icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "icon.ico")
@@ -80,7 +84,7 @@ class AppRouter(QMainWindow):
 
         self._dashboard = DashboardScreen(
             username=username, app_version=app_version,
-            api_client=api_client,
+            api_client=api_client, tenant_name=tenant_name,
         )
         self._dashboard.set_modules(visible)
         self._dashboard.module_requested.connect(self._open_module)

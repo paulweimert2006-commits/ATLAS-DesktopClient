@@ -49,44 +49,51 @@ class UniverseCard(QFrame):
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 12, 16, 12)
+        layout.setContentsMargins(16, 14, 16, 14)
         layout.setSpacing(6)
 
         header = QHBoxLayout()
+
         name_label = QLabel(self.tenant.tenant_name)
         name_font = QFont()
         name_font.setPointSize(13)
         name_font.setBold(True)
         name_label.setFont(name_font)
+        name_label.setStyleSheet("color: #1e293b;")
         header.addWidget(name_label)
 
         status_text = STATUS_LABELS.get(self.tenant.status, self.tenant.status)
         status_label = QLabel(status_text)
         status_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         if self.tenant.status == 'active':
-            status_label.setStyleSheet("color: #22c55e; font-weight: bold;")
+            status_label.setStyleSheet("color: #16a34a; font-weight: bold;")
         elif self.tenant.status == 'maintenance':
-            status_label.setStyleSheet("color: #f59e0b; font-weight: bold;")
+            status_label.setStyleSheet("color: #d97706; font-weight: bold;")
         else:
-            status_label.setStyleSheet("color: #ef4444; font-weight: bold;")
+            status_label.setStyleSheet("color: #dc2626; font-weight: bold;")
         header.addWidget(status_label)
         layout.addLayout(header)
 
         role_text = ROLE_LABELS.get(self.tenant.role, self.tenant.role)
         role_label = QLabel(role_text)
-        role_label.setStyleSheet("color: #6b7280;")
+        role_label.setStyleSheet("color: #64748b; font-size: 12px;")
         layout.addWidget(role_label)
 
         if self.tenant.status == 'maintenance':
             hint = QLabel(t.UNIVERSE_MAINTENANCE_HINT)
             hint.setWordWrap(True)
-            hint.setStyleSheet("color: #f59e0b; font-size: 11px; margin-top: 4px;")
+            hint.setStyleSheet("color: #d97706; font-size: 11px; margin-top: 4px;")
             layout.addWidget(hint)
 
         if not self._enabled:
-            self.setStyleSheet("QFrame#universeCard { background: #1f1f1f; opacity: 0.6; border: 1px solid #333; border-radius: 8px; }")
+            self.setStyleSheet(
+                "QFrame#universeCard { background: #f1f5f9; border: 1px solid #cbd5e1; border-radius: 8px; }"
+            )
         else:
-            self.setStyleSheet("QFrame#universeCard { background: #1a1a2e; border: 1px solid #333; border-radius: 8px; } QFrame#universeCard:hover { border-color: #6366f1; background: #1e1e3a; }")
+            self.setStyleSheet(
+                "QFrame#universeCard { background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 8px; }"
+                "QFrame#universeCard:hover { border-color: #6366f1; background: #eef2ff; }"
+            )
 
     def mousePressEvent(self, event):
         if self._enabled and event.button() == Qt.LeftButton:
@@ -121,7 +128,7 @@ class UniverseSelectorDialog(QDialog):
         layout.addWidget(title)
 
         subtitle = QLabel(t.UNIVERSE_SELECT_SUBTITLE)
-        subtitle.setStyleSheet("color: #9ca3af; margin-bottom: 8px;")
+        subtitle.setStyleSheet("color: #64748b; margin-bottom: 8px;")
         layout.addWidget(subtitle)
 
         scroll = QScrollArea()
