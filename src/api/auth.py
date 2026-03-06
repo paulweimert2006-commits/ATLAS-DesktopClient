@@ -207,7 +207,10 @@ class AuthAPI:
         data = resp.json() if resp.headers.get('content-type', '').startswith('application/json') else {}
 
         if resp.status_code == 401:
-            raise APIError(data.get('error', 'Ungueltige Anmeldedaten'), 401)
+            # User nicht in control_users -- Fallback auf Tenant-API
+            # (wo der Reverse-Sync den User automatisch hochsynchronisiert)
+            logger.info("Control Plane: 401 -- Fallback auf Tenant-API fuer Reverse-Sync")
+            return None
         if resp.status_code == 403:
             raise APIError(data.get('error', 'Zugriff verweigert'), 403)
         if resp.status_code == 429:

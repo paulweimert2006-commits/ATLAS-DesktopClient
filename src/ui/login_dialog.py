@@ -316,11 +316,12 @@ class LoginDialog(QDialog):
     def _on_login_error(self, error_msg: str):
         """Callback bei Login-Fehler."""
         self.progress.hide()
-        self.status_label.setText("Verbindungsfehler")
+        display_msg = error_msg if error_msg else "Verbindungsfehler"
+        self.status_label.setText(display_msg)
         self.status_label.setStyleSheet("color: red;")
+        self.password_input.clear()
+        self.password_input.setFocus()
         self._enable_inputs()
-        
-        # Fehler wird ueber status_label angezeigt (inline, nicht modal)
     
     def _enable_inputs(self):
         """Eingabefelder wieder aktivieren."""
