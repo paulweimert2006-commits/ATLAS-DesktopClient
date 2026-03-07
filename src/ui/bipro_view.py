@@ -1814,6 +1814,7 @@ class BiPROView(QWidget):
         self.fetch_all_vus_btn.setStyleSheet(get_button_primary_style())
         self.fetch_all_vus_btn.setToolTip(BIPRO_FETCH_ALL_TOOLTIP)
         self.fetch_all_vus_btn.setShortcut("F5")
+        self.fetch_all_vus_btn.setAccessibleName("Alle neuen Dokumente abrufen")
         self.fetch_all_vus_btn.clicked.connect(self._unified_fetch)
         action_bar.addWidget(self.fetch_all_vus_btn)
 
@@ -1826,12 +1827,14 @@ class BiPROView(QWidget):
         self.mail_fetch_btn.setFixedHeight(30)
         self.mail_fetch_btn.setStyleSheet(get_button_secondary_style())
         self.mail_fetch_btn.setToolTip(BIPRO_MAIL_FETCH_TOOLTIP)
+        self.mail_fetch_btn.setAccessibleName("Nur E-Mails abholen")
         self.mail_fetch_btn.clicked.connect(self._fetch_mails)
         action_bar.addWidget(self.mail_fetch_btn)
 
         self.fetch_single_vu_btn = QPushButton(BIPRO_FETCH_ONLY_VU)
         self.fetch_single_vu_btn.setFixedHeight(30)
         self.fetch_single_vu_btn.setStyleSheet(get_button_secondary_style())
+        self.fetch_single_vu_btn.setAccessibleName("Nur ausgewaehlte VU-Verbindung abrufen")
         self.fetch_single_vu_btn.clicked.connect(self._fetch_selected_vu)
         action_bar.addWidget(self.fetch_single_vu_btn)
 
@@ -1844,6 +1847,7 @@ class BiPROView(QWidget):
             "Quittiert ALLE gelisteten Lieferungen bei allen Versicherern.\n"
             "ACHTUNG: Quittierte Lieferungen werden vom Server geloescht!"
         )
+        self._ack_btn.setAccessibleName("Alle Lieferungen quittieren")
         self._ack_btn.clicked.connect(self._acknowledge_all_listed)
         action_bar.addWidget(self._ack_btn)
 
