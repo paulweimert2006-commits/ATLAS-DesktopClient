@@ -184,6 +184,14 @@ BIPRO_STATUS_MAIL_PROGRESS = "Mail-Import: {count} Anhaenge"
 BIPRO_STATUS_TOTAL = "Gesamt: {count} neue Dokumente"
 BIPRO_STATUS_FETCH_SUCCESS = "{count} Dokumente erfolgreich importiert"
 
+# === BiPRO Barrierefreiheit (Accessible Names) ===
+ACC_BIPRO_REFRESH = "Vorschau aktualisieren"
+ACC_BIPRO_VIEW_TOGGLE = "Ansichtsmodus umschalten"
+ACC_BIPRO_FETCH_ALL = "Alle Dokumente abrufen"
+ACC_BIPRO_MAIL_FETCH = "E-Mails abholen"
+ACC_BIPRO_FETCH_SINGLE = "Ausgewaehlte VU abrufen"
+ACC_BIPRO_ACK_ALL = "Alle Lieferungen quittieren"
+
 # === BiPRO UI-Elemente ===
 BIPRO_SHOW_DETAILS = "Details anzeigen"
 BIPRO_HIDE_DETAILS = "Details ausblenden"
