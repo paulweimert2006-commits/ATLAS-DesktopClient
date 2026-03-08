@@ -136,8 +136,8 @@ SMARTADMIN_TOKEN_EXPIRED = "Token abgelaufen"
 
 # === Datenabruf (BiPRO + Mail) ===
 BIPRO_HEADER = "Datenabruf"
-BIPRO_VIEW_TOGGLE_STANDARD = "Standard"
-BIPRO_VIEW_TOGGLE_ADMIN = "Admin"
+BIPRO_VIEW_TOGGLE_STANDARD = "👤 Standard"
+BIPRO_VIEW_TOGGLE_ADMIN = "🛠 Admin"
 
 BIPRO_FETCH_SHIPMENTS = "Lieferungen abrufen"
 BIPRO_NO_SHIPMENTS = "Keine neuen Lieferungen"
@@ -150,7 +150,7 @@ BIPRO_CREATED = "Erstellt am"
 BIPRO_DOCUMENTS = "Dokumente"
 
 # === Mail-Import ===
-BIPRO_MAIL_FETCH = "Mails abholen"
+BIPRO_MAIL_FETCH = "📧 Mails abholen"
 BIPRO_MAIL_FETCH_TOOLTIP = "E-Mail-Postfach abrufen und Anhaenge importieren"
 BIPRO_MAIL_FETCH_RUNNING = "Mails werden abgeholt..."
 BIPRO_MAIL_FETCH_SUCCESS = "{new_mails} neue Mail(s), {imported} Anhang/Anhaenge importiert"
@@ -162,7 +162,7 @@ BIPRO_MAIL_FETCH_PHASE_POLL = "Postfach abrufen..."
 BIPRO_MAIL_FETCH_PHASE_IMPORT = "Anhaenge importieren"
 
 # === Alle VUs abholen (Unified Fetch) ===
-BIPRO_FETCH_ALL = "Alle neuen Dokumente abrufen"
+BIPRO_FETCH_ALL = "🔄 Alle neuen Dokumente abrufen"
 BIPRO_FETCH_ALL_TOOLTIP = "Ruft Dokumente von allen Versicherern und E-Mail-Konten ab"
 BIPRO_FETCH_ALL_LAST_INFO = "Zuletzt: {timestamp} von {user}"
 BIPRO_FETCH_ALL_NO_ACTIVE = "Keine aktiven VU-Verbindungen vorhanden."
@@ -172,7 +172,7 @@ BIPRO_FETCH_ALL_VU_NO_SHIPMENTS = "[{vu_name}] Keine Lieferungen vorhanden - ueb
 BIPRO_FETCH_ALL_VU_CREDENTIALS_ERROR = "[{vu_name}] Zugangsdaten nicht verfuegbar - ueberspringe"
 BIPRO_FETCH_ALL_VU_DONE = "[{vu_name}] Abgeschlossen: {success} Lieferung(en), {docs} Dokument(e)"
 BIPRO_FETCH_ALL_DONE = "=== Alle VUs abgeschlossen: {total_vus} VUs, {total_shipments} Lieferung(en), {total_docs} Dokument(e) ==="
-BIPRO_FETCH_ALL_IN_PROGRESS = "Alle VUs werden abgeholt... ({current}/{total}): {vu_name}"
+BIPRO_FETCH_ALL_IN_PROGRESS = "🔄 Alle VUs werden abgeholt... ({current}/{total}): {vu_name}"
 
 # === BiPRO Status-Karte ===
 BIPRO_STATUS_LAST_FETCH = "Letzter Abruf: {timestamp}"
@@ -188,11 +188,11 @@ BIPRO_STATUS_FETCH_SUCCESS = "{count} Dokumente erfolgreich importiert"
 BIPRO_SHOW_DETAILS = "Details anzeigen"
 BIPRO_HIDE_DETAILS = "Details ausblenden"
 BIPRO_GO_TO_ARCHIVE = "Zum Archiv"
-BIPRO_FETCH_ONLY_MAIL = "Nur Mails"
-BIPRO_FETCH_ONLY_VU = "Nur ausgewaehlte VU"
+BIPRO_FETCH_ONLY_MAIL = "📧 Nur Mails"
+BIPRO_FETCH_ONLY_VU = "📥 Nur ausgewaehlte VU"
 
 # === Quittieren ===
-BIPRO_ACK_BUTTON = "Quittieren"
+BIPRO_ACK_BUTTON = "✅ Quittieren"
 BIPRO_ACK_LAST_INFO = "Letzte Quittierung: {timestamp} von {user}"
 BIPRO_ACK_ALL_WARNING = (
     "ACHTUNG: Sie sind dabei, alle {count} gelisteten Lieferung(en) zu quittieren.\n\n"
@@ -203,13 +203,13 @@ BIPRO_ACK_ALL_WARNING = (
 )
 BIPRO_ACK_SUCCESS = "{count} Lieferung(en) bei {vu_count} Versicherer(n) quittiert"
 BIPRO_ACK_NO_SHIPMENTS = "Keine Lieferungen zum Quittieren vorhanden."
-BIPRO_ACK_PREPARING = "Vorbereitung..."
-BIPRO_ACK_IN_PROGRESS = "Quittiere {current}/{total}..."
+BIPRO_ACK_PREPARING = "⏳ Vorbereitung..."
+BIPRO_ACK_IN_PROGRESS = "🔄 Quittiere {current}/{total}..."
 
 # === Vorschau-Karten ===
 BIPRO_PREVIEW_LOADING = "Lieferungen werden geladen..."
 BIPRO_PREVIEW_EMPTY = "Keine Lieferungen verfuegbar"
-BIPRO_PREVIEW_REFRESH = "Aktualisieren"
+BIPRO_PREVIEW_REFRESH = "🔄 Aktualisieren"
 BIPRO_PREVIEW_CARD_VU = "{vu_name}"
 BIPRO_PREVIEW_CARD_CATEGORY = "Kategorie: {name}"
 BIPRO_PREVIEW_CARD_DATE = "Eingestellt: {date}"
