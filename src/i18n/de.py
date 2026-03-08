@@ -151,7 +151,7 @@ BIPRO_DOCUMENTS = "Dokumente"
 
 # === Mail-Import ===
 BIPRO_MAIL_FETCH = "Mails abholen"
-BIPRO_MAIL_FETCH_TOOLTIP = "E-Mail-Postfach abrufen und Anhaenge importieren"
+BIPRO_MAIL_FETCH_TOOLTIP = "E-Mail-Postfach abrufen und Anhaenge importieren (Strg+M)"
 BIPRO_MAIL_FETCH_RUNNING = "Mails werden abgeholt..."
 BIPRO_MAIL_FETCH_SUCCESS = "{new_mails} neue Mail(s), {imported} Anhang/Anhaenge importiert"
 BIPRO_MAIL_FETCH_NO_NEW = "Keine neuen Mails im Postfach"
@@ -163,7 +163,7 @@ BIPRO_MAIL_FETCH_PHASE_IMPORT = "Anhaenge importieren"
 
 # === Alle VUs abholen (Unified Fetch) ===
 BIPRO_FETCH_ALL = "Alle neuen Dokumente abrufen"
-BIPRO_FETCH_ALL_TOOLTIP = "Ruft Dokumente von allen Versicherern und E-Mail-Konten ab"
+BIPRO_FETCH_ALL_TOOLTIP = "Ruft Dokumente von allen Versicherern und E-Mail-Konten ab (F5)"
 BIPRO_FETCH_ALL_LAST_INFO = "Zuletzt: {timestamp} von {user}"
 BIPRO_FETCH_ALL_NO_ACTIVE = "Keine aktiven VU-Verbindungen vorhanden."
 BIPRO_FETCH_ALL_START = "=== Starte Abruf fuer alle VUs ({count} aktive Verbindungen) ==="
@@ -187,6 +187,14 @@ BIPRO_STATUS_FETCH_SUCCESS = "{count} Dokumente erfolgreich importiert"
 # === BiPRO UI-Elemente ===
 BIPRO_SHOW_DETAILS = "Details anzeigen"
 BIPRO_HIDE_DETAILS = "Details ausblenden"
+
+# === Barrierefreiheit (Screenreader) ===
+ACC_FETCH_ALL = "Alle Dokumente von allen Quellen abrufen"
+ACC_MAIL_FETCH = "E-Mail-Postfach nach neuen Anhaengen durchsuchen"
+ACC_FETCH_SINGLE_VU = "Nur Dokumente der aktuell ausgewaehlten VU abrufen"
+ACC_ACK_ALL = "Alle gelisteten Lieferungen endgueltig quittieren und vom Server loeschen"
+ACC_REFRESH = "Vorschau der Lieferungen aktualisieren"
+ACC_ADMIN_TOGGLE = "Zwischen Standard- und Admin-Ansicht umschalten"
 BIPRO_GO_TO_ARCHIVE = "Zum Archiv"
 BIPRO_FETCH_ONLY_MAIL = "Nur Mails"
 BIPRO_FETCH_ONLY_VU = "Nur ausgewaehlte VU"
