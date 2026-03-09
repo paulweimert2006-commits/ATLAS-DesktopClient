@@ -14,6 +14,9 @@ from .smartadmin_endpoints import (
     get_company_by_name, get_all_companies, get_companies_by_auth_type,
     get_easylogin_companies
 )
+from .server_config import (
+    API_BASE_URL, API_VERIFY_SSL, SERVER_LABEL, IS_DEV, USE_DEV_SERVER
+)
 
 __all__ = [
     'PROCESSING_RULES',
@@ -24,5 +27,7 @@ __all__ = [
     # SmartAdmin
     'SMARTADMIN_COMPANIES', 'SmartAdminCompany', 'ServiceEndpoint', 'AuthType',
     'get_company_by_name', 'get_all_companies', 'get_companies_by_auth_type',
-    'get_easylogin_companies'
+    'get_easylogin_companies',
+    # Server-Konfiguration
+    'API_BASE_URL', 'API_VERIFY_SSL', 'SERVER_LABEL', 'IS_DEV', 'USE_DEV_SERVER',
 ]

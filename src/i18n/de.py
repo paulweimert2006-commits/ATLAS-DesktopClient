@@ -25,6 +25,22 @@ WARNING = "Warnung"
 INFO = "Information"
 SUCCESS = "Erfolgreich"
 
+# === Server-Modus ===
+SERVER_MODE_LIVE = "LIVE"
+SERVER_MODE_DEV = "DEV LOCAL"
+SERVER_MODE_BANNER = "LOKALER ENTWICKLUNGSSERVER"
+
+# === Universe-Auswahl ===
+UNIVERSE_SELECT_TITLE = "Universe auswählen"
+UNIVERSE_SELECT_SUBTITLE = "Wähle das Arbeitsumfeld für diese Sitzung"
+UNIVERSE_STATUS_ACTIVE = "Aktiv"
+UNIVERSE_STATUS_MAINTENANCE = "Wartung"
+UNIVERSE_STATUS_SUSPENDED = "Gesperrt"
+UNIVERSE_ROLE_OWNER = "Inhaber"
+UNIVERSE_ROLE_ADMIN = "Administrator"
+UNIVERSE_ROLE_USER = "Benutzer"
+UNIVERSE_MAINTENANCE_HINT = "Dieses Universe befindet sich in Wartung und kann derzeit nicht verwendet werden."
+
 # === Navigation ===
 NAV_BEREICHE = "BEREICHE"
 NAV_SYSTEM = "SYSTEM"

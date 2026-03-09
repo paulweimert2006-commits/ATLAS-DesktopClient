@@ -514,11 +514,12 @@ class DashboardScreen(QWidget):
     logout_requested = Signal()
 
     def __init__(self, username: str = "", app_version: str = "",
-                 api_client=None, parent=None):
+                 api_client=None, tenant_name: str = "", parent=None):
         super().__init__(parent)
         self._username = username
         self._app_version = app_version
         self._api_client = api_client
+        self._tenant_name = tenant_name
         self._tiles: dict[str, _ModuleTile] = {}
         self._messages_worker = None
 
@@ -549,12 +550,28 @@ class DashboardScreen(QWidget):
         h_layout.setContentsMargins(48, 32, 48, 16)
         h_layout.setSpacing(0)
 
+        greeting_col = QVBoxLayout()
+        greeting_col.setSpacing(2)
+
         self._greeting_label = QLabel()
         self._greeting_label.setStyleSheet(
             f"font-family: {_tokens.FONT_HEADLINE}; font-size: 20pt; "
             f"color: {PRIMARY_900}; background: transparent;"
         )
-        h_layout.addWidget(self._greeting_label, alignment=Qt.AlignBottom)
+        greeting_col.addWidget(self._greeting_label)
+
+        self._tenant_label = QLabel()
+        self._tenant_label.setStyleSheet(
+            f"font-family: {_tokens.FONT_BODY}; font-size: 10pt; "
+            f"color: #6b7280; background: transparent;"
+        )
+        if self._tenant_name:
+            self._tenant_label.setText(self._tenant_name)
+        else:
+            self._tenant_label.hide()
+        greeting_col.addWidget(self._tenant_label)
+
+        h_layout.addLayout(greeting_col)
         h_layout.addStretch()
 
         right_area = QHBoxLayout()

@@ -463,7 +463,8 @@ if requests_available:
     @test("API /status erreichbar und schema_version vorhanden")
     def test_api_health():
         try:
-            resp = _requests.get("https://acencia.info/api/status", timeout=5)
+            from config.server_config import API_BASE_URL
+            resp = _requests.get(f"{API_BASE_URL}/status", timeout=5)
             assert resp.status_code == 200, f"Status {resp.status_code}"
             data = resp.json()
             assert data.get('status') == 'ok', f"API-Status: {data.get('status')}"

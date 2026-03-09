@@ -25,6 +25,11 @@ WARNING = "Warning"
 INFO = "Information"
 SUCCESS = "Success"
 
+# === Server Mode ===
+SERVER_MODE_LIVE = "LIVE"
+SERVER_MODE_DEV = "DEV LOCAL"
+SERVER_MODE_BANNER = "LOCAL DEVELOPMENT SERVER"
+
 # === Navigation ===
 NAV_BEREICHE = "AREAS"
 NAV_SYSTEM = "SYSTEM"
