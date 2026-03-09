@@ -18,6 +18,7 @@ class CommissionModel:
     commission_rate: float = 0.0
     tl_rate: Optional[float] = None
     tl_basis: Optional[str] = None
+    apply_split_factors: bool = True
     is_active: bool = True
 
     @classmethod
@@ -30,6 +31,7 @@ class CommissionModel:
             commission_rate=float(d.get('commission_rate', 0)),
             tl_rate=float(tl_rate_raw) if tl_rate_raw is not None else None,
             tl_basis=d.get('tl_basis'),
+            apply_split_factors=bool(int(d.get('apply_split_factors', 1))),
             is_active=bool(int(d.get('is_active', 1))),
         )
 

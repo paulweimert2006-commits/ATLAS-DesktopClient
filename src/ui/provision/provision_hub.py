@@ -64,8 +64,13 @@ class _ProvDataFingerprintWorker(QRunnable):
             )
             fp = hashlib.md5(raw.encode()).hexdigest()
             self.signals.result.emit(fp)
+        except RuntimeError:
+            pass
         except Exception:
-            self.signals.result.emit("")
+            try:
+                self.signals.result.emit("")
+            except RuntimeError:
+                pass
 
 
 class ProvisionNavButton(QPushButton):

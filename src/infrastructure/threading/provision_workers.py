@@ -445,7 +445,7 @@ class MatchSearchWorker(QThread):
 
 
 class VerteilschluesselLoadWorker(QThread):
-    finished = Signal(object, object)
+    finished = Signal(object, object, object)
     error = Signal(str)
 
     def __init__(self, repo: ProvisionRepository):
@@ -456,7 +456,8 @@ class VerteilschluesselLoadWorker(QThread):
         try:
             models = self._repo.get_models()
             employees = self._repo.get_employees()
-            self.finished.emit(models, employees)
+            settings = self._repo.get_pm_settings()
+            self.finished.emit(models, employees, settings)
         except Exception as e:
             self.error.emit(str(e))
 

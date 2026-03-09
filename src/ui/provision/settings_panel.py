@@ -7,6 +7,7 @@ Allgemeine PM-Einstellungen (Default-Vermittler) und Gefahrenzone (Reset).
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFrame, QDialog, QProgressBar, QSizePolicy, QComboBox,
+    QDoubleSpinBox, QCheckBox,
 )
 from PySide6.QtCore import Signal, Qt, QTimer, QThread
 
@@ -252,6 +253,9 @@ class SettingsPanel(QWidget):
         # ── Allgemeine Einstellungen ──
         self._build_general_settings(layout)
 
+        # ── Split-Engine Einstellungen ──
+        self._build_split_settings(layout)
+
         layout.addStretch()
 
         danger_frame = QFrame()
@@ -470,6 +474,174 @@ class SettingsPanel(QWidget):
 
         parent_layout.addWidget(frame)
 
+    # ── Split-Engine Settings ──
+
+    def _build_split_settings(self, parent_layout: QVBoxLayout):
+        frame = QFrame()
+        frame.setStyleSheet(f"""
+            QFrame {{
+                background-color: {PRIMARY_0};
+                border: 1px solid #e2e8f0;
+                border-radius: 12px;
+            }}
+        """)
+
+        fl = QVBoxLayout(frame)
+        fl.setContentsMargins(24, 24, 24, 24)
+        fl.setSpacing(16)
+
+        section_title = QLabel(texts.PM_SETTINGS_SECTION_SPLIT)
+        section_title.setStyleSheet(f"""
+            font-family: {FONT_HEADLINE};
+            font-size: 14pt;
+            font-weight: 700;
+            color: {PRIMARY_900};
+        """)
+        fl.addWidget(section_title)
+
+        sep = QFrame()
+        sep.setFixedHeight(1)
+        sep.setStyleSheet("background-color: #e2e8f0;")
+        fl.addWidget(sep)
+
+        formula_lbl = QLabel(texts.PM_SETTINGS_FACTOR_FORMULA)
+        formula_lbl.setStyleSheet(f"""
+            font-family: {FONT_BODY};
+            font-size: {FONT_SIZE_CAPTION};
+            color: {ACCENT_500};
+            font-weight: 600;
+            padding: 8px 12px;
+            background-color: #eff6ff;
+            border-radius: 6px;
+        """)
+        fl.addWidget(formula_lbl)
+
+        factors_row = QHBoxLayout()
+        factors_row.setSpacing(24)
+
+        f1_col = QVBoxLayout()
+        f1_col.setSpacing(4)
+        f1_lbl = QLabel(texts.PM_SETTINGS_FACTOR_1)
+        f1_lbl.setStyleSheet(f"""
+            font-family: {FONT_BODY};
+            font-size: {FONT_SIZE_BODY};
+            font-weight: 600;
+            color: {PRIMARY_900};
+        """)
+        f1_col.addWidget(f1_lbl)
+        f1_hint = QLabel(texts.PM_SETTINGS_FACTOR_1_HINT)
+        f1_hint.setWordWrap(True)
+        f1_hint.setStyleSheet(f"""
+            font-family: {FONT_BODY};
+            font-size: {FONT_SIZE_CAPTION};
+            color: {PRIMARY_500};
+        """)
+        f1_col.addWidget(f1_hint)
+        self._factor1_spin = QDoubleSpinBox()
+        self._factor1_spin.setRange(0.01, 1.00)
+        self._factor1_spin.setDecimals(2)
+        self._factor1_spin.setSingleStep(0.05)
+        self._factor1_spin.setValue(0.80)
+        self._factor1_spin.setMinimumHeight(40)
+        self._factor1_spin.setStyleSheet(f"""
+            QDoubleSpinBox {{
+                font-family: {FONT_BODY};
+                font-size: {FONT_SIZE_BODY};
+                padding: 6px 12px;
+                border: 1px solid #cbd5e1;
+                border-radius: 6px;
+                background-color: white;
+                color: {PRIMARY_900};
+            }}
+            QDoubleSpinBox:hover {{ border-color: {ACCENT_500}; }}
+        """)
+        f1_col.addWidget(self._factor1_spin)
+        factors_row.addLayout(f1_col)
+
+        f2_col = QVBoxLayout()
+        f2_col.setSpacing(4)
+        f2_lbl = QLabel(texts.PM_SETTINGS_FACTOR_2)
+        f2_lbl.setStyleSheet(f"""
+            font-family: {FONT_BODY};
+            font-size: {FONT_SIZE_BODY};
+            font-weight: 600;
+            color: {PRIMARY_900};
+        """)
+        f2_col.addWidget(f2_lbl)
+        f2_hint = QLabel(texts.PM_SETTINGS_FACTOR_2_HINT)
+        f2_hint.setWordWrap(True)
+        f2_hint.setStyleSheet(f"""
+            font-family: {FONT_BODY};
+            font-size: {FONT_SIZE_CAPTION};
+            color: {PRIMARY_500};
+        """)
+        f2_col.addWidget(f2_hint)
+        self._factor2_spin = QDoubleSpinBox()
+        self._factor2_spin.setRange(0.01, 1.00)
+        self._factor2_spin.setDecimals(2)
+        self._factor2_spin.setSingleStep(0.05)
+        self._factor2_spin.setValue(0.90)
+        self._factor2_spin.setMinimumHeight(40)
+        self._factor2_spin.setStyleSheet(f"""
+            QDoubleSpinBox {{
+                font-family: {FONT_BODY};
+                font-size: {FONT_SIZE_BODY};
+                padding: 6px 12px;
+                border: 1px solid #cbd5e1;
+                border-radius: 6px;
+                background-color: white;
+                color: {PRIMARY_900};
+            }}
+            QDoubleSpinBox:hover {{ border-color: {ACCENT_500}; }}
+        """)
+        f2_col.addWidget(self._factor2_spin)
+        factors_row.addLayout(f2_col)
+
+        fl.addLayout(factors_row)
+
+        tl_sep = QFrame()
+        tl_sep.setFixedHeight(1)
+        tl_sep.setStyleSheet("background-color: #e2e8f0;")
+        fl.addWidget(tl_sep)
+
+        tl_row = QHBoxLayout()
+        tl_row.setSpacing(16)
+
+        tl_info = QVBoxLayout()
+        tl_info.setSpacing(4)
+        tl_lbl = QLabel(texts.PM_SETTINGS_NO_TL_TO_COMPANY)
+        tl_lbl.setStyleSheet(f"""
+            font-family: {FONT_BODY};
+            font-size: {FONT_SIZE_BODY};
+            font-weight: 600;
+            color: {PRIMARY_900};
+        """)
+        tl_info.addWidget(tl_lbl)
+        tl_hint = QLabel(texts.PM_SETTINGS_NO_TL_TO_COMPANY_HINT)
+        tl_hint.setWordWrap(True)
+        tl_hint.setStyleSheet(f"""
+            font-family: {FONT_BODY};
+            font-size: {FONT_SIZE_CAPTION};
+            color: {PRIMARY_500};
+            line-height: 1.4;
+        """)
+        tl_info.addWidget(tl_hint)
+        tl_row.addLayout(tl_info, 1)
+
+        self._no_tl_checkbox = QCheckBox()
+        self._no_tl_checkbox.setChecked(True)
+        self._no_tl_checkbox.setStyleSheet(f"""
+            QCheckBox::indicator {{
+                width: 22px;
+                height: 22px;
+            }}
+        """)
+        tl_row.addWidget(self._no_tl_checkbox, 0, Qt.AlignTop)
+
+        fl.addLayout(tl_row)
+
+        parent_layout.addWidget(frame)
+
     def _load_settings(self):
         if self._settings_load_worker and self._settings_load_worker.isRunning():
             return
@@ -497,6 +669,16 @@ class SettingsPanel(QWidget):
                     self._berater_combo.setCurrentIndex(i)
                     break
 
+        f1 = settings.get('split_factor_1')
+        if f1:
+            self._factor1_spin.setValue(float(f1))
+        f2 = settings.get('split_factor_2')
+        if f2:
+            self._factor2_spin.setValue(float(f2))
+
+        no_tl = settings.get('no_tl_alloc_to_company', '1')
+        self._no_tl_checkbox.setChecked(no_tl != '0')
+
         self._save_settings_btn.setEnabled(True)
 
     def _on_settings_load_error(self, error: str):
@@ -507,9 +689,16 @@ class SettingsPanel(QWidget):
         selected_id = self._berater_combo.currentData()
         value = str(selected_id) if selected_id else ''
 
+        payload = {
+            'xempus_default_berater_id': value,
+            'split_factor_1': str(self._factor1_spin.value()),
+            'split_factor_2': str(self._factor2_spin.value()),
+            'no_tl_alloc_to_company': '1' if self._no_tl_checkbox.isChecked() else '0',
+        }
+
         self._save_settings_btn.setEnabled(False)
         self._settings_save_worker = _SettingsSaveWorker(
-            self._backend, {'xempus_default_berater_id': value})
+            self._backend, payload)
         self._settings_save_worker.finished.connect(self._on_settings_saved)
         self._settings_save_worker.error.connect(self._on_settings_save_error)
         self._settings_save_worker.start()
