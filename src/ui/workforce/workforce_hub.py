@@ -52,7 +52,7 @@ class _DataFingerprintWorker(QRunnable):
                 sorted(employers, key=lambda e: e.get('id', 0)),
                 sort_keys=True, default=str,
             )
-            fp = hashlib.md5(raw.encode()).hexdigest()
+            fp = hashlib.sha256(raw.encode()).hexdigest()
             self.signals.result.emit(fp)
         except Exception:
             self.signals.result.emit("")
@@ -317,7 +317,7 @@ class WorkforceHub(QWidget):
                 from ui.workforce.smtp_view import SmtpView
                 panel = SmtpView(self._wf_api)
         except Exception as e:
-            logger.error(f"Fehler beim Laden von Workforce-Panel {index}: {e}")
+            logger.error(f"Fehler beim Laden von Workforce-Panel {index}: {type(e).__name__}")
             self._panels_loaded.discard(index)
             return
 

@@ -86,7 +86,7 @@ def extract_zip_contents(
         zip_obj, password_used = _open_zip(zip_path, api_client)
     except Exception as e:
         result.error = str(e)
-        logger.error(f"ZIP-Fehler bei {zip_path}: {e}")
+        logger.error(f"ZIP-Fehler bei {Path(zip_path).name}: {type(e).__name__}")
         return result
     
     if zip_obj is None:
@@ -98,7 +98,7 @@ def extract_zip_contents(
         members = zip_obj.namelist()
         
         if not members:
-            logger.info(f"ZIP ist leer: {Path(zip_path).name}")
+            logger.info("ZIP ist leer")
             return result
         
         for member_name in members:
@@ -127,7 +127,7 @@ def extract_zip_contents(
                 # SV-007 Fix: Einzeldatei-Groesse pruefen
                 if len(data) > MAX_SINGLE_FILE_SIZE:
                     logger.warning(
-                        f"ZIP-Eintrag '{filename}' ueberschreitet Einzeldatei-Limit "
+                        f"ZIP-Eintrag ueberschreitet Einzeldatei-Limit "
                         f"({len(data)} > {MAX_SINGLE_FILE_SIZE} Bytes), uebersprungen"
                     )
                     continue
@@ -144,11 +144,11 @@ def extract_zip_contents(
                 with open(target_path, 'wb') as f:
                     f.write(data)
                 
-                logger.debug(f"ZIP-Eintrag extrahiert: {filename} ({len(data)} Bytes)")
+                logger.debug(f"ZIP-Eintrag extrahiert ({len(data)} Bytes)")
                 
                 # Rekursive Verarbeitung: ZIP in ZIP
                 if is_zip_file(target_path) and _depth < MAX_RECURSION_DEPTH:
-                    logger.info(f"Verschachtelte ZIP gefunden: {filename}")
+                    logger.info("Verschachtelte ZIP gefunden")
                     sub_dir = tempfile.mkdtemp(prefix="atlas_zip_sub_", dir=temp_dir)
                     # SV-007: Kumulatives Size-Tracking an rekursiven Aufruf weitergeben
                     sub_result = extract_zip_contents(
@@ -168,11 +168,11 @@ def extract_zip_contents(
                 result.extracted_paths.append(target_path)
                 
             except Exception as e:
-                logger.warning(f"ZIP-Eintrag '{member_name}' konnte nicht extrahiert werden: {e}")
+                logger.warning(f"ZIP-Eintrag konnte nicht extrahiert werden: {type(e).__name__}")
                 continue
         
         logger.info(
-            f"ZIP verarbeitet: {Path(zip_path).name} -> "
+            f"ZIP verarbeitet: "
             f"{len(result.extracted_paths)} Datei(en) extrahiert"
         )
     
@@ -225,7 +225,7 @@ def _open_zip(zip_path: str, api_client=None):
             pass
         # "That is a encrypted file..." -> Passwort noetig
         if 'encrypt' in str(e).lower() or 'password' in str(e).lower():
-            logger.info(f"ZIP ist verschluesselt: {Path(zip_path).name}")
+            logger.info("ZIP ist verschluesselt")
         else:
             raise
     except Exception:
@@ -267,7 +267,7 @@ def _open_zip(zip_path: str, api_client=None):
                         if not m.endswith('/'):
                             zf.read(m, pwd=pw_bytes)
                             break
-                logger.info(f"ZIP mit Passwort entsperrt (AES): {Path(zip_path).name}")
+                logger.info("ZIP mit Passwort entsperrt (AES)")
                 return (zf, pw)
             except Exception:
                 try:
@@ -284,7 +284,7 @@ def _open_zip(zip_path: str, api_client=None):
                     if not m.endswith('/'):
                         zf.read(m, pwd=pw_bytes)
                         break
-            logger.info(f"ZIP mit Passwort entsperrt: {Path(zip_path).name}")
+            logger.info("ZIP mit Passwort entsperrt")
             return (zf, pw)
         except Exception:
             try:

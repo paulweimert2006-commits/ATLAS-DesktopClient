@@ -40,7 +40,7 @@ class WorkforceApiClient:
                 data = response.get('data', {})
                 return data if 'name' in data else data
         except APIError as e:
-            logger.error(f"Fehler beim Laden des Arbeitgebers {employer_id}: {e}")
+            logger.error(f"Fehler beim Laden des Arbeitgebers: {type(e).__name__}")
             raise
         return {}
 
@@ -62,7 +62,7 @@ class WorkforceApiClient:
             if response.get('success'):
                 return response.get('data', {})
         except APIError as e:
-            logger.error(f"Fehler beim Aktualisieren des Arbeitgebers {employer_id}: {e}")
+            logger.error(f"Fehler beim Aktualisieren des Arbeitgebers: {type(e).__name__}")
             raise
         return {}
 
@@ -72,7 +72,7 @@ class WorkforceApiClient:
             response = self.client.delete(f'/hr/employers/{employer_id}')
             return response.get('success', False)
         except APIError as e:
-            logger.error(f"Fehler beim Loeschen des Arbeitgebers {employer_id}: {e}")
+            logger.error(f"Fehler beim Loeschen des Arbeitgebers: {type(e).__name__}")
             raise
 
     # ── Credentials ────────────────────────────────────────────

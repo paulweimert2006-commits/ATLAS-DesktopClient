@@ -520,8 +520,9 @@ class StatsView(QWidget):
             return
 
         try:
+            safe_employer = employer_name[:3] + "***" if len(employer_name) > 3 else employer_name
             lines = [
-                f"{texts.WF_STATS_TITLE} - {employer_name}",
+                f"{texts.WF_STATS_TITLE} - {safe_employer}",
                 f"{texts.WF_STATS_MODE}: {texts.WF_STATS_STANDARD if stats_type == 'standard' else texts.WF_STATS_LONGTERM}",
                 f"{texts.WF_STATS_EXPORT_DATE}: {datetime.now().strftime('%d.%m.%Y %H:%M')}",
                 "=" * 60, "",
@@ -575,9 +576,9 @@ class StatsView(QWidget):
             if self._toast_manager:
                 self._toast_manager.show_success(texts.WF_STATS_EXPORTED)
         except Exception as e:
-            logger.error(f"Export-Fehler: {e}")
+            logger.error(f"Export-Fehler: {type(e).__name__}")
             if self._toast_manager:
-                self._toast_manager.show_error(f"{texts.WF_STATS_EXPORT_ERROR}: {e}")
+                self._toast_manager.show_error(texts.WF_STATS_EXPORT_ERROR)
 
     def refresh(self):
         self._load_employers()
