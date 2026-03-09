@@ -180,9 +180,11 @@ def audit_log(user: str, action: str, target: str, details: str = "", ip: str = 
         details (str): Zusätzliche Details zur Aktion
         ip (str): Die IP-Adresse des Benutzers
     """
-    msg = f"USER={user} ACTION={action} TARGET={target}"
-    if details:
-        msg += f" DETAILS={details}"
+    sanitized_target = anonymize_log_message(target) if target else target
+    sanitized_details = anonymize_log_message(details) if details else details
+    msg = f"USER={user} ACTION={action} TARGET={sanitized_target}"
+    if sanitized_details:
+        msg += f" DETAILS={sanitized_details}"
     if ip:
         msg += f" IP={ip}"
     audit_logger.info(msg)
@@ -279,22 +281,19 @@ def custom_log(kuerzel, message, color_name=None, ip=None):
     message = anonymize_log_message(message)
 
     if ip:
-        # Format for unauthenticated access, e.g., ("127.0.0.1" - LOGIN)
         log_message_plain = f'("{ip}" - {message})'
-        log_message_color = log_message_plain # No color for IP logs
+        log_message_color = log_message_plain
     else:
+        safe_kuerzel = kuerzel[:2] + "***" if kuerzel and len(kuerzel) > 2 else kuerzel or "?"
         color = COLORS.get(color_name, COLORS["white"])
-        colored_kuerzel = f"{color}{kuerzel}{COLORS['reset']}"
-        log_message_plain = f'("{kuerzel}" - {message})'
+        colored_kuerzel = f"{color}{safe_kuerzel}{COLORS['reset']}"
+        log_message_plain = f'("{safe_kuerzel}" - {message})'
         log_message_color = f'("{colored_kuerzel}" - {message})'
 
-    # Construct the final, full log lines
     full_log_plain = f'[{now}] {log_message_plain}'
     full_log_color = f'[{now}] {log_message_color}'
 
-    # Log plain message to file
     file_logger.info(full_log_plain)
-    # Print colored message to console
     print(full_log_color)
 
 
@@ -451,7 +450,7 @@ def save_history_entry(history_dir: str, employer_cfg: dict, provider_response: 
             json.dump(provider_response, f, ensure_ascii=False, indent=2)
     except Exception as e:
         # Log the error but don't crash the main process
-        print(f"ERROR: Could not write history file to {filepath}: {e}")
+        file_logger.error(f"ERROR: Could not write history file: {type(e).__name__}")
 
 # ==============================================================================
 # --- SECTION 2: CORE CLASSES (DATA STORE & PROVIDERS) ---
@@ -4813,9 +4812,13 @@ def compare_snapshots(employer_id):
         file1, file2 = newer_file, older_file
     # --- End comparison order ---
 
-    snapshots_dir = app.config['SNAPSHOTS_DIR']
-    path1 = os.path.join(snapshots_dir, file1)
-    path2 = os.path.join(snapshots_dir, file2)
+    snapshots_dir = os.path.realpath(app.config['SNAPSHOTS_DIR'])
+    path1 = os.path.realpath(os.path.join(snapshots_dir, file1))
+    path2 = os.path.realpath(os.path.join(snapshots_dir, file2))
+
+    if not path1.startswith(snapshots_dir + os.sep) or not path2.startswith(snapshots_dir + os.sep):
+        flash("Ungültiger Snapshot-Dateiname.", "error")
+        return redirect(url_for('snapshot_comparison', employer_id=employer_id))
 
     try:
         with open(path1, 'r', encoding='utf-8') as f:
@@ -4988,7 +4991,7 @@ def api_employer_statistics(employer_id):
         stats = calculate_statistics(current_employee_details, previous_employee_details)
         return jsonify(stats)
     except Exception as err:
-        print(f"ERROR in statistics API for {employer_id}: {err}")
+        file_logger.error(f"ERROR in statistics API: {type(err).__name__}")
         return jsonify({"error": "Internal error"}), 500
 
 @app.route('/api/employer/<employer_id>/long_term_statistics')
@@ -5018,10 +5021,9 @@ def api_long_term_statistics(employer_id):
 
         return jsonify(stats)
     except Exception as err:
-        # It's good practice to log the full error for debugging
         error_details = traceback.format_exc()
-        print(f"ERROR in long-term statistics API for {employer_id}: {err}\n{error_details}")
-        return jsonify({"error": f"An internal error occurred: {err}"}), 500
+        file_logger.error(f"ERROR in long-term statistics API: {type(err).__name__}\n{error_details}")
+        return jsonify({"error": "An internal error occurred"}), 500
 
 @app.route('/employer/<employer_id>/export/standard')
 def download_standard_export(employer_id):
@@ -5121,8 +5123,8 @@ def api_delta_scs_export(employer_id):
 
     except Exception as err:
         error_details = traceback.format_exc()
-        print(f"Error during delta export for {employer_id}: {err}\n{error_details}")
-        return jsonify({"status": "error", "message": f"Ein unerwarteter Fehler ist aufgetreten: {err}"}), 500
+        file_logger.error(f"Error during delta export: {type(err).__name__}\n{error_details}")
+        return jsonify({"status": "error", "message": "Ein unerwarteter Fehler ist aufgetreten"}), 500
 
 @app.route('/api/employer/<employer_id>/past_exports')
 def api_get_past_exports(employer_id):
