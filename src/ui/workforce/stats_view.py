@@ -508,9 +508,8 @@ class StatsView(QWidget):
     def _export_stats(self):
         if not self._current_stats:
             return
-        stats = json.loads(json.dumps(self._current_stats.get('stats', {}), default=str))
-        stats_type = str(self._current_stats.get('stats_type', 'standard'))
-        employer_name = str(self._employer_combo.currentText())
+        stats = self._current_stats.get('stats', {})
+        stats_type = self._current_stats.get('stats_type', 'standard')
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         default_name = f"workforce_stats_{stats_type}_{timestamp}.txt"
 
@@ -521,65 +520,69 @@ class StatsView(QWidget):
             return
 
         try:
-            safe_employer = employer_name[:3] + "***" if len(employer_name) > 3 else employer_name
-            lines = [
-                f"{texts.WF_STATS_TITLE} - {safe_employer}",
-                f"{texts.WF_STATS_MODE}: {texts.WF_STATS_STANDARD if stats_type == 'standard' else texts.WF_STATS_LONGTERM}",
-                f"{texts.WF_STATS_EXPORT_DATE}: {datetime.now().strftime('%d.%m.%Y %H:%M')}",
-                "=" * 60, "",
-            ]
-
-            if stats_type == 'standard':
-                sc = stats.get('status_counts', {})
-                lines.append(f"{texts.WF_STATS_TOTAL}: {sc.get('total', 0)}")
-                lines.append(f"{texts.WF_STATS_ACTIVE}: {sc.get('active', 0)}")
-                lines.append(f"{texts.WF_STATS_INACTIVE}: {sc.get('inactive', 0)}")
-                avgs = stats.get('averages', {})
-                lines.append(f"{texts.WF_STATS_AVG_TENURE}: {avgs.get('tenure_years', 0)} {texts.WF_STATS_YEARS}")
-                lines.append(f"{texts.WF_STATS_AVG_HOURS}: {stats.get('average_weekly_hours', 0)}")
-                to = stats.get('turnover', {})
-                lines.append(f"{texts.WF_STATS_TURNOVER}: {to.get('rate_percent', 0)} %")
-                lines.append("")
-
-                gd = stats.get('gender_distribution', {})
-                if gd.get('labels'):
-                    lines.append(f"--- {texts.WF_STATS_GENDER} ---")
-                    for lbl, val in zip(gd['labels'], gd['data']):
-                        lines.append(f"  {lbl}: {val}")
-                    lines.append("")
-
-                dd = stats.get('department_distribution', {})
-                if dd.get('labels'):
-                    lines.append(f"--- {texts.WF_STATS_DEPARTMENTS} ---")
-                    for lbl, val in zip(dd['labels'], dd['data']):
-                        lines.append(f"  {lbl}: {val}")
-                    lines.append("")
-
-                jlt = stats.get('join_leave_trends', {})
-                if jlt.get('labels'):
-                    lines.append(f"--- {texts.WF_STATS_TRENDS} ---")
-                    for i, lbl in enumerate(jlt['labels']):
-                        lines.append(f"  {lbl}: +{jlt['joins'][i]} / -{jlt['leaves'][i]}")
-            else:
-                ad = stats.get('average_duration', {})
-                lines.append(f"{texts.WF_STATS_AVG_DURATION}: {ad.get('years', 0)} {texts.WF_STATS_YEARS}")
-                lines.append(f"{texts.WF_STATS_EMPLOYEES_INCLUDED}: {ad.get('total_employees_included', 0)}")
-                lines.append("")
-                ee = stats.get('entries_exits', {})
-                if ee.get('labels'):
-                    lines.append(f"--- {texts.WF_STATS_ENTRIES_EXITS} ---")
-                    for i, lbl in enumerate(ee['labels']):
-                        lines.append(f"  {lbl}: +{ee['entries'][i]} / -{ee['exits'][i]}")
-
+            content = self._build_export_content(stats, stats_type)
             with open(path, 'w', encoding='utf-8') as f:
-                f.write('\n'.join(lines))
+                f.write(content)
 
             if self._toast_manager:
                 self._toast_manager.show_success(texts.WF_STATS_EXPORTED)
         except Exception as e:
-            logger.error(f"Export-Fehler: {type(e).__name__}")
+            logger.error("Export-Fehler")
             if self._toast_manager:
                 self._toast_manager.show_error(texts.WF_STATS_EXPORT_ERROR)
+
+    @staticmethod
+    def _build_export_content(stats: dict, stats_type: str) -> str:
+        lines = [
+            texts.WF_STATS_TITLE,
+            f"{texts.WF_STATS_MODE}: {texts.WF_STATS_STANDARD if stats_type == 'standard' else texts.WF_STATS_LONGTERM}",
+            f"{texts.WF_STATS_EXPORT_DATE}: {datetime.now().strftime('%d.%m.%Y %H:%M')}",
+            "=" * 60, "",
+        ]
+
+        if stats_type == 'standard':
+            sc = stats.get('status_counts', {})
+            lines.append(f"{texts.WF_STATS_TOTAL}: {int(sc.get('total', 0))}")
+            lines.append(f"{texts.WF_STATS_ACTIVE}: {int(sc.get('active', 0))}")
+            lines.append(f"{texts.WF_STATS_INACTIVE}: {int(sc.get('inactive', 0))}")
+            avgs = stats.get('averages', {})
+            lines.append(f"{texts.WF_STATS_AVG_TENURE}: {float(avgs.get('tenure_years', 0))} {texts.WF_STATS_YEARS}")
+            lines.append(f"{texts.WF_STATS_AVG_HOURS}: {float(stats.get('average_weekly_hours', 0))}")
+            to = stats.get('turnover', {})
+            lines.append(f"{texts.WF_STATS_TURNOVER}: {float(to.get('rate_percent', 0))} %")
+            lines.append("")
+
+            gd = stats.get('gender_distribution', {})
+            if gd.get('labels'):
+                lines.append(f"--- {texts.WF_STATS_GENDER} ---")
+                for lbl, val in zip(gd['labels'], gd['data']):
+                    lines.append(f"  {str(lbl)}: {int(val)}")
+                lines.append("")
+
+            dd = stats.get('department_distribution', {})
+            if dd.get('labels'):
+                lines.append(f"--- {texts.WF_STATS_DEPARTMENTS} ---")
+                for lbl, val in zip(dd['labels'], dd['data']):
+                    lines.append(f"  {str(lbl)}: {int(val)}")
+                lines.append("")
+
+            jlt = stats.get('join_leave_trends', {})
+            if jlt.get('labels'):
+                lines.append(f"--- {texts.WF_STATS_TRENDS} ---")
+                for i, lbl in enumerate(jlt['labels']):
+                    lines.append(f"  {str(lbl)}: +{int(jlt['joins'][i])} / -{int(jlt['leaves'][i])}")
+        else:
+            ad = stats.get('average_duration', {})
+            lines.append(f"{texts.WF_STATS_AVG_DURATION}: {float(ad.get('years', 0))} {texts.WF_STATS_YEARS}")
+            lines.append(f"{texts.WF_STATS_EMPLOYEES_INCLUDED}: {int(ad.get('total_employees_included', 0))}")
+            lines.append("")
+            ee = stats.get('entries_exits', {})
+            if ee.get('labels'):
+                lines.append(f"--- {texts.WF_STATS_ENTRIES_EXITS} ---")
+                for i, lbl in enumerate(ee['labels']):
+                    lines.append(f"  {str(lbl)}: +{int(ee['entries'][i])} / -{int(ee['exits'][i])}")
+
+        return '\n'.join(lines)
 
     def refresh(self):
         self._load_employers()
