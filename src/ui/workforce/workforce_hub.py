@@ -317,7 +317,7 @@ class WorkforceHub(QWidget):
                 from ui.workforce.smtp_view import SmtpView
                 panel = SmtpView(self._wf_api)
         except Exception as e:
-            logger.error(f"Fehler beim Laden von Workforce-Panel {index}: {type(e).__name__}")
+            logger.error(f"Fehler beim Laden von Workforce-Panel {index}")
             self._panels_loaded.discard(index)
             return
 

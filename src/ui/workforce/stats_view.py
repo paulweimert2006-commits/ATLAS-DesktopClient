@@ -6,6 +6,7 @@ Donut-Charts (Geschlecht, Beschaeftigungsart), Bar-Charts (Abteilungen, Trends).
 Langzeit-Modus: Ein-/Austritte pro Jahr, durchschnittliche Beschaeftigungsdauer.
 """
 
+import json
 import logging
 import os
 from datetime import datetime
@@ -507,9 +508,9 @@ class StatsView(QWidget):
     def _export_stats(self):
         if not self._current_stats:
             return
-        stats = self._current_stats.get('stats', {})
-        stats_type = self._current_stats.get('stats_type', 'standard')
-        employer_name = self._employer_combo.currentText()
+        stats = json.loads(json.dumps(self._current_stats.get('stats', {}), default=str))
+        stats_type = str(self._current_stats.get('stats_type', 'standard'))
+        employer_name = str(self._employer_combo.currentText())
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         default_name = f"workforce_stats_{stats_type}_{timestamp}.txt"
 

@@ -86,7 +86,7 @@ def extract_zip_contents(
         zip_obj, password_used = _open_zip(zip_path, api_client)
     except Exception as e:
         result.error = str(e)
-        logger.error(f"ZIP-Fehler bei {Path(zip_path).name}: {type(e).__name__}")
+        logger.error("ZIP konnte nicht geoeffnet werden")
         return result
     
     if zip_obj is None:
