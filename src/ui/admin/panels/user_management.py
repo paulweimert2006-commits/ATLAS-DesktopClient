@@ -219,8 +219,24 @@ class UserManagementPanel(QWidget):
             return None
         return self._users_data[row]
 
+    def _fetch_available_modules(self) -> list:
+        try:
+            from api.admin_modules import AdminModulesAPI
+            mod_api = AdminModulesAPI(self._api_client)
+            modules = mod_api.get_modules()
+            for mod in modules:
+                if mod.get('is_active'):
+                    try:
+                        mod['roles'] = mod_api.get_module_roles(mod['module_key'])
+                    except Exception:
+                        mod['roles'] = []
+            return modules
+        except Exception:
+            return []
+
     def _on_new_user(self):
-        dialog = UserEditDialog(self, is_new=True, auth_api=self._auth_api)
+        dialog = UserEditDialog(self, is_new=True, auth_api=self._auth_api,
+                                available_modules=self._fetch_available_modules())
         if dialog.exec() == QDialog.DialogCode.Accepted:
             data = dialog.get_data()
             try:
@@ -239,6 +255,7 @@ class UserManagementPanel(QWidget):
                     new_user = next((u for u in new_users if u.get('username') == data['username']), None)
                     if new_user:
                         mod_api.update_user_modules(new_user['id'], data['modules'])
+                        self._assign_selected_roles(mod_api, new_user['id'], data['modules'])
                 self._toast_manager.show_success(texts.ADMIN_USERS_CREATED.format(username=data['username']))
                 self._load_users()
             except APIError as e:
@@ -248,7 +265,8 @@ class UserManagementPanel(QWidget):
         user = self._get_selected_user()
         if not user:
             return
-        dialog = UserEditDialog(self, user_data=user, is_new=False, auth_api=self._auth_api)
+        dialog = UserEditDialog(self, user_data=user, is_new=False, auth_api=self._auth_api,
+                                available_modules=self._fetch_available_modules())
         if dialog.exec() == QDialog.DialogCode.Accepted:
             data = dialog.get_data()
             username = user['username']
@@ -262,10 +280,22 @@ class UserManagementPanel(QWidget):
                     from api.admin_modules import AdminModulesAPI
                     mod_api = AdminModulesAPI(self._api_client)
                     mod_api.update_user_modules(user['id'], data['modules'])
+                    self._assign_selected_roles(mod_api, user['id'], data['modules'])
                 self._toast_manager.show_success(texts.ADMIN_USERS_UPDATED.format(username=username))
                 self._load_users()
             except APIError as e:
                 self._toast_manager.show_error(str(e))
+
+    @staticmethod
+    def _assign_selected_roles(mod_api, user_id: int, modules: list):
+        for mod in modules:
+            role_id = mod.get('role_id')
+            mod_key = mod.get('module_key')
+            if mod_key and role_id is not None:
+                try:
+                    mod_api.assign_user_roles(mod_key, user_id, [role_id])
+                except Exception:
+                    pass
 
     def _on_change_password(self):
         user = self._get_selected_user()

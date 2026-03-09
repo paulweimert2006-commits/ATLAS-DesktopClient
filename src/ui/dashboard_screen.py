@@ -816,6 +816,27 @@ class DashboardScreen(QWidget):
 
         tiles_row.addLayout(wf_group)
 
+        # -- Contact (Telefonbuch) --
+        contact_group = QVBoxLayout()
+        contact_group.setSpacing(6)
+        tile_contact = _ModuleTile(
+            texts.CONTACT_DASHBOARD_TILE, texts.CONTACT_DASHBOARD_TILE_DESC, "#5C6BC0",
+        )
+        tile_contact.clicked.connect(lambda: self.module_requested.emit("contact"))
+        contact_group.addWidget(tile_contact)
+        self._tiles["contact"] = tile_contact
+
+        self._contact_admin_btn = QPushButton(f"  \U0001F6E0  {texts.MODULE_ADMIN_BTN}")
+        self._contact_admin_btn.setCursor(Qt.PointingHandCursor)
+        self._contact_admin_btn.setFixedWidth(200)
+        self._contact_admin_btn.setStyleSheet(_ma_btn_style)
+        self._contact_admin_btn.clicked.connect(lambda: self.module_requested.emit("contact_admin"))
+        self._contact_admin_btn.setVisible(False)
+        contact_group.addWidget(self._contact_admin_btn)
+        self._tiles["contact_admin"] = self._contact_admin_btn
+
+        tiles_row.addLayout(contact_group)
+
         b_layout.addLayout(tiles_row)
         b_layout.addSpacing(4)
 
