@@ -57,21 +57,15 @@ class User:
         return self.account_type == 'super_admin'
 
     def has_module(self, module_key: str) -> bool:
-        if self.is_super_admin:
-            return True
         return any(m.module_key == module_key and m.is_enabled for m in self.modules)
 
     def is_module_admin(self, module_key: str) -> bool:
-        if self.is_super_admin:
-            return True
         return any(
             m.module_key == module_key and m.is_enabled and m.access_level == 'admin'
             for m in self.modules
         )
 
     def has_permission(self, perm: str) -> bool:
-        if self.is_super_admin:
-            return True
         return perm in self.permissions
 
 
