@@ -232,11 +232,11 @@ def generate_pdf(data: StatementData, path: str) -> None:
     # Einzelpositionen
     story.append(Paragraph(texts.PM_STMT_POSITIONEN, s_section))
 
-    col_widths = [18 * mm, 28 * mm, 28 * mm, 30 * mm, 20 * mm, 23 * mm, 23 * mm]
+    col_widths = [20 * mm, 32 * mm, 32 * mm, 34 * mm, 22 * mm, 30 * mm]
     pos_header = [
         texts.PM_STMT_COL_DATUM, texts.PM_STMT_COL_VU, texts.PM_STMT_COL_KUNDE,
         texts.PM_STMT_COL_VSNR, texts.PM_STMT_COL_ART,
-        texts.PM_STMT_COL_BETRAG, texts.PM_STMT_COL_ANTEIL,
+        texts.PM_STMT_COL_ANTEIL,
     ]
     pos_data = [pos_header]
     for c in data.positionen:
@@ -247,7 +247,6 @@ def generate_pdf(data: StatementData, path: str) -> None:
             (c.versicherungsnehmer or '')[:20],
             (c.vsnr or '')[:18],
             art,
-            _format_eur(c.effective_amount),
             _format_eur(c.berater_anteil) if c.berater_anteil is not None else '',
         ])
 
@@ -262,7 +261,7 @@ def generate_pdf(data: StatementData, path: str) -> None:
         ('FONTSIZE', (0, 1), (-1, -1), 8),
         ('BACKGROUND', (0, 0), (-1, 0), clr_primary),
         ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-        ('ALIGN', (5, 0), (6, -1), 'RIGHT'),
+        ('ALIGN', (5, 0), (5, -1), 'RIGHT'),
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
         ('TOPPADDING', (0, 0), (-1, -1), 3),
         ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
@@ -282,8 +281,6 @@ def generate_pdf(data: StatementData, path: str) -> None:
     sum_data = [
         [Paragraph(texts.PM_STMT_BRUTTO, s_summary_label),
          Paragraph(_format_eur(b.brutto_provision), s_summary_val)],
-        [Paragraph(texts.PM_STMT_TL_ABZUG, s_summary_label),
-         Paragraph(_format_eur(b.tl_abzug), s_summary_val)],
         [Paragraph(texts.PM_STMT_RUECKBELASTUNGEN, s_summary_label),
          Paragraph(_format_eur(b.rueckbelastungen), s_summary_val)],
     ]
@@ -425,7 +422,6 @@ def generate_xlsx(data: StatementData, path: str) -> None:
 
     sum_lines = [
         (texts.PM_STMT_BRUTTO, b.brutto_provision),
-        (texts.PM_STMT_TL_ABZUG, b.tl_abzug),
         (texts.PM_STMT_RUECKBELASTUNGEN, b.rueckbelastungen),
     ]
     if b.has_korrektur:
@@ -451,7 +447,7 @@ def generate_xlsx(data: StatementData, path: str) -> None:
     row += 2
 
     # Positionstabelle
-    ws.merge_cells(f'A{row}:G{row}')
+    ws.merge_cells(f'A{row}:F{row}')
     ws.cell(row=row, column=1, value=texts.PM_STMT_POSITIONEN).font = Font(
         name='Calibri', bold=True, size=12, color='001f3d')
     row += 1
@@ -459,7 +455,7 @@ def generate_xlsx(data: StatementData, path: str) -> None:
     headers = [
         texts.PM_STMT_COL_DATUM, texts.PM_STMT_COL_VU, texts.PM_STMT_COL_KUNDE,
         texts.PM_STMT_COL_VSNR, texts.PM_STMT_COL_ART,
-        texts.PM_STMT_COL_BETRAG, texts.PM_STMT_COL_ANTEIL,
+        texts.PM_STMT_COL_ANTEIL,
     ]
     for ci, h in enumerate(headers, 1):
         c = ws.cell(row=row, column=ci, value=h)
@@ -468,7 +464,7 @@ def generate_xlsx(data: StatementData, path: str) -> None:
         c.alignment = Alignment(horizontal='center')
     row += 1
 
-    eur_cols = {6, 7}
+    eur_cols = {6}
     for ri, comm in enumerate(data.positionen):
         art = _ART_LABELS.get(comm.art, comm.buchungsart_raw or comm.art)
         vals = [
@@ -477,7 +473,6 @@ def generate_xlsx(data: StatementData, path: str) -> None:
             comm.versicherungsnehmer or '',
             comm.vsnr or '',
             art,
-            comm.effective_amount,
             comm.berater_anteil if comm.berater_anteil is not None else '',
         ]
         for ci, v in enumerate(vals, 1):
@@ -490,13 +485,13 @@ def generate_xlsx(data: StatementData, path: str) -> None:
                 c.fill = zebra_fill
         row += 1
 
-    col_widths = [14, 22, 22, 18, 12, 16, 16]
+    col_widths = [14, 24, 24, 20, 14, 18]
     for ci, w in enumerate(col_widths, 1):
         ws.column_dimensions[get_column_letter(ci)].width = w
 
     # Footer
     row += 1
-    ws.merge_cells(f'A{row}:G{row}')
+    ws.merge_cells(f'A{row}:F{row}')
     footer_text = texts.PM_STMT_FOOTER.format(
         datum=datetime.now().strftime('%d.%m.%Y'))
     ws.cell(row=row, column=1, value=footer_text).font = Font(
@@ -576,7 +571,6 @@ def generate_docx(data: StatementData, path: str) -> None:
 
     sum_lines = [
         (texts.PM_STMT_BRUTTO, b.brutto_provision),
-        (texts.PM_STMT_TL_ABZUG, b.tl_abzug),
         (texts.PM_STMT_RUECKBELASTUNGEN, b.rueckbelastungen),
     ]
     if b.has_korrektur:
@@ -619,10 +613,10 @@ def generate_docx(data: StatementData, path: str) -> None:
     headers = [
         texts.PM_STMT_COL_DATUM, texts.PM_STMT_COL_VU, texts.PM_STMT_COL_KUNDE,
         texts.PM_STMT_COL_VSNR, texts.PM_STMT_COL_ART,
-        texts.PM_STMT_COL_BETRAG, texts.PM_STMT_COL_ANTEIL,
+        texts.PM_STMT_COL_ANTEIL,
     ]
     n_rows = len(data.positionen) + 1
-    pos_table = doc.add_table(rows=n_rows, cols=7)
+    pos_table = doc.add_table(rows=n_rows, cols=6)
     pos_table.alignment = WD_TABLE_ALIGNMENT.LEFT
 
     for ci, h in enumerate(headers):
@@ -642,7 +636,6 @@ def generate_docx(data: StatementData, path: str) -> None:
             (comm.versicherungsnehmer or '')[:30],
             (comm.vsnr or '')[:20],
             art,
-            _format_eur(comm.effective_amount),
             _format_eur(comm.berater_anteil) if comm.berater_anteil is not None else '',
         ]
         for ci, v in enumerate(vals):

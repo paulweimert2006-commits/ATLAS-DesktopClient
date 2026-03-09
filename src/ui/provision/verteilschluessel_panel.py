@@ -59,6 +59,7 @@ class VerteilschluesselPanel(QWidget):
         self._models: List[CommissionModel] = []
         self._employees: List[Employee] = []
         self._toast_manager = None
+        self._split_factors = (0.8, 0.9)
         self._setup_ui()
         if api:
             QTimer.singleShot(100, self._load_data)
@@ -104,6 +105,52 @@ class VerteilschluesselPanel(QWidget):
         layout = QVBoxLayout(content)
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(20)
+
+        # Formel-Banner
+        self._formula_frame = QFrame()
+        self._formula_frame.setStyleSheet(f"""
+            QFrame {{
+                background-color: #eff6ff;
+                border: 1.5px solid {ACCENT_500};
+                border-radius: 10px;
+            }}
+        """)
+        formula_layout = QVBoxLayout(self._formula_frame)
+        formula_layout.setContentsMargins(20, 16, 20, 16)
+        formula_layout.setSpacing(6)
+
+        formula_title = QLabel(texts.PROVISION_FORMULA_BANNER)
+        formula_title.setStyleSheet(f"""
+            font-family: {FONT_BODY};
+            font-size: {FONT_SIZE_BODY};
+            font-weight: 700;
+            color: {ACCENT_500};
+            border: none;
+        """)
+        formula_layout.addWidget(formula_title)
+
+        self._formula_lines = QLabel()
+        self._formula_lines.setStyleSheet(f"""
+            font-family: {FONT_BODY};
+            font-size: {FONT_SIZE_BODY};
+            color: {PRIMARY_900};
+            border: none;
+            line-height: 1.6;
+        """)
+        formula_layout.addWidget(self._formula_lines)
+
+        self._formula_source = QLabel(texts.PROVISION_FORMULA_SOURCE)
+        self._formula_source.setStyleSheet(f"""
+            font-family: {FONT_BODY};
+            font-size: {FONT_SIZE_CAPTION};
+            color: {PRIMARY_500};
+            border: none;
+            font-style: italic;
+        """)
+        formula_layout.addWidget(self._formula_source)
+
+        self._update_formula_banner(0.8, 0.9)
+        layout.addWidget(self._formula_frame)
 
         # Provisionsmodelle
         model_header = SectionHeader(
@@ -196,10 +243,23 @@ class VerteilschluesselPanel(QWidget):
         self._worker.error.connect(self._on_error)
         self._worker.start()
 
-    def _on_loaded(self, models: List[CommissionModel], employees: List[Employee]):
+    def _update_formula_banner(self, f1: float, f2: float):
+        lines = (
+            texts.PROVISION_FORMULA_CONS.format(f1=f1, f2=f2)
+            + "\n" + texts.PROVISION_FORMULA_TL
+            + "\n" + texts.PROVISION_FORMULA_FIRMA
+        )
+        self._formula_lines.setText(lines)
+
+    def _on_loaded(self, models: List[CommissionModel], employees: List[Employee], settings=None):
         self._loading_overlay.setVisible(False)
         self._models = models
         self._employees = employees
+        if settings:
+            f1 = float(settings.get('split_factor_1', '0.8'))
+            f2 = float(settings.get('split_factor_2', '0.9'))
+            self._split_factors = (f1, f2)
+            self._update_formula_banner(f1, f2)
         self._render_models()
         self._emp_model.set_data(employees)
         self._status.setText("")
@@ -214,6 +274,8 @@ class VerteilschluesselPanel(QWidget):
             item = self._models_container.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
+
+        f1, f2 = self._split_factors
 
         for model in self._models:
             if not model.is_active:
@@ -237,32 +299,33 @@ class VerteilschluesselPanel(QWidget):
                 desc.setWordWrap(True)
                 card_layout.addWidget(desc)
 
-            rate = model.commission_rate
-            ag = 100.0 - rate
-            example_amount = 1000.0
-            ag_amount = example_amount * ag / 100
-            berater_brutto = example_amount * rate / 100
+            base_rate = model.commission_rate
             tl_rate_val = model.tl_rate or 0.0
-            if model.tl_basis == "gesamt_courtage":
-                tl_amount = example_amount * tl_rate_val / 100
-            else:
-                tl_amount = berater_brutto * tl_rate_val / 100
-            tl_amount = min(tl_amount, berater_brutto)
-            berater_amount = berater_brutto - tl_amount
+            uses_factors = model.apply_split_factors
 
-            rate_row = QHBoxLayout()
-            for label, pct in [(texts.PROVISION_DIST_MODEL_COL_AG, ag),
-                               (texts.PROVISION_DIST_MODEL_COL_BERATER, rate)]:
-                item_lbl = QLabel(f"{label}: {pct:.0f}%")
-                item_lbl.setStyleSheet(f"color: {PRIMARY_900}; font-size: {FONT_SIZE_BODY}; border: none; font-weight: 500;")
-                rate_row.addWidget(item_lbl)
-            if model.tl_rate is not None and model.tl_rate > 0:
-                basis_label = texts.PROVISION_EMP_DLG_TL_BASIS_GESAMT if model.tl_basis == "gesamt_courtage" else texts.PROVISION_EMP_DLG_TL_BASIS_BERATER
-                tl_lbl = QLabel(f"TL: {model.tl_rate:.0f}% ({basis_label})")
+            example_amount = 1000.0
+            if uses_factors:
+                eff_rate = round(base_rate * f1 * f2, 2)
+                berater_amount = round(example_amount * f1 * f2 * base_rate / 100, 2)
+                rate_text = texts.PROVISION_FORMULA_EFF_RATE.format(
+                    base_rate=f"{base_rate:.1f}", f1=f1, f2=f2, eff_rate=f"{eff_rate:.1f}")
+            else:
+                eff_rate = base_rate
+                berater_amount = round(example_amount * base_rate / 100, 2)
+                rate_text = f"{texts.PROVISION_DIST_MODEL_COL_BERATER}: {base_rate:.1f}%"
+            tl_amount = round(example_amount * tl_rate_val / 100, 2)
+            ag_amount = round(example_amount - berater_amount - tl_amount, 2)
+
+            rate_lbl = QLabel(rate_text)
+            rate_lbl.setStyleSheet(f"color: {PRIMARY_900}; font-size: {FONT_SIZE_BODY}; border: none; font-weight: 500;")
+            card_layout.addWidget(rate_lbl)
+
+            if tl_rate_val > 0:
+                tl_lbl = QLabel(texts.PROVISION_FORMULA_TL_FIXED.format(
+                    tl_rate=f"{tl_rate_val:.1f}",
+                ))
                 tl_lbl.setStyleSheet(f"color: {PRIMARY_900}; font-size: {FONT_SIZE_BODY}; border: none; font-weight: 500;")
-                rate_row.addWidget(tl_lbl)
-            rate_row.addStretch()
-            card_layout.addLayout(rate_row)
+                card_layout.addWidget(tl_lbl)
 
             example = QLabel(texts.PROVISION_DIST_MODEL_EXAMPLE.format(
                 amount=format_eur(example_amount),
@@ -298,10 +361,9 @@ class VerteilschluesselPanel(QWidget):
         tl_rate_spin.setSpecialValueText("\u2014")
         form.addRow(texts.PROVISION_MODEL_COL_TL_RATE + ":", tl_rate_spin)
 
-        tl_basis_combo = QComboBox()
-        tl_basis_combo.addItem(texts.PROVISION_EMP_DLG_TL_BASIS_BERATER, "berater_anteil")
-        tl_basis_combo.addItem(texts.PROVISION_EMP_DLG_TL_BASIS_GESAMT, "gesamt_courtage")
-        form.addRow(texts.PROVISION_MODEL_COL_TL_BASIS + ":", tl_basis_combo)
+        factors_cb = QCheckBox(texts.PM_SETTINGS_FACTOR_FORMULA)
+        factors_cb.setChecked(True)
+        form.addRow(texts.PM_SETTINGS_SECTION_SPLIT + ":", factors_cb)
 
         desc_edit = QLineEdit()
         form.addRow(texts.PROVISION_MODEL_COL_DESC + ":", desc_edit)
@@ -318,7 +380,8 @@ class VerteilschluesselPanel(QWidget):
                     'name': name,
                     'commission_rate': rate_spin.value(),
                     'tl_rate': tl_rate_spin.value() if tl_rate_spin.value() > 0 else None,
-                    'tl_basis': tl_basis_combo.currentData(),
+                    'tl_basis': 'gesamt_courtage',
+                    'apply_split_factors': 1 if factors_cb.isChecked() else 0,
                     'description': desc_edit.text().strip() or None,
                 }
                 run_worker(
@@ -369,10 +432,9 @@ class VerteilschluesselPanel(QWidget):
         tl_rate_spin.setSpecialValueText("\u2014")
         form.addRow(texts.PROVISION_DIST_EMP_COL_TL_RATE + ":", tl_rate_spin)
 
-        tl_basis_combo = QComboBox()
-        tl_basis_combo.addItem(texts.PROVISION_EMP_DLG_TL_BASIS_BERATER, "berater_anteil")
-        tl_basis_combo.addItem(texts.PROVISION_EMP_DLG_TL_BASIS_GESAMT, "gesamt_courtage")
-        form.addRow(texts.PROVISION_DIST_EMP_COL_TL_BASIS + ":", tl_basis_combo)
+        tl_basis_lbl = QLabel(texts.PM_SETTINGS_TL_BASIS_FIXED)
+        tl_basis_lbl.setEnabled(False)
+        form.addRow(texts.PROVISION_DIST_EMP_COL_TL_BASIS + ":", tl_basis_lbl)
 
         model_map = self._get_model_map()
 
@@ -382,9 +444,6 @@ class VerteilschluesselPanel(QWidget):
                 rate_spin.setValue(m.commission_rate)
                 if m.tl_rate is not None:
                     tl_rate_spin.setValue(m.tl_rate)
-                if m.tl_basis:
-                    idx = 1 if m.tl_basis == "gesamt_courtage" else 0
-                    tl_basis_combo.setCurrentIndex(idx)
             else:
                 rate_spin.setValue(0.0)
                 tl_rate_spin.setValue(0.0)
@@ -416,7 +475,7 @@ class VerteilschluesselPanel(QWidget):
                     'commission_model_id': model_id,
                     'commission_rate_override': rate_val if rate_val > 0 and rate_val != model_rate else None,
                     'tl_override_rate': tl_rate_spin.value() if tl_rate_spin.value() > 0 else None,
-                    'tl_override_basis': tl_basis_combo.currentData(),
+                    'tl_override_basis': 'gesamt_courtage',
                     'teamleiter_id': tl_combo.currentData(),
                 }
                 run_worker(
@@ -503,12 +562,9 @@ class VerteilschluesselPanel(QWidget):
         tl_rate_spin.setSpecialValueText("\u2014")
         form.addRow(texts.PROVISION_DIST_EMP_COL_TL_RATE + ":", tl_rate_spin)
 
-        tl_basis_combo = QComboBox()
-        tl_basis_combo.addItem(texts.PROVISION_EMP_DLG_TL_BASIS_BERATER, "berater_anteil")
-        tl_basis_combo.addItem(texts.PROVISION_EMP_DLG_TL_BASIS_GESAMT, "gesamt_courtage")
-        if emp.tl_override_basis == "gesamt_courtage":
-            tl_basis_combo.setCurrentIndex(1)
-        form.addRow(texts.PROVISION_DIST_EMP_COL_TL_BASIS + ":", tl_basis_combo)
+        tl_basis_lbl = QLabel(texts.PM_SETTINGS_TL_BASIS_FIXED)
+        tl_basis_lbl.setEnabled(False)
+        form.addRow(texts.PROVISION_DIST_EMP_COL_TL_BASIS + ":", tl_basis_lbl)
 
         model_map = self._get_model_map()
 
@@ -518,9 +574,6 @@ class VerteilschluesselPanel(QWidget):
                 rate_spin.setValue(m.commission_rate)
                 if m.tl_rate is not None:
                     tl_rate_spin.setValue(m.tl_rate)
-                if m.tl_basis:
-                    idx = 1 if m.tl_basis == "gesamt_courtage" else 0
-                    tl_basis_combo.setCurrentIndex(idx)
             else:
                 rate_spin.setValue(0.0)
                 tl_rate_spin.setValue(0.0)
@@ -563,7 +616,7 @@ class VerteilschluesselPanel(QWidget):
                 'commission_model_id': model_id,
                 'commission_rate_override': override,
                 'tl_override_rate': tl_rate_spin.value() if tl_rate_spin.value() > 0 else None,
-                'tl_override_basis': tl_basis_combo.currentData(),
+                'tl_override_basis': 'gesamt_courtage',
                 'teamleiter_id': tl_combo.currentData(),
                 'gueltig_ab': gueltig_ab.date().toString("yyyy-MM-dd"),
             }
@@ -918,12 +971,9 @@ class VerteilschluesselPanel(QWidget):
         tl_rate_spin.setSpecialValueText("\u2014")
         form.addRow(texts.PROVISION_MODEL_COL_TL_RATE + ":", tl_rate_spin)
 
-        tl_basis_combo = QComboBox()
-        tl_basis_combo.addItem(texts.PROVISION_EMP_DLG_TL_BASIS_BERATER, "berater_anteil")
-        tl_basis_combo.addItem(texts.PROVISION_EMP_DLG_TL_BASIS_GESAMT, "gesamt_courtage")
-        if model.tl_basis == "gesamt_courtage":
-            tl_basis_combo.setCurrentIndex(1)
-        form.addRow(texts.PROVISION_MODEL_COL_TL_BASIS + ":", tl_basis_combo)
+        factors_cb = QCheckBox(texts.PM_SETTINGS_FACTOR_FORMULA)
+        factors_cb.setChecked(model.apply_split_factors)
+        form.addRow(texts.PM_SETTINGS_SECTION_SPLIT + ":", factors_cb)
 
         desc_edit = QLineEdit(model.description or "")
         form.addRow(texts.PROVISION_MODEL_COL_DESC + ":", desc_edit)
@@ -945,7 +995,8 @@ class VerteilschluesselPanel(QWidget):
                 'name': name_edit.text().strip() or model.name,
                 'commission_rate': rate_spin.value(),
                 'tl_rate': tl_rate_spin.value() if tl_rate_spin.value() > 0 else None,
-                'tl_basis': tl_basis_combo.currentData(),
+                'tl_basis': 'gesamt_courtage',
+                'apply_split_factors': 1 if factors_cb.isChecked() else 0,
                 'description': desc_edit.text().strip() or None,
                 'gueltig_ab': gueltig_ab.date().toString("yyyy-MM-dd"),
             }
