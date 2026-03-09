@@ -9,7 +9,7 @@ Zum Umschalten: USE_DEV_SERVER auf True oder False setzen.
 # ================================================================
 # >>> HIER UMSCHALTEN <<<
 # ================================================================
-USE_DEV_SERVER: bool = True
+USE_DEV_SERVER: bool = False
 # ================================================================
 
 
