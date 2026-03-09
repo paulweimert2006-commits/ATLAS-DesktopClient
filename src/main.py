@@ -78,7 +78,7 @@ def setup_logging():
     log_file = os.path.join(log_dir, "bipro_gdv.log")
     
     root_logger = logging.getLogger()
-    root_logger.setLevel(logging.INFO)
+    root_logger.setLevel(logging.DEBUG)
     
     formatter = logging.Formatter(LOG_FORMAT)
     

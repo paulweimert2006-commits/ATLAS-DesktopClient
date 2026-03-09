@@ -272,11 +272,12 @@ class UserEditDialog(QDialog):
     """Dialog zum Erstellen/Bearbeiten eines Nutzers (v2 mit Modul-Freischaltungen)."""
 
     def __init__(self, parent=None, user_data: Dict = None, is_new: bool = True,
-                 auth_api=None, **kwargs):
+                 auth_api=None, available_modules: list = None, **kwargs):
         super().__init__(parent)
         self._user_data = user_data or {}
         self._is_new = is_new
         self._auth_api = auth_api
+        self._available_modules = available_modules
         self._actor_is_super = False
         if auth_api and auth_api.current_user:
             self._actor_is_super = auth_api.current_user.is_super_admin
@@ -341,18 +342,27 @@ class UserEditDialog(QDialog):
         modules_layout.addWidget(hint)
 
         self._module_widgets = {}
-        all_modules = [
-            ('core', 'Core'),
-            ('provision', 'Provision'),
-            ('workforce', 'Workforce'),
-            ('system', 'Administration'),
-        ]
+        if self._available_modules:
+            all_modules = [
+                m for m in self._available_modules if m.get('is_active')
+            ]
+        else:
+            all_modules = [
+                {'module_key': 'core', 'name': 'Core', 'roles': []},
+                {'module_key': 'provision', 'name': 'Provision', 'roles': []},
+                {'module_key': 'workforce', 'name': 'Workforce', 'roles': []},
+                {'module_key': 'system', 'name': 'Administration', 'roles': []},
+            ]
         current_modules = {
             m.get('module_key'): m
             for m in self._user_data.get('modules', [])
         }
 
-        for mod_key, mod_name in all_modules:
+        for mod in all_modules:
+            mod_key = mod.get('module_key', '')
+            mod_name = mod.get('name', mod_key)
+            mod_roles = mod.get('roles', [])
+
             row = QHBoxLayout()
             cb = QCheckBox(mod_name)
             mod_data = current_modules.get(mod_key, {})
@@ -371,8 +381,20 @@ class UserEditDialog(QDialog):
                 level_combo.setToolTip(texts.HIERARCHY_CANNOT_PROMOTE)
             row.addWidget(level_combo)
 
+            role_combo = QComboBox()
+            role_combo.addItem("—", None)
+            current_role_ids = [r.get('id') for r in mod_data.get('roles', [])]
+            for role in mod_roles:
+                role_combo.addItem(role.get('name', role.get('role_key', '')), role.get('id'))
+            if current_role_ids:
+                for i in range(role_combo.count()):
+                    if role_combo.itemData(i) in current_role_ids:
+                        role_combo.setCurrentIndex(i)
+                        break
+            row.addWidget(role_combo)
+
             modules_layout.addLayout(row)
-            self._module_widgets[mod_key] = (cb, level_combo)
+            self._module_widgets[mod_key] = (cb, level_combo, role_combo)
 
         layout.addWidget(modules_group)
 
@@ -416,12 +438,17 @@ class UserEditDialog(QDialog):
 
     def get_data(self) -> Dict:
         modules = []
-        for mod_key, (cb, level_combo) in self._module_widgets.items():
-            modules.append({
+        for mod_key, widgets in self._module_widgets.items():
+            cb, level_combo, role_combo = widgets
+            entry = {
                 'module_key': mod_key,
                 'is_enabled': 1 if cb.isChecked() else 0,
                 'access_level': level_combo.currentData(),
-            })
+            }
+            selected_role_id = role_combo.currentData()
+            if selected_role_id is not None:
+                entry['role_id'] = selected_role_id
+            modules.append(entry)
 
         data = {
             'email': self.email_edit.text().strip(),

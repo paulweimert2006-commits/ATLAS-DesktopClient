@@ -32,6 +32,7 @@ _IDX_DASHBOARD = 0
 _IDX_CORE = 1
 _IDX_LEDGER = 2
 _IDX_WORKFORCE = 3
+_IDX_CONTACT = 4
 
 
 class AppRouter(QMainWindow):
@@ -61,6 +62,7 @@ class AppRouter(QMainWindow):
         self._core_widget = None      # MainHub, lazy
         self._ledger_widget = None    # ProvisionHub, lazy
         self._workforce_widget = None # WorkforceHub, lazy
+        self._contact_widget = None   # ContactHub, lazy
 
         app_version = self._read_version()
 
@@ -75,6 +77,8 @@ class AppRouter(QMainWindow):
                 visible.append("ledger")
             if user.has_module("workforce"):
                 visible.append("workforce")
+            if user.has_module("contact"):
+                visible.append("contact")
             if user.is_module_admin("core"):
                 visible.append("core_admin")
             if user.is_module_admin("provision"):
@@ -96,6 +100,7 @@ class AppRouter(QMainWindow):
         self._stack.addWidget(QWidget())  # Placeholder Index 1 (Core)
         self._stack.addWidget(QWidget())  # Placeholder Index 2 (Ledger)
         self._stack.addWidget(QWidget())  # Placeholder Index 3 (Workforce)
+        self._stack.addWidget(QWidget())  # Placeholder Index 4 (Contact)
 
         self._toast_manager = ToastManager(self)
         self._active_module: str | None = None
@@ -151,6 +156,16 @@ class AppRouter(QMainWindow):
             self._ensure_workforce()
             self._stack.setCurrentIndex(_IDX_WORKFORCE)
             self._start_module_heartbeat(self._workforce_widget, "workforce")
+        elif module_id == "contact":
+            user = self.auth_api.current_user
+            if not user or not user.has_module('contact'):
+                logger.warning("Contact-Zugriff ohne Modul-Freischaltung abgelehnt")
+                return
+            self._ensure_contact()
+            self._stack.setCurrentIndex(_IDX_CONTACT)
+            self._start_module_heartbeat(self._contact_widget, "contact")
+        elif module_id == "contact_admin":
+            self._open_module_admin("contact", "Contact")
         elif module_id == "core_admin":
             self._open_module_admin("core", "Core")
         elif module_id == "ledger_admin":
@@ -260,6 +275,8 @@ class AppRouter(QMainWindow):
             return self._ledger_widget
         elif self._active_module == "workforce":
             return self._workforce_widget
+        elif self._active_module == "contact":
+            return self._contact_widget
         return None
 
     # ------------------------------------------------------------------
@@ -300,12 +317,16 @@ class AppRouter(QMainWindow):
             visible.append("ledger")
         if user.has_module("workforce"):
             visible.append("workforce")
+        if user.has_module("contact"):
+            visible.append("contact")
         if user.is_module_admin("core"):
             visible.append("core_admin")
         if user.is_module_admin("provision"):
             visible.append("ledger_admin")
         if user.is_module_admin("workforce"):
             visible.append("workforce_admin")
+        if user.is_module_admin("contact"):
+            visible.append("contact_admin")
 
         self._dashboard.set_modules(visible)
 
@@ -313,6 +334,7 @@ class AppRouter(QMainWindow):
             "core": lambda: user.has_module("core"),
             "ledger": lambda: user.has_module("provision"),
             "workforce": lambda: user.has_module("workforce"),
+            "contact": lambda: user.has_module("contact"),
         }
 
         if self._active_module and self._active_module in module_check:
@@ -375,6 +397,36 @@ class AppRouter(QMainWindow):
         self._stack.removeWidget(old)
         old.deleteLater()
         self._stack.insertWidget(_IDX_WORKFORCE, widget)
+
+    def _ensure_contact(self):
+        if self._contact_widget is not None:
+            return
+        try:
+            from ui.contact.contact_hub import ContactHub
+            widget = ContactHub(self.api_client, self.auth_api)
+            widget._toast_manager = self._toast_manager
+            widget.back_requested.connect(self.show_dashboard)
+        except Exception:
+            logger.exception("ContactHub konnte nicht geladen werden, zeige Placeholder")
+            widget = self._create_contact_placeholder()
+        self._contact_widget = widget
+
+        old = self._stack.widget(_IDX_CONTACT)
+        self._stack.removeWidget(old)
+        old.deleteLater()
+        self._stack.insertWidget(_IDX_CONTACT, widget)
+
+    def _create_contact_placeholder(self) -> QWidget:
+        w = QWidget()
+        layout = QVBoxLayout(w)
+        layout.setAlignment(Qt.AlignCenter)
+        lbl = QLabel(texts.CONTACT_DASHBOARD_TILE)
+        lbl.setStyleSheet(
+            f"font-family: {FONT_BODY}; font-size: {FONT_SIZE_BODY}; color: {PRIMARY_500};"
+        )
+        layout.addWidget(lbl, alignment=Qt.AlignCenter)
+        w.setStyleSheet(f"background-color: {BG_PRIMARY};")
+        return w
 
     def _create_workforce_placeholder(self) -> QWidget:
         w = QWidget()
