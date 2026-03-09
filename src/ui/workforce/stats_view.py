@@ -6,9 +6,9 @@ Donut-Charts (Geschlecht, Beschaeftigungsart), Bar-Charts (Abteilungen, Trends).
 Langzeit-Modus: Ein-/Austritte pro Jahr, durchschnittliche Beschaeftigungsdauer.
 """
 
-import json
 import logging
 import os
+import re
 from datetime import datetime
 
 import matplotlib
@@ -532,6 +532,10 @@ class StatsView(QWidget):
                 self._toast_manager.show_error(texts.WF_STATS_EXPORT_ERROR)
 
     @staticmethod
+    def _sanitize_label(val) -> str:
+        return re.sub(r'[^\w\s\-./äöüÄÖÜß()]', '', str(val))
+
+    @staticmethod
     def _build_export_content(stats: dict, stats_type: str) -> str:
         lines = [
             texts.WF_STATS_TITLE,
@@ -556,21 +560,21 @@ class StatsView(QWidget):
             if gd.get('labels'):
                 lines.append(f"--- {texts.WF_STATS_GENDER} ---")
                 for lbl, val in zip(gd['labels'], gd['data']):
-                    lines.append(f"  {str(lbl)}: {int(val)}")
+                    lines.append(f"  {StatsView._sanitize_label(lbl)}: {int(val)}")
                 lines.append("")
 
             dd = stats.get('department_distribution', {})
             if dd.get('labels'):
                 lines.append(f"--- {texts.WF_STATS_DEPARTMENTS} ---")
                 for lbl, val in zip(dd['labels'], dd['data']):
-                    lines.append(f"  {str(lbl)}: {int(val)}")
+                    lines.append(f"  {StatsView._sanitize_label(lbl)}: {int(val)}")
                 lines.append("")
 
             jlt = stats.get('join_leave_trends', {})
             if jlt.get('labels'):
                 lines.append(f"--- {texts.WF_STATS_TRENDS} ---")
                 for i, lbl in enumerate(jlt['labels']):
-                    lines.append(f"  {str(lbl)}: +{int(jlt['joins'][i])} / -{int(jlt['leaves'][i])}")
+                    lines.append(f"  {StatsView._sanitize_label(lbl)}: +{int(jlt['joins'][i])} / -{int(jlt['leaves'][i])}")
         else:
             ad = stats.get('average_duration', {})
             lines.append(f"{texts.WF_STATS_AVG_DURATION}: {float(ad.get('years', 0))} {texts.WF_STATS_YEARS}")
@@ -580,7 +584,7 @@ class StatsView(QWidget):
             if ee.get('labels'):
                 lines.append(f"--- {texts.WF_STATS_ENTRIES_EXITS} ---")
                 for i, lbl in enumerate(ee['labels']):
-                    lines.append(f"  {str(lbl)}: +{int(ee['entries'][i])} / -{int(ee['exits'][i])}")
+                    lines.append(f"  {StatsView._sanitize_label(lbl)}: +{int(ee['entries'][i])} / -{int(ee['exits'][i])}")
 
         return '\n'.join(lines)
 
