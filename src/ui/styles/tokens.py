@@ -197,6 +197,7 @@ SPACING_XL = "32px"   # Bereichs-Trennung
 RADIUS_SM = "4px"
 RADIUS_MD = "6px"
 RADIUS_LG = "8px"
+RADIUS_XL = "12px"
 
 # =============================================================================
 # SHADOWS
@@ -547,11 +548,15 @@ def get_application_stylesheet() -> str:
             border: 1px solid {BORDER_DEFAULT};
             border-radius: {RADIUS_MD};
             padding: 4px;
+            font-family: {FONT_BODY};
+            font-size: {FONT_SIZE_BODY};
+            color: {TEXT_PRIMARY};
         }}
         
         QMenu::item {{
             padding: 8px 24px;
             border-radius: {RADIUS_SM};
+            background-color: transparent;
         }}
         
         QMenu::item:selected {{
@@ -826,6 +831,20 @@ def get_application_stylesheet() -> str:
             border: 1px solid {BORDER_DEFAULT};
             border-radius: {RADIUS_MD};
             selection-background-color: {PRIMARY_100};
+            padding: 4px;
+            outline: none;
+        }}
+        
+        QComboBox QAbstractItemView::item {{
+            padding: 6px 12px;
+            border-radius: {RADIUS_SM};
+            color: {TEXT_PRIMARY};
+            font-family: {FONT_BODY};
+            font-size: {FONT_SIZE_BODY};
+        }}
+        
+        QComboBox QAbstractItemView::item:selected {{
+            background-color: {PRIMARY_100};
         }}
         
         /* ================================================================== */

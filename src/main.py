@@ -13,9 +13,9 @@ import logging
 import ctypes
 from logging.handlers import RotatingFileHandler
 
-from PySide6.QtWidgets import QApplication, QDialog, QMainWindow, QMessageBox
-from PySide6.QtCore import Qt, QtMsgType, qInstallMessageHandler, QThread, Signal
-from PySide6.QtGui import QFont, QFontDatabase, QIcon
+from PySide6.QtWidgets import QApplication, QDialog, QMainWindow, QMessageBox, QMenu, QComboBox
+from PySide6.QtCore import Qt, QtMsgType, qInstallMessageHandler, QThread, Signal, QEvent
+from PySide6.QtGui import QFont, QFontDatabase, QIcon, QColor, QPalette
 
 LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
@@ -98,11 +98,11 @@ def setup_logging():
         )
         file_handler.setFormatter(formatter)
         root_logger.addHandler(file_handler)
-        root_logger.info(f"File-Logging aktiviert: {log_file}")
+        root_logger.debug(f"File-Logging aktiviert: {log_file}")
     except (OSError, PermissionError) as e:
         root_logger.warning(f"File-Logging nicht moeglich, nur Console: {e}")
 
-    root_logger.info(f"Log-Kategorien: {get_status_summary()}")
+    root_logger.debug(f"Log-Kategorien: {get_status_summary()}")
 
 setup_logging()
 
@@ -203,7 +203,7 @@ def load_embedded_fonts():
                 if font_id != -1:
                     families = QFontDatabase.applicationFontFamilies(font_id)
                     loaded_fonts.extend(families)
-                    logger.info(f"Schriftart geladen: {filename} -> {', '.join(families)}")
+                    logger.debug(f"Schriftart geladen: {filename} -> {', '.join(families)}")
                 else:
                     logger.warning(f"Schriftart konnte nicht geladen werden: {filename}")
 
@@ -241,7 +241,7 @@ def _acquire_single_instance() -> bool:
             logger.warning("Andere Instanz laeuft bereits (Mutex existiert)")
             return False
         
-        logger.info("Single-Instance Mutex erstellt")
+        logger.debug("Single-Instance Mutex erstellt")
         return True
     except Exception as e:
         logger.warning(f"Single-Instance Check fehlgeschlagen: {e}")
@@ -262,18 +262,40 @@ def release_single_instance_mutex():
             kernel32.ReleaseMutex(_instance_mutex)
             kernel32.CloseHandle(_instance_mutex)
             _instance_mutex = None
-            logger.info("Single-Instance Mutex freigegeben (fuer Update)")
+            logger.debug("Single-Instance Mutex freigegeben (fuer Update)")
         except Exception as e:
             logger.warning(f"Mutex-Freigabe fehlgeschlagen: {e}")
+
+
+class _OpaquePopupApp(QApplication):
+    """QApplication-Subklasse die opake Popups auf Windows erzwingt."""
+
+    _WHITE = QColor(255, 255, 255)
+
+    def notify(self, obj, event):
+        etype = event.type()
+        if etype == QEvent.Show or etype == QEvent.Polish:
+            is_popup = isinstance(obj, QMenu) or (
+                hasattr(obj, 'inherits') and obj.inherits("QComboBoxPrivateContainer")
+            )
+            if is_popup:
+                obj.setAttribute(Qt.WA_TranslucentBackground, False)
+                obj.setAttribute(Qt.WA_NoSystemBackground, False)
+                obj.setAutoFillBackground(True)
+                pal = obj.palette()
+                pal.setColor(QPalette.Window, self._WHITE)
+                pal.setColor(QPalette.Base, self._WHITE)
+                obj.setPalette(pal)
+        return super().notify(obj, event)
 
 
 def main():
     """Hauptfunktion zum Starten der Anwendung."""
     # Qt Message Handler installieren (vor QApplication, um alle Warnungen abzufangen)
     qInstallMessageHandler(_qt_message_handler)
-    
-    app = QApplication(sys.argv)
-    
+
+    app = _OpaquePopupApp(sys.argv)
+
     # Single-Instance Check
     if not _acquire_single_instance():
         from i18n import de as _texts
@@ -293,12 +315,12 @@ def main():
     icon_path = os.path.join(_src_dir, "ui", "assets", "icon.ico")
     if os.path.exists(icon_path):
         app.setWindowIcon(QIcon(icon_path))
-        logger.info(f"App-Icon geladen: {icon_path}")
+        logger.debug(f"App-Icon geladen: {icon_path}")
     
     # Eingebettete Schriftarten laden (aus assets/fonts/)
     loaded_fonts = load_embedded_fonts()
     if loaded_fonts:
-        logger.info(f"Eingebettete Schriftarten: {', '.join(set(loaded_fonts))}")
+        logger.debug(f"Eingebettete Schriftarten: {', '.join(set(loaded_fonts))}")
 
     # Font-Preset aus lokalen Einstellungen laden
     from PySide6.QtCore import QSettings
@@ -306,16 +328,16 @@ def main():
     _local = QSettings("ACENCIA GmbH", "ACENCIA ATLAS")
     _font_preset = _local.value("appearance/font_preset", "classic")
     _tok.apply_font_preset(_font_preset)
-    logger.info(f"Font-Preset: {_font_preset}")
+    logger.debug(f"Font-Preset: {_font_preset}")
 
     # Standard-Font setzen (basierend auf aktuellem Body-Preset)
     _body_font_name = _tok.FONT_BODY.split(",")[0].strip().strip('"')
     if QFontDatabase.hasFamily(_body_font_name):
         default_font = QFont(_body_font_name, 10)
-        logger.info(f"Verwende {_body_font_name}")
+        logger.debug(f"Verwende {_body_font_name}")
     else:
         default_font = QFont("Segoe UI", 10)
-        logger.info(f"{_body_font_name} nicht verfuegbar, Fallback auf Segoe UI")
+        logger.debug(f"{_body_font_name} nicht verfuegbar, Fallback auf Segoe UI")
     app.setFont(default_font)
 
     # ACENCIA Corporate Design Stylesheet

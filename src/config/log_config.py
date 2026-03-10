@@ -20,11 +20,11 @@ import logging
 LOG_CATEGORIES: dict[str, dict] = {
     'ui_log': {
         'prefixes': ['ui.'],
-        'enabled': True,
+        'enabled': False,
     },
     'backend_log': {
         'prefixes': ['api.', 'bipro.', 'workforce.api_client', 'contact.api_client'],
-        'enabled': True,
+        'enabled': False,
     },
     'logic_log': {
         'prefixes': [
@@ -32,19 +32,19 @@ LOG_CATEGORIES: dict[str, dict] = {
             'presenters.', 'workforce.services.', 'workforce.providers.',
             'workforce.workers',
         ],
-        'enabled': True,
+        'enabled': False,
     },
     'parser_log': {
         'prefixes': ['parser.'],
-        'enabled': True,
+        'enabled': False,
     },
     'system_log': {
         'prefixes': ['main', 'config.', 'qt', 'background_updater', 'provision.performance'],
-        'enabled': True,
+        'enabled': False,
     },
     'heartbeat_log': {
         'prefixes': ['heartbeat.'],
-        'enabled': True,
+        'enabled': False,
     },
 }
 

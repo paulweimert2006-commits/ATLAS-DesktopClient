@@ -11,7 +11,7 @@ import logging
 
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QFrame, QPushButton,
-    QStackedWidget, QLabel,
+    QStackedWidget, QLabel, QApplication,
 )
 from PySide6.QtCore import Signal, Qt, QTimer, QThreadPool, QObject, QRunnable
 
@@ -518,7 +518,6 @@ class ContactHub(QWidget):
 
     def _bring_window_to_front(self):
         """Bringt das Hauptfenster zuverlaessig in den Vordergrund (Windows-robust)."""
-        from PySide6.QtWidgets import QApplication
         win = self.window()
         if not win:
             return

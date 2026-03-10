@@ -9,7 +9,7 @@ per QStackedWidget umschaltet. Ersetzt die direkte MainHub-Instanziierung in mai
 import os
 import logging
 
-from PySide6.QtWidgets import QMainWindow, QStackedWidget, QWidget, QVBoxLayout, QLabel, QMessageBox
+from PySide6.QtWidgets import QMainWindow, QStackedWidget, QWidget, QVBoxLayout, QLabel, QMessageBox, QApplication
 from PySide6.QtGui import QIcon
 from PySide6.QtCore import Qt
 
@@ -422,7 +422,6 @@ class AppRouter(QMainWindow):
 
     def _bring_window_to_front(self):
         """Bringt das Hauptfenster zuverlaessig in den Vordergrund."""
-        from PySide6.QtWidgets import QApplication
         if self.isMinimized():
             self.setWindowState(self.windowState() & ~Qt.WindowMinimized)
         self.raise_()
