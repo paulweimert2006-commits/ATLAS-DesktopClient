@@ -1,0 +1,3 @@
+## 2026-03-10 - Keyboard Shortcuts & Accessibility for BiPRO
+**Learning:** BiPRO data retrieval is a core workflow for both power users (efficiency) and standard users (guidance). Shortcuts like F5 and Shift+F5 improve efficiency, while `setAccessibleName` ensures screen reader compatibility for high-traffic action areas. Immediate context (showing the status card on load) reduces cognitive load by answering "what happened last?" without user interaction.
+**Action:** Always include `setAccessibleName` for primary buttons and append shortcut hints to tooltips in localized UI views. Ensure initial view states reflect available historical data (e.g., QSettings) immediately.
