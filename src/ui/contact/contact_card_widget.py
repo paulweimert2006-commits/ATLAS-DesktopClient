@@ -287,5 +287,5 @@ class ContactCard(QFrame):
             return
         # + muss URL-encodiert werden (%2B), da + in Query-Strings als Leerzeichen interpretiert wird
         users_value = f"4:{number}"
-        uri = f"msteams:/l/call/0/0?users={urllib.parse.quote(users_value, safe='')}"
+        uri = f"msteams://l/call/0/0?users={urllib.parse.quote(users_value, safe='')}"
         QDesktopServices.openUrl(QUrl(uri))

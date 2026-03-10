@@ -408,6 +408,7 @@ class AppRouter(QMainWindow):
         if not user or not user.has_module('contact'):
             logger.warning("[CALL-POP] Contact-Modul nicht freigeschaltet")
             return
+        self._stop_active_module_heartbeat()
         self._ensure_contact()
         self._stack.setCurrentIndex(_IDX_CONTACT)
         self._start_module_heartbeat(self._contact_widget, "contact")

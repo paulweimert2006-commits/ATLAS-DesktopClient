@@ -20,11 +20,11 @@ import logging
 LOG_CATEGORIES: dict[str, dict] = {
     'ui_log': {
         'prefixes': ['ui.'],
-        'enabled': False,
+        'enabled': True,
     },
     'backend_log': {
         'prefixes': ['api.', 'bipro.', 'workforce.api_client', 'contact.api_client'],
-        'enabled': False,
+        'enabled': True,
     },
     'logic_log': {
         'prefixes': [
@@ -32,19 +32,19 @@ LOG_CATEGORIES: dict[str, dict] = {
             'presenters.', 'workforce.services.', 'workforce.providers.',
             'workforce.workers',
         ],
-        'enabled': False,
+        'enabled': True,
     },
     'parser_log': {
         'prefixes': ['parser.'],
-        'enabled': False,
+        'enabled': True,
     },
     'system_log': {
         'prefixes': ['main', 'config.', 'qt', 'background_updater', 'provision.performance'],
-        'enabled': False,
+        'enabled': True,
     },
     'heartbeat_log': {
         'prefixes': ['heartbeat.'],
-        'enabled': False,
+        'enabled': True,
     },
 }
 
@@ -64,6 +64,9 @@ class CategoryFilter(logging.Filter):
         self._categories = categories
 
     def filter(self, record: logging.LogRecord) -> bool:
+        # Wenn alle Kategorien deaktiviert: komplette Console-Stille (inkl. root, urllib3, keyring, etc.)
+        if all(not c['enabled'] for c in self._categories.values()):
+            return False
         name = record.name
         for cat_config in self._categories.values():
             if not cat_config['enabled']:
