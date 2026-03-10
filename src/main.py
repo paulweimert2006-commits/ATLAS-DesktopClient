@@ -402,6 +402,24 @@ def main():
         window.show()
         
         _setup_post_login(window)
+
+        # Call-Pop Listener starten (Teams PSTN Screen-Pop)
+        _call_pop_listener = None
+        user = auth_api.current_user
+        if user and user.has_module('contact'):
+            try:
+                from call_pop_listener import CallPopListener
+                from config.server_config import API_BASE_URL
+                _origin = API_BASE_URL.rsplit('/api', 1)[0]
+                _call_pop_listener = CallPopListener(allowed_origin=_origin)
+                _call_pop_listener.call_pop_requested.connect(window.handle_call_pop)
+                _call_pop_listener.call_pop_refocus.connect(window.handle_call_pop_refocus)
+                if _call_pop_listener.start():
+                    logger.info("Call-Pop Listener gestartet")
+                else:
+                    logger.warning("Call-Pop Listener konnte nicht gestartet werden")
+            except Exception as e:
+                logger.warning("Call-Pop Listener nicht verfuegbar: %s", e)
         
         sys.exit(app.exec())
     else:

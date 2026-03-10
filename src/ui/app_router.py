@@ -398,6 +398,36 @@ class AppRouter(QMainWindow):
         old.deleteLater()
         self._stack.insertWidget(_IDX_WORKFORCE, widget)
 
+    # ------------------------------------------------------------------
+    # Call-Pop (Teams PSTN Screen-Pop)
+    # ------------------------------------------------------------------
+
+    def handle_call_pop(self, phone: str):
+        """Eingehender PSTN-Anruf: Contact-Modul oeffnen und Overlay triggern."""
+        user = self.auth_api.current_user
+        if not user or not user.has_module('contact'):
+            logger.warning("[CALL-POP] Contact-Modul nicht freigeschaltet")
+            return
+        self._ensure_contact()
+        self._stack.setCurrentIndex(_IDX_CONTACT)
+        self._start_module_heartbeat(self._contact_widget, "contact")
+        if hasattr(self._contact_widget, 'handle_call_pop'):
+            self._contact_widget.handle_call_pop(phone)
+        self._bring_window_to_front()
+
+    def handle_call_pop_refocus(self):
+        """Duplikat-Anruf: nur Fenster nach vorne."""
+        self._bring_window_to_front()
+
+    def _bring_window_to_front(self):
+        """Bringt das Hauptfenster zuverlaessig in den Vordergrund."""
+        from PySide6.QtWidgets import QApplication
+        if self.isMinimized():
+            self.setWindowState(self.windowState() & ~Qt.WindowMinimized)
+        self.raise_()
+        self.activateWindow()
+        QApplication.alert(self, 5000)
+
     def _ensure_contact(self):
         if self._contact_widget is not None:
             return

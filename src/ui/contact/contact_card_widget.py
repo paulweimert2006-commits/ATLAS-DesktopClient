@@ -4,12 +4,14 @@ Contact Card Widget - QFrame-basierte Karte zur Darstellung eines Kontakts.
 Zeigt Anzeigename, Geburtsdatum, Telefon, Tags und Mini-Historie.
 """
 
+import urllib.parse
+
 from PySide6.QtWidgets import (
     QFrame, QVBoxLayout, QHBoxLayout, QLabel,
-    QSizePolicy, QMenu,
+    QSizePolicy, QMenu, QApplication,
 )
-from PySide6.QtCore import Signal, Qt
-from PySide6.QtGui import QAction
+from PySide6.QtCore import Signal, Qt, QUrl
+from PySide6.QtGui import QAction, QDesktopServices
 
 from ui.styles.tokens import (
     PRIMARY_500, PRIMARY_900, ACCENT_500,
@@ -31,14 +33,58 @@ def _format_display_name(contact: dict) -> str:
 
 def _get_primary_phone(contact: dict) -> str:
     """Liefert die bevorzugte oder erste Telefonnummer."""
-    phones = contact.get('phones') or contact.get('phone_numbers') or []
-    if isinstance(phones, list) and phones:
-        preferred = [p for p in phones if isinstance(p, dict) and p.get('is_preferred')]
-        p = preferred[0] if preferred else phones[0]
-        if isinstance(p, dict):
-            return p.get('phone_raw', '') or p.get('phone', '') or ''
-        return str(p)
+    phones = _get_all_phones(contact)
+    if phones:
+        return phones[0][0]  # (raw, type_key) -> raw
     return contact.get('phone', '') or ''
+
+
+def _get_all_phones(contact: dict) -> list[tuple[str, str]]:
+    """Liefert alle Telefonnummern als [(phone_raw, phone_type), ...], bevorzugte zuerst."""
+    phones = contact.get('phones') or contact.get('phone_numbers') or []
+    if not isinstance(phones, list) or not phones:
+        single = (contact.get('phone', '') or '').strip()
+        return [(single, 'other')] if single else []
+    result = []
+    for p in sorted(phones, key=lambda x: (0 if (isinstance(x, dict) and x.get('is_preferred')) else 1)):
+        if not isinstance(p, dict):
+            continue
+        raw = (p.get('phone_raw', '') or p.get('phone', '') or '').strip()
+        if raw:
+            result.append((raw, p.get('phone_type', 'other')))
+    return result
+
+
+_PHONE_TYPE_LABELS = {
+    'mobile': texts.CONTACT_PHONE_TYPE_MOBILE,
+    'landline': texts.CONTACT_PHONE_TYPE_LANDLINE,
+    'business_direct': texts.CONTACT_PHONE_TYPE_BUSINESS,
+    'central': texts.CONTACT_PHONE_TYPE_CENTRAL,
+    'whatsapp': texts.CONTACT_PHONE_TYPE_WHATSAPP,
+    'other': texts.CONTACT_PHONE_TYPE_OTHER,
+}
+
+
+def _phone_for_teams(phone: str, default_country: str = '+49') -> str:
+    """Formatiert Nummer fuer Teams: E.164 ohne Leerzeichen (+49123456789)."""
+    if not phone:
+        return ''
+    digits = ''.join(c for c in str(phone) if c.isdigit() or c == '+')
+    if not digits:
+        return ''
+    if digits.startswith('+'):
+        return '+' + ''.join(c for c in digits[1:] if c.isdigit())
+    if digits.startswith('00'):
+        return '+' + ''.join(c for c in digits[2:] if c.isdigit())
+    if digits.startswith('0'):
+        return default_country + ''.join(c for c in digits[1:] if c.isdigit())
+    # Bereits mit Laendervorwahl (z.B. 491756955231): nur + davorsetzen
+    if digits.startswith('49') and len(digits) >= 11:
+        return '+' + digits
+    # International (z.B. 4312345678): + davorsetzen
+    if len(digits) >= 10:
+        return '+' + digits
+    return default_country + digits
 
 
 def _format_date(value) -> str:
@@ -202,7 +248,44 @@ class ContactCard(QFrame):
         if not self._contact_id:
             return
         menu = QMenu(self)
+        phones = _get_all_phones(self._contact)
+        if phones:
+            if len(phones) == 1:
+                raw, ptype = phones[0]
+                teams_number = _phone_for_teams(raw)
+                call_action = QAction(texts.CONTACT_CALL_TEAMS, self)
+                call_action.triggered.connect(lambda: self._call_with_teams(teams_number))
+                menu.addAction(call_action)
+                copy_action = QAction(texts.CONTACT_COPY_NUMBER, self)
+                copy_action.triggered.connect(lambda: self._copy_number(teams_number))
+                menu.addAction(copy_action)
+            else:
+                call_sub = menu.addMenu(texts.CONTACT_CALL_TEAMS)
+                copy_sub = menu.addMenu(texts.CONTACT_COPY_NUMBER)
+                for raw, ptype in phones:
+                    teams_number = _phone_for_teams(raw)
+                    label = _PHONE_TYPE_LABELS.get(ptype, ptype)
+                    call_a = QAction(label, self)
+                    call_a.triggered.connect(lambda _, n=teams_number: self._call_with_teams(n))
+                    call_sub.addAction(call_a)
+                    copy_a = QAction(label, self)
+                    copy_a.triggered.connect(lambda _, n=teams_number: self._copy_number(n))
+                    copy_sub.addAction(copy_a)
         delete_action = QAction(texts.CONTACT_DELETE, self)
         delete_action.triggered.connect(lambda: self.delete_requested.emit(self._contact_id))
         menu.addAction(delete_action)
         menu.exec(self.mapToGlobal(pos))
+
+    def _copy_number(self, number: str):
+        if number:
+            clipboard = QApplication.clipboard()
+            clipboard.setText(number)
+
+    def _call_with_teams(self, number: str):
+        """Oeffnet Teams mit Anruf-Dialog (msteams://l/call/0/0?users=4:+...)."""
+        if not number:
+            return
+        # + muss URL-encodiert werden (%2B), da + in Query-Strings als Leerzeichen interpretiert wird
+        users_value = f"4:{number}"
+        uri = f"msteams:/l/call/0/0?users={urllib.parse.quote(users_value, safe='')}"
+        QDesktopServices.openUrl(QUrl(uri))
