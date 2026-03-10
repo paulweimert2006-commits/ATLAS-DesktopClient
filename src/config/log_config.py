@@ -64,6 +64,9 @@ class CategoryFilter(logging.Filter):
         self._categories = categories
 
     def filter(self, record: logging.LogRecord) -> bool:
+        # Wenn alle Kategorien deaktiviert: komplette Console-Stille (inkl. root, urllib3, keyring, etc.)
+        if all(not c['enabled'] for c in self._categories.values()):
+            return False
         name = record.name
         for cat_config in self._categories.values():
             if not cat_config['enabled']:

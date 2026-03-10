@@ -89,6 +89,18 @@ class ContactApiClient:
             raise
         return {'contacts': [], 'companies': []}
 
+    def find_contact_by_phone(self, phone: str) -> dict | None:
+        """Exakter Lookup per E.164-Nummer (Call-Pop). Gibt Kontakt-dict oder None zurueck."""
+        try:
+            resp = self.client.get('/contact/by-phone', params={'phone': phone})
+            if resp.get('success'):
+                data = resp.get('data', {})
+                if data.get('found') is False:
+                    return None
+                return data
+        except APIError:
+            return None
+
     # ── Phones ────────────────────────────────────────────────
 
     def add_phone(self, contact_id: int, data: dict) -> dict:

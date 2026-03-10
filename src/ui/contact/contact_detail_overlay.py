@@ -324,9 +324,10 @@ class ContactDetailOverlay(QWidget):
 
     # ── Show / Close ──
 
-    def show_contact(self, contact_id: int):
+    def show_contact(self, contact_id: int, open_call_dialog_immediately: bool = False):
         self._cid = contact_id
         self._is_new = False
+        self._open_call_dialog_pending = open_call_dialog_immediately
         self._worker = _LoadWorker(self._api, contact_id)
         self._worker.finished.connect(self._on_loaded)
         self._worker.error.connect(self._on_error)

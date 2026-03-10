@@ -488,5 +488,45 @@ class ContactHub(QWidget):
     def _on_overlay_closed(self):
         pass
 
+    # ------------------------------------------------------------------
+    # Call-Pop (Teams PSTN Screen-Pop)
+    # ------------------------------------------------------------------
+
+    def handle_call_pop(self, phone: str):
+        """Eingehender PSTN-Anruf: Kontakt suchen, Overlay oeffnen, Anruf-Dialog."""
+        logger.info("[CALL-POP] handle_call_pop: %s", phone)
+        try:
+            result = self._contact_api.find_contact_by_phone(phone)
+        except Exception as e:
+            logger.error("[CALL-POP] Suche fehlgeschlagen: %s", e)
+            result = None
+
+        overlay = self._get_or_create_overlay()
+        if result and result.get('id'):
+            cid = result['id']
+            name = result.get('display_name', '')
+            logger.info("[CALL-POP] Kontakt gefunden: id=%s name=%s", cid, name)
+            overlay.show_contact(cid, open_call_dialog_immediately=True)
+        else:
+            logger.info("[CALL-POP] Kein Kontakt fuer %s → neuer Kontakt", phone)
+            overlay.show_new_contact(prefill_phone=phone, open_call_dialog_immediately=True)
+
+    def handle_call_pop_refocus(self):
+        """Duplikat-Anruf: nur Fenster nach vorne holen."""
+        logger.info("[CALL-POP] Refocus (Duplikat)")
+        self._bring_window_to_front()
+
+    def _bring_window_to_front(self):
+        """Bringt das Hauptfenster zuverlaessig in den Vordergrund (Windows-robust)."""
+        from PySide6.QtWidgets import QApplication
+        win = self.window()
+        if not win:
+            return
+        if win.isMinimized():
+            win.setWindowState(win.windowState() & ~Qt.WindowMinimized)
+        win.raise_()
+        win.activateWindow()
+        QApplication.alert(win, 5000)
+
     def _refresh_all_silent(self):
         self._refresh_all(show_toast=False)
