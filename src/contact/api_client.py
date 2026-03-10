@@ -355,6 +355,25 @@ class ContactApiClient:
     def delete_custom_value(self, cv_id: int) -> None:
         self.client.delete(f'/contact/custom-values/{cv_id}')
 
+    # ── Merge (Dubletten zusammenfuehren) ──────────────────────
+
+    def merge_contacts(self, target_id: int, source_id: int,
+                       field_resolutions: dict) -> dict:
+        try:
+            resp = self.client.post(
+                f'/contact/contacts/{target_id}/merge',
+                json_data={
+                    'source_id': source_id,
+                    'field_resolutions': field_resolutions,
+                },
+            )
+            if resp.get('success'):
+                return resp.get('data', {})
+        except APIError as e:
+            logger.error(f"Fehler beim Zusammenfuehren: {e}")
+            raise
+        return {}
+
     # ── Duplicate Check ───────────────────────────────────────
 
     def check_duplicates(self, phone: str = '', email: str = '',
