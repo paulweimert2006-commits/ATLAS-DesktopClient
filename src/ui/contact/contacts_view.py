@@ -182,6 +182,7 @@ class ContactsView(QWidget):
         self._grid_container = QWidget()
         self._grid_layout = QGridLayout(self._grid_container)
         self._grid_layout.setSpacing(12)
+        self._grid_layout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
         self._scroll.setWidget(self._grid_container)
         layout.addWidget(self._scroll)
 
