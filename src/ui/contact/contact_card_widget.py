@@ -8,7 +8,7 @@ import urllib.parse
 
 from PySide6.QtWidgets import (
     QFrame, QVBoxLayout, QHBoxLayout, QLabel,
-    QSizePolicy, QMenu, QApplication,
+    QSizePolicy, QMenu, QApplication, QPushButton,
 )
 from PySide6.QtCore import Signal, Qt, QUrl
 from PySide6.QtGui import QAction, QDesktopServices
@@ -16,9 +16,32 @@ from PySide6.QtGui import QAction, QDesktopServices
 from ui.styles.tokens import (
     PRIMARY_500, PRIMARY_900, ACCENT_500,
     FONT_BODY, FONT_SIZE_BODY, FONT_SIZE_CAPTION, FONT_SIZE_H2,
-    BG_PRIMARY, BORDER_DEFAULT, RADIUS_MD, FONT_WEIGHT_BOLD,
+    BG_PRIMARY, BORDER_DEFAULT, RADIUS_XL, FONT_WEIGHT_BOLD,
 )
 from i18n import de as texts
+
+_CONTACT_TYPE_STYLE = {
+    'person': {
+        'bg': '#F3E5F5', 'accent': '#9C27B0',
+        'icon': texts.CONTACT_CARD_ICON_PERSON, 'badge': texts.CONTACT_TYPE_PERSON,
+    },
+    'employee': {
+        'bg': '#E3F2FD', 'accent': '#1976D2',
+        'icon': texts.CONTACT_CARD_ICON_EMPLOYEE, 'badge': texts.CONTACT_TYPE_EMPLOYEE,
+    },
+    'asp': {
+        'bg': '#FFEBEE', 'accent': '#D32F2F',
+        'icon': texts.CONTACT_CARD_ICON_ASP, 'badge': texts.CONTACT_TYPE_ASP,
+    },
+    'temporary': {
+        'bg': '#FFF8E1', 'accent': '#F9A825',
+        'icon': texts.CONTACT_CARD_ICON_TEMPORARY, 'badge': texts.CONTACT_TYPE_TEMPORARY,
+    },
+}
+_DEFAULT_TYPE_STYLE = {
+    'bg': '#FFFFFF', 'accent': '#9E9E9E',
+    'icon': texts.CONTACT_CARD_ICON_OTHER, 'badge': texts.CONTACT_TYPE_OTHER,
+}
 
 
 def _format_display_name(contact: dict) -> str:
@@ -87,6 +110,21 @@ def _phone_for_teams(phone: str, default_country: str = '+49') -> str:
     return default_country + digits
 
 
+def call_with_teams(number: str) -> None:
+    """Startet einen Teams-PSTN-Anruf fuer die uebergebene E.164-Nummer."""
+    if not number:
+        return
+    users_value = f"4:{number}"
+    uri = f"https://teams.microsoft.com/l/call/0/0?users={urllib.parse.quote(users_value, safe='')}"
+    QDesktopServices.openUrl(QUrl(uri))
+
+
+def copy_phone_to_clipboard(number: str) -> None:
+    """Kopiert eine Telefonnummer in die Zwischenablage."""
+    if number:
+        QApplication.clipboard().setText(number)
+
+
 def _format_date(value) -> str:
     """Formatiert ein ISO-Datum (yyyy-MM-dd) ins deutsche Format (dd.MM.yyyy)."""
     if not value:
@@ -122,30 +160,39 @@ class ContactCard(QFrame):
         self._setup_ui()
 
     def _setup_ui(self):
+        ct = self._contact.get('contact_type', 'person') or 'person'
+        ts = _CONTACT_TYPE_STYLE.get(ct, _DEFAULT_TYPE_STYLE)
+
         self.setFixedWidth(280)
-        self.setMinimumHeight(140)
-        self.setMaximumHeight(240)
+        self.setMinimumHeight(95)
+        self.setMaximumHeight(170)
         self.setCursor(Qt.PointingHandCursor)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
 
         self.setObjectName("contact_card")
         self.setStyleSheet(f"""
             QFrame#contact_card {{
-                background-color: {BG_PRIMARY};
+                background-color: {ts['bg']};
                 border: 1px solid {BORDER_DEFAULT};
-                border-radius: {RADIUS_MD};
+                border-left: 4px solid {ts['accent']};
+                border-radius: {RADIUS_XL};
             }}
             QFrame#contact_card:hover {{
                 border-color: {ACCENT_500};
+                border-left: 4px solid {ts['accent']};
             }}
         """)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(6)
+        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setSpacing(4)
 
         header = QHBoxLayout()
-        header.setSpacing(8)
+        header.setSpacing(6)
+
+        type_icon = QLabel(ts['icon'])
+        type_icon.setStyleSheet("font-size: 18pt; padding: 0; margin: 0;")
+        header.addWidget(type_icon, 0, Qt.AlignTop)
 
         name_lbl = QLabel(_format_display_name(self._contact))
         name_lbl.setStyleSheet(f"""
@@ -157,11 +204,44 @@ class ContactCard(QFrame):
         name_lbl.setWordWrap(True)
         header.addWidget(name_lbl, 1)
 
+        right_col = QVBoxLayout()
+        right_col.setSpacing(2)
+        right_col.setContentsMargins(0, 0, 0, 0)
+
+        companies = self._contact.get('companies') or []
+        company_name = companies[0].get('company_name', '') if companies else ''
+        if company_name:
+            company_lbl = QLabel(company_name)
+            company_lbl.setStyleSheet(f"""
+                font-family: {FONT_BODY};
+                font-size: {FONT_SIZE_CAPTION};
+                color: {PRIMARY_500};
+            """)
+            company_lbl.setAlignment(Qt.AlignRight | Qt.AlignTop)
+            right_col.addWidget(company_lbl)
+
         if self._contact.get('is_favorite'):
             star = QLabel("\u2605")
             star.setStyleSheet(f"color: {ACCENT_500}; font-size: 14pt;")
-            header.addWidget(star, 0, Qt.AlignTop | Qt.AlignRight)
+            star.setAlignment(Qt.AlignRight)
+            right_col.addWidget(star)
+
+        right_col.addStretch()
+        header.addLayout(right_col)
         layout.addLayout(header)
+
+        badge = QLabel(ts['badge'])
+        badge.setStyleSheet(f"""
+            background-color: {ts['accent']};
+            color: white;
+            padding: 1px 8px;
+            border-radius: 4px;
+            font-size: {FONT_SIZE_CAPTION};
+            font-family: {FONT_BODY};
+            font-weight: 600;
+        """)
+        badge.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
+        layout.addWidget(badge)
 
         dob = self._contact.get('date_of_birth') or self._contact.get('birth_date')
         if dob:
@@ -175,13 +255,29 @@ class ContactCard(QFrame):
 
         phone = _get_primary_phone(self._contact)
         if phone:
+            phone_row = QHBoxLayout()
+            phone_row.setSpacing(6)
             phone_lbl = QLabel(phone)
             phone_lbl.setStyleSheet(f"""
                 font-family: {FONT_BODY};
                 font-size: {FONT_SIZE_BODY};
                 color: {PRIMARY_500};
             """)
-            layout.addWidget(phone_lbl)
+            phone_row.addWidget(phone_lbl, 1)
+
+            call_btn = QPushButton("\U0001F4DE")
+            call_btn.setToolTip(texts.CONTACT_CALL_TEAMS)
+            call_btn.setFixedSize(28, 28)
+            call_btn.setCursor(Qt.PointingHandCursor)
+            call_btn.setStyleSheet(
+                "QPushButton { background-color: #4CAF50; border: none; border-radius: 14px; "
+                "font-size: 13pt; color: white; padding: 0; } "
+                "QPushButton:hover { background-color: #388E3C; }"
+            )
+            teams_number = _phone_for_teams(phone)
+            call_btn.clicked.connect(lambda _, n=teams_number: call_with_teams(n))
+            phone_row.addWidget(call_btn, 0, Qt.AlignVCenter)
+            layout.addLayout(phone_row)
 
         tags = self._contact.get('tags') or []
         if tags:
@@ -203,7 +299,7 @@ class ContactCard(QFrame):
             tags_row.addStretch()
             layout.addLayout(tags_row)
 
-        layout.addSpacing(8)
+        layout.addSpacing(4)
 
         last_call_at = self._contact.get('last_call_at')
         last_call_by = self._contact.get('last_call_by')
@@ -277,15 +373,7 @@ class ContactCard(QFrame):
         menu.exec(self.mapToGlobal(pos))
 
     def _copy_number(self, number: str):
-        if number:
-            clipboard = QApplication.clipboard()
-            clipboard.setText(number)
+        copy_phone_to_clipboard(number)
 
     def _call_with_teams(self, number: str):
-        """Oeffnet Teams mit Anruf-Dialog (msteams://l/call/0/0?users=4:+...)."""
-        if not number:
-            return
-        # + muss URL-encodiert werden (%2B), da + in Query-Strings als Leerzeichen interpretiert wird
-        users_value = f"4:{number}"
-        uri = f"msteams://l/call/0/0?users={urllib.parse.quote(users_value, safe='')}"
-        QDesktopServices.openUrl(QUrl(uri))
+        call_with_teams(number)
