@@ -1,0 +1,3 @@
+## 2026-03-05 - Enhanced Accessibility and Keyboard Shortcuts for BiPRO View
+**Learning:** In PySide6, using `setAccessibleName` with localized strings from `i18n` ensures screen readers provide clear context for primary action buttons. Additionally, tying keyboard shortcuts directly to `QPushButton` via `setShortcut` provides global triggers while maintaining a clean UI, but requires explicit tooltip hints for discoverability.
+**Action:** Always include keyboard shortcut hints in parentheses within tooltips (e.g., "Abrufen (F5)") and set `setAccessibleName` for all primary interactive elements to meet professional UX standards.

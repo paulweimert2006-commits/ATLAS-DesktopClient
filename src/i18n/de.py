@@ -155,6 +155,14 @@ BIPRO_HEADER = "Datenabruf"
 BIPRO_VIEW_TOGGLE_STANDARD = "Standard"
 BIPRO_VIEW_TOGGLE_ADMIN = "Admin"
 
+# Accessibility
+ACC_FETCH_ALL = "Alle neuen Dokumente von allen Versicherern und E-Mail-Konten abrufen"
+ACC_MAIL_FETCH = "E-Mail-Postfächer nach neuen Dokumenten durchsuchen"
+ACC_FETCH_SINGLE = "Dokumente für den aktuell ausgewählten Versicherer abrufen"
+ACC_REFRESH_PREVIEW = "Vorschau manuell aktualisieren (max. 1x / 30s)"
+ACC_ADMIN_TOGGLE = "Zwischen Standard- und Expertenansicht umschalten"
+ACC_ACK_ALL = "Alle gelisteten Lieferungen bei den Versicherern quittieren und vom Server löschen"
+
 BIPRO_FETCH_SHIPMENTS = "Lieferungen abrufen"
 BIPRO_NO_SHIPMENTS = "Keine neuen Lieferungen"
 BIPRO_SHIPMENT = "Lieferung"
