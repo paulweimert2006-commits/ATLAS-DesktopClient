@@ -434,13 +434,22 @@ class SupportFeedbackPanel(QWidget):
         if reply != QMessageBox.StandardButton.Yes:
             return
 
-        try:
-            api = SupportAPI(self._api_client)
-            api.delete_feedback(feedback_id)
+        from ui.async_worker import AsyncWorker
+        self._del_fb_worker = AsyncWorker(
+            lambda: SupportAPI(self._api_client).delete_feedback(feedback_id),
+            parent=self,
+        )
+
+        def _on_ok(_):
             if self._toast_manager:
                 self._toast_manager.show_success(texts.ADMIN_SUPPORT_DELETED)
             self._load_feedbacks()
-        except Exception as e:
-            logger.error("Feedback loeschen: %s", e)
+
+        def _on_err(msg):
+            logger.error("Feedback loeschen: %s", msg)
             if self._toast_manager:
                 self._toast_manager.show_error(texts.ADMIN_SUPPORT_DELETE_ERROR)
+
+        self._del_fb_worker.finished.connect(_on_ok)
+        self._del_fb_worker.error.connect(_on_err)
+        self._del_fb_worker.start()

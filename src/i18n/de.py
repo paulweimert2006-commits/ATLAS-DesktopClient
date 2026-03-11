@@ -3652,3 +3652,46 @@ ADMIN_SUPPORT_DETAIL_UPDATED = "Feedback aktualisiert"
 ADMIN_SUPPORT_TYPE_FEEDBACK = "Feedback"
 ADMIN_SUPPORT_TYPE_FEATURE = "Feature"
 ADMIN_SUPPORT_TYPE_BUG = "Problem"
+
+# === Sidebar ===
+SIDEBAR_SECTION_MODULES = "MODULE"
+SIDEBAR_SECTION_SYSTEM = "SYSTEM"
+SIDEBAR_NAV_DASHBOARD = "Dashboard"
+SIDEBAR_NAV_SETTINGS = "Einstellungen"
+SIDEBAR_NAV_ADMIN = "Verwaltung"
+SIDEBAR_ADMIN_TOOLTIP = "Modul-Verwaltung"
+
+# === Dashboard KPI-Karten ===
+KPI_INBOX = "Dokumente im Eingang"
+KPI_BIPRO = "BiPRO-Lieferungen"
+KPI_SMARTSCAN = "SmartScan Eingaenge"
+KPI_CLARIFICATIONS = "Offene Klaerfaelle"
+KPI_MESSAGES = "Neue Mitteilungen"
+KPI_WORKFORCE = "Offene Mitarbeiter"
+KPI_CONTACTS = "Letzte Kontakte"
+KPI_LOADING = "\u2013"
+
+# === Dashboard Schnellaktionen ===
+QUICK_ACTIONS_TITLE = "Schnellaktionen"
+QA_OPEN_INBOX = "Eingang oeffnen"
+QA_BIPRO_FETCH = "BiPRO Abruf starten"
+QA_UPLOAD_DOC = "Dokument hochladen"
+QA_SEARCH_PHONE = "Nummer suchen"
+QA_NEW_CALL_NOTE = "Gespraechsnotiz"
+QA_SEARCH_EMPLOYEE = "Mitarbeiter suchen"
+QA_CHECK_PROVISION = "Provision pruefen"
+
+# === Dashboard Aktivitaets-Feed ===
+ACTIVITY_FEED_TITLE = "Letzte Aktivitaet"
+ACTIVITY_FEED_ALL = "Alle anzeigen"
+ACTIVITY_FEED_EMPTY = "Keine aktuellen Aktivitaeten."
+
+# === Dashboard Mitteilungen (kompakt) ===
+DASHBOARD_MESSAGES_ALL = "Alle anzeigen ({count})"
+DASHBOARD_NO_MODULES_HINT = "Aktuell sind keine Module freigeschaltet. Bitte kontaktieren Sie Ihren Administrator."
+
+# === Dashboard Header ===
+DASHBOARD_ROLE_ADMIN = "Admin"
+DASHBOARD_ROLE_SUPER_ADMIN = "Super-Admin"
+DASHBOARD_ROLE_USER = "Benutzer"
+DASHBOARD_LAST_LOGIN = "Letzter Login: {time}"

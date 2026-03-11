@@ -2853,21 +2853,10 @@ class BiPROView(QWidget):
         return str(config_dir / 'certificates.json')
     
     def _save_certificate_config(self, connection_id: int, cert_data: dict):
-        """Speichert Zertifikats-Konfiguration lokal (UTF-8 fuer Sonderzeichen)."""
+        """Speichert Zertifikats-Konfiguration lokal im Hintergrund."""
         import json
         config_path = self._get_certificate_config_path()
-        
-        # Bestehende Konfiguration laden
-        config = {}
-        if os.path.exists(config_path):
-            try:
-                with open(config_path, 'r', encoding='utf-8') as f:
-                    config = json.load(f)
-            except (json.JSONDecodeError, IOError, OSError) as e:
-                self._log(f"Warnung: Bestehende Zertifikat-Konfiguration konnte nicht geladen werden: {e}")
-        
-        # Neue Konfiguration speichern (PFX oder JKS)
-        config[str(connection_id)] = {
+        entry = {
             'cert_format': cert_data.get('cert_format', 'pfx'),
             'pfx_path': cert_data.get('pfx_path', ''),
             'pfx_password': cert_data.get('pfx_password', ''),
@@ -2876,21 +2865,38 @@ class BiPROView(QWidget):
             'jks_alias': cert_data.get('jks_alias', ''),
             'jks_key_password': cert_data.get('jks_key_password', '')
         }
-        
-        # Explizit UTF-8 fuer Sonderzeichen im Passwort
-        with open(config_path, 'w', encoding='utf-8') as f:
-            json.dump(config, f, indent=2, ensure_ascii=False)
-        
-        self._log(f"Zertifikat-Konfiguration gespeichert")
-    
+
+        class _W(QThread):
+            def __init__(self, path, cid, data, parent=None):
+                super().__init__(parent)
+                self._path, self._cid, self._data = path, str(cid), data
+            def run(self):
+                try:
+                    config = {}
+                    if os.path.exists(self._path):
+                        try:
+                            with open(self._path, 'r', encoding='utf-8') as f:
+                                config = json.load(f)
+                        except (json.JSONDecodeError, IOError, OSError):
+                            pass
+                    config[self._cid] = self._data
+                    with open(self._path, 'w', encoding='utf-8') as f:
+                        json.dump(config, f, indent=2, ensure_ascii=False)
+                except Exception as e:
+                    logger.error(f"Zertifikat-Konfiguration speichern: {e}")
+
+        self._cert_save_worker = _W(config_path, connection_id, entry, parent=self)
+        self._cert_save_worker.start()
+        self._log("Zertifikat-Konfiguration gespeichert")
+
     def _load_certificate_config(self, connection_id: int) -> dict:
-        """Laedt PFX-Konfiguration fuer eine Verbindung (UTF-8 fuer Sonderzeichen)."""
+        """Laedt PFX-Konfiguration fuer eine Verbindung (synchron, kleine Datei)."""
         import json
         config_path = self._get_certificate_config_path()
-        
+
         if not os.path.exists(config_path):
             return {}
-        
+
         try:
             with open(config_path, 'r', encoding='utf-8') as f:
                 config = json.load(f)
@@ -4026,66 +4032,55 @@ class BiPROView(QWidget):
             success=True
         )
         
-        # Ins Archiv hochladen
+        # Ins Archiv hochladen (async)
         vu_name = self._current_connection.vu_name if self._current_connection else None
-        # BiPRO-Kategorie fuer regelbasierte Sortierung (z.B. "300001000" = Provision -> Courtage)
         bipro_category = getattr(self, '_current_shipment_category', '')
-        upload_failed = 0
-        
-        problem_pdfs = 0
-        for doc in documents:
-            try:
-                # Bestimme Validierungsstatus
-                validation_status = doc.get('validation_status')
-                is_valid = doc.get('is_valid', True)
-                
-                # Bei PDF-Problemen: In Sonstige-Box mit Reason-Code
-                if not is_valid and validation_status:
-                    problem_pdfs += 1
-                    self._log(f"    [PDF-PROBLEM] {doc.get('filename', 'unbekannt')}: {validation_status}")
-                    
-                    self.docs_api.upload(
-                        file_path=doc['filepath'],
-                        source_type='bipro_auto',
-                        shipment_id=shipment_id,
-                        vu_name=vu_name,
-                        bipro_category=bipro_category,
-                        validation_status=validation_status,
-                        box_type='sonstige'
-                    )
-                else:
-                    self.docs_api.upload(
-                        file_path=doc['filepath'],
-                        source_type='bipro_auto',
-                        shipment_id=shipment_id,
-                        vu_name=vu_name,
-                        bipro_category=bipro_category,
-                        validation_status=validation_status if validation_status else 'OK'
-                    )
-            except Exception as e:
-                upload_failed += 1
-                self._log(f"    [!] Upload fehlgeschlagen: {doc.get('filename', 'unbekannt')}: {e}")
-        
-        # Raw XML hochladen (ohne Kategorie, da Rohdatei)
-        try:
-            self.docs_api.upload(
-                file_path=raw_xml_path,
-                source_type='bipro_auto',
-                shipment_id=shipment_id,
-                vu_name=vu_name,
-                box_type='roh'  # XML Rohdateien direkt ins Roh-Archiv
-            )
-        except Exception as e:
-            self._log(f"    [!] Raw XML Upload fehlgeschlagen: {e}")
-        
-        # Status-Meldung mit Upload-Info
-        if upload_failed > 0 or problem_pdfs > 0:
-            self._log(f"  [!] Lieferung {shipment_id}: {len(documents)} Dokument(e), {upload_failed} Upload(s) fehlgeschlagen, {problem_pdfs} PDF-Problem(e)")
-        else:
-            self._log(f"  [OK] Lieferung {shipment_id}: {len(documents)} Dokument(e)")
-        
-        # Nächste Lieferung
-        self._process_download_queue()
+        docs_api = self.docs_api
+
+        class _UploadWorker(QThread):
+            done = Signal(int, int, int)
+            log_msg = Signal(str)
+            def __init__(self, api, docs, xml_path, sid, vn, cat, parent=None):
+                super().__init__(parent)
+                self._api, self._docs, self._xml = api, docs, xml_path
+                self._sid, self._vn, self._cat = sid, vn, cat
+            def run(self):
+                failed = problems = 0
+                for doc in self._docs:
+                    try:
+                        vs = doc.get('validation_status')
+                        if not doc.get('is_valid', True) and vs:
+                            problems += 1
+                            self.log_msg.emit(f"    [PDF-PROBLEM] {doc.get('filename', 'unbekannt')}: {vs}")
+                            self._api.upload(file_path=doc['filepath'], source_type='bipro_auto',
+                                shipment_id=self._sid, vu_name=self._vn, bipro_category=self._cat,
+                                validation_status=vs, box_type='sonstige')
+                        else:
+                            self._api.upload(file_path=doc['filepath'], source_type='bipro_auto',
+                                shipment_id=self._sid, vu_name=self._vn, bipro_category=self._cat,
+                                validation_status=vs if vs else 'OK')
+                    except Exception as e:
+                        failed += 1
+                        self.log_msg.emit(f"    [!] Upload fehlgeschlagen: {doc.get('filename', 'unbekannt')}: {e}")
+                try:
+                    self._api.upload(file_path=self._xml, source_type='bipro_auto',
+                        shipment_id=self._sid, vu_name=self._vn, box_type='roh')
+                except Exception as e:
+                    self.log_msg.emit(f"    [!] Raw XML Upload fehlgeschlagen: {e}")
+                self.done.emit(len(self._docs), failed, problems)
+
+        def _on_upload_done(total, failed, problems):
+            if failed > 0 or problems > 0:
+                self._log(f"  [!] Lieferung {shipment_id}: {total} Dokument(e), {failed} Upload(s) fehlgeschlagen, {problems} PDF-Problem(e)")
+            else:
+                self._log(f"  [OK] Lieferung {shipment_id}: {total} Dokument(e)")
+            self._process_download_queue()
+
+        w = _UploadWorker(docs_api, documents, raw_xml_path, shipment_id, vu_name, bipro_category, parent=self)
+        w.log_msg.connect(self._log)
+        w.done.connect(_on_upload_done)
+        self._queue_upload_worker = w
+        w.start()
     
     def _on_queue_download_error(self, error: str):
         """Callback für Queue-Download Fehler."""
@@ -4157,100 +4152,74 @@ class BiPROView(QWidget):
         
         self._log(f"Lieferung {shipment_id}: {len(documents)} Dokument(e) heruntergeladen")
         
-        # ===== AUTOMATISCH INS DOKUMENTENARCHIV HOCHLADEN =====
-        uploaded = 0
-        failed = 0
-        
-        # VU-Name für Metadaten
+        # ===== AUTOMATISCH INS DOKUMENTENARCHIV HOCHLADEN (async) =====
         vu_name = self._current_connection.vu_name if self._current_connection else None
-        # BiPRO-Kategorie fuer regelbasierte Sortierung
         bipro_category = getattr(self, '_current_shipment_category', '')
-        
-        # 1. Alle Dokumente hochladen
-        problem_pdfs = 0
-        for doc in documents:
-            try:
-                # Bestimme Validierungsstatus
-                validation_status = doc.get('validation_status')
-                is_valid = doc.get('is_valid', True)
-                
-                # Bei PDF-Problemen: In Sonstige-Box mit Reason-Code
-                if not is_valid and validation_status:
-                    problem_pdfs += 1
-                    result = self.docs_api.upload(
-                        file_path=doc['filepath'],
-                        source_type='bipro_auto',
-                        shipment_id=shipment_id,
-                        vu_name=vu_name,
-                        bipro_category=bipro_category,
-                        validation_status=validation_status,
-                        box_type='sonstige'
-                    )
-                    if result:
-                        uploaded += 1
-                        self._log(f"  [PDF-PROBLEM] {doc['filename']} -> Sonstige ({validation_status})")
-                else:
-                    result = self.docs_api.upload(
-                        file_path=doc['filepath'],
-                        source_type='bipro_auto',
-                        shipment_id=shipment_id,
-                        vu_name=vu_name,
-                        bipro_category=bipro_category,
-                        validation_status=validation_status if validation_status else 'OK'
-                    )
-                    if result:
-                        uploaded += 1
-                        self._log(f"  [OK] {doc['filename']} -> Archiv (BiPRO: {vu_name}, Kat: {bipro_category})")
-                        # Fruehe Text-Extraktion fuer Inhaltsduplikat-Erkennung
-                        try:
-                            from services.early_text_extract import extract_and_save_text
-                            extract_and_save_text(self.docs_api, result.id, doc['filepath'], doc['filename'])
-                        except Exception:
-                            pass
-                    else:
+        docs_api = self.docs_api
+
+        class _SingleUploadWorker(QThread):
+            done = Signal(int, int)
+            log_msg = Signal(str)
+            def __init__(self, api, docs, xml_path, sid, vn, cat, parent=None):
+                super().__init__(parent)
+                self._api, self._docs, self._xml = api, docs, xml_path
+                self._sid, self._vn, self._cat = sid, vn, cat
+            def run(self):
+                uploaded = failed = 0
+                for doc in self._docs:
+                    try:
+                        vs = doc.get('validation_status')
+                        if not doc.get('is_valid', True) and vs:
+                            r = self._api.upload(file_path=doc['filepath'], source_type='bipro_auto',
+                                shipment_id=self._sid, vu_name=self._vn, bipro_category=self._cat,
+                                validation_status=vs, box_type='sonstige')
+                            if r:
+                                uploaded += 1
+                                self.log_msg.emit(f"  [PDF-PROBLEM] {doc['filename']} -> Sonstige ({vs})")
+                        else:
+                            r = self._api.upload(file_path=doc['filepath'], source_type='bipro_auto',
+                                shipment_id=self._sid, vu_name=self._vn, bipro_category=self._cat,
+                                validation_status=vs if vs else 'OK')
+                            if r:
+                                uploaded += 1
+                                self.log_msg.emit(f"  [OK] {doc['filename']} -> Archiv (BiPRO: {self._vn}, Kat: {self._cat})")
+                                try:
+                                    from services.early_text_extract import extract_and_save_text
+                                    extract_and_save_text(self._api, r.id, doc['filepath'], doc['filename'])
+                                except Exception:
+                                    pass
+                            else:
+                                failed += 1
+                                self.log_msg.emit(f"  [!] {doc['filename']} Upload fehlgeschlagen")
+                    except Exception as e:
                         failed += 1
-                        self._log(f"  [!] {doc['filename']} Upload fehlgeschlagen")
-            except Exception as e:
-                failed += 1
-                self._log(f"  [!] {doc['filename']}: {e}")
-        
-        # 2. Raw XML auch hochladen (direkt ins Roh-Archiv)
-        try:
-            result = self.docs_api.upload(
-                file_path=raw_xml_path,
-                source_type='bipro_auto',
-                shipment_id=shipment_id,
-                vu_name=vu_name,
-                box_type='roh'  # XML Rohdateien direkt ins Roh-Archiv
-            )
-            if result:
-                uploaded += 1
-                self._log(f"  [OK] Raw XML -> Roh-Archiv (BiPRO: {vu_name})")
-        except Exception as e:
-            self._log(f"  [!] Raw XML Upload: {e}")
-        
-        # Signal für Archiv-Aktualisierung
-        if uploaded > 0:
-            self.documents_uploaded.emit()
-        
-        # ===== ZUSAMMENFASSUNG =====
-        self._log(f"Archiv-Upload: {uploaded} erfolgreich, {failed} fehlgeschlagen")
-        
-        # Detaillierte Info-Box
-        doc_list = "\n".join([f"  - {d['filename']} ({d['size']:,} Bytes)" for d in documents])
-        if not doc_list:
-            doc_list = "  (Keine Dokumente in der Lieferung)"
-        
-        # Status-Meldung
-        if failed > 0:
-            self._toast_manager.show_warning(
-                f"Lieferung {shipment_id}: {uploaded} erfolgreich, {failed} fehlgeschlagen.\n"
-                f"Bitte Protokoll prüfen!"
-            )
-        else:
-            self._toast_manager.show_success(
-                f"Lieferung {shipment_id}: Alle {uploaded} Datei(en) ins Dokumentenarchiv übertragen."
-            )
+                        self.log_msg.emit(f"  [!] {doc['filename']}: {e}")
+                try:
+                    r = self._api.upload(file_path=self._xml, source_type='bipro_auto',
+                        shipment_id=self._sid, vu_name=self._vn, box_type='roh')
+                    if r:
+                        uploaded += 1
+                        self.log_msg.emit(f"  [OK] Raw XML -> Roh-Archiv (BiPRO: {self._vn})")
+                except Exception as e:
+                    self.log_msg.emit(f"  [!] Raw XML Upload: {e}")
+                self.done.emit(uploaded, failed)
+
+        def _on_single_upload_done(uploaded, failed):
+            if uploaded > 0:
+                self.documents_uploaded.emit()
+            self._log(f"Archiv-Upload: {uploaded} erfolgreich, {failed} fehlgeschlagen")
+            if failed > 0:
+                self._toast_manager.show_warning(
+                    f"Lieferung {shipment_id}: {uploaded} erfolgreich, {failed} fehlgeschlagen.\nBitte Protokoll prüfen!")
+            else:
+                self._toast_manager.show_success(
+                    f"Lieferung {shipment_id}: Alle {uploaded} Datei(en) ins Dokumentenarchiv übertragen.")
+
+        w = _SingleUploadWorker(docs_api, documents, raw_xml_path, shipment_id, vu_name, bipro_category, parent=self)
+        w.log_msg.connect(self._log)
+        w.done.connect(_on_single_upload_done)
+        self._single_upload_worker = w
+        w.start()
     
     def _on_download_error(self, error: str):
         """Callback bei Download-Fehler."""

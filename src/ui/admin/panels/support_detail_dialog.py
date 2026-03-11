@@ -806,23 +806,43 @@ class SupportDetailDialog(QDialog):
         self._note_input.clear()
 
     def _update_field(self, **kwargs):
-        try:
-            api = SupportAPI(self._api_client)
-            api.update_feedback(self._feedback_id, **kwargs)
+        has_notes = "admin_notes" in kwargs
+        fid = self._feedback_id
 
-            if "admin_notes" in kwargs:
+        class _W(QThread):
+            ok = Signal()
+            failed = Signal(str)
+            def __init__(self, api_client, feedback_id, kw, parent=None):
+                super().__init__(parent)
+                self._api_client = api_client
+                self._fid = feedback_id
+                self._kw = kw
+            def run(self):
+                try:
+                    SupportAPI(self._api_client).update_feedback(self._fid, **self._kw)
+                    self.ok.emit()
+                except Exception as e:
+                    self.failed.emit(str(e))
+
+        def _on_ok():
+            if has_notes:
                 if self._toast_manager:
                     self._toast_manager.show_success(texts.ADMIN_SUPPORT_DETAIL_NOTE_SAVED)
             else:
                 if self._toast_manager:
                     self._toast_manager.show_success(texts.ADMIN_SUPPORT_DETAIL_UPDATED)
-
             self.data_changed.emit()
             self._load_detail()
-        except Exception as e:
-            logger.error("Feedback-Update: %s", e)
+
+        def _on_fail(msg):
+            logger.error("Feedback-Update: %s", msg)
             if self._toast_manager:
                 self._toast_manager.show_error(texts.ADMIN_SUPPORT_DETAIL_UPDATE_ERROR)
+
+        self._update_worker = _W(self._api_client, fid, kwargs, parent=self)
+        self._update_worker.ok.connect(_on_ok)
+        self._update_worker.failed.connect(_on_fail)
+        self._update_worker.start()
 
     def _load_screenshot_preview(self):
         logger.info("Starte Screenshot-Download fuer Feedback #%s", self._feedback_id)
@@ -881,20 +901,6 @@ class SupportDetailDialog(QDialog):
         dlg.exec()
 
     def _download_screenshot(self):
-        if self._screenshot_bytes:
-            raw = self._screenshot_bytes
-        else:
-            try:
-                api = SupportAPI(self._api_client)
-                raw = api.get_screenshot(self._feedback_id)
-            except Exception as e:
-                logger.error("Screenshot download: %s", e)
-                if self._toast_manager:
-                    self._toast_manager.show_error(
-                        texts.ADMIN_SUPPORT_DETAIL_SCREENSHOT_SAVE_ERROR
-                    )
-                return
-
         path, _ = QFileDialog.getSaveFileName(
             self,
             texts.ADMIN_SUPPORT_DETAIL_SCREENSHOT_DOWNLOAD,
@@ -904,20 +910,47 @@ class SupportDetailDialog(QDialog):
         if not path:
             return
 
-        try:
-            with open(path, "wb") as f:
-                f.write(raw)
+        cached = self._screenshot_bytes
+
+        class _W(QThread):
+            ok = Signal(str)
+            failed = Signal(str)
+            def __init__(self, api_client, fid, dest, data, parent=None):
+                super().__init__(parent)
+                self._api_client = api_client
+                self._fid = fid
+                self._dest = dest
+                self._data = data
+            def run(self):
+                try:
+                    raw = self._data
+                    if not raw:
+                        raw = SupportAPI(self._api_client).get_screenshot(self._fid)
+                    with open(self._dest, "wb") as f:
+                        f.write(raw)
+                    self.ok.emit(os.path.basename(self._dest))
+                except Exception as e:
+                    self.failed.emit(str(e))
+
+        def _on_ok(name):
             if self._toast_manager:
                 self._toast_manager.show_success(
-                    f"{texts.ADMIN_SUPPORT_DETAIL_SCREENSHOT_SAVE_SUCCESS}: "
-                    f"{os.path.basename(path)}"
+                    f"{texts.ADMIN_SUPPORT_DETAIL_SCREENSHOT_SAVE_SUCCESS}: {name}"
                 )
-        except Exception as e:
-            logger.error("Screenshot save: %s", e)
+
+        def _on_fail(msg):
+            logger.error("Screenshot save: %s", msg)
             if self._toast_manager:
                 self._toast_manager.show_error(
                     texts.ADMIN_SUPPORT_DETAIL_SCREENSHOT_SAVE_ERROR
                 )
+
+        self._dl_screenshot_worker = _W(
+            self._api_client, self._feedback_id, path, cached, parent=self
+        )
+        self._dl_screenshot_worker.ok.connect(_on_ok)
+        self._dl_screenshot_worker.failed.connect(_on_fail)
+        self._dl_screenshot_worker.start()
 
     def _download_logs(self):
         path, _ = QFileDialog.getSaveFileName(
@@ -929,12 +962,31 @@ class SupportDetailDialog(QDialog):
         if not path:
             return
 
-        try:
-            api = SupportAPI(self._api_client)
-            api.get_logs_zip(self._feedback_id, path)
+        class _W(QThread):
+            ok = Signal(str)
+            failed = Signal(str)
+            def __init__(self, api_client, fid, dest, parent=None):
+                super().__init__(parent)
+                self._api_client = api_client
+                self._fid = fid
+                self._dest = dest
+            def run(self):
+                try:
+                    SupportAPI(self._api_client).get_logs_zip(self._fid, self._dest)
+                    self.ok.emit(os.path.basename(self._dest))
+                except Exception as e:
+                    self.failed.emit(str(e))
+
+        def _on_ok(name):
             if self._toast_manager:
-                self._toast_manager.show_success(f"Logs gespeichert: {os.path.basename(path)}")
-        except Exception as e:
-            logger.error("Logs download: %s", e)
+                self._toast_manager.show_success(f"Logs gespeichert: {name}")
+
+        def _on_fail(msg):
+            logger.error("Logs download: %s", msg)
             if self._toast_manager:
                 self._toast_manager.show_error("Logs konnten nicht gespeichert werden")
+
+        self._dl_logs_worker = _W(self._api_client, self._feedback_id, path, parent=self)
+        self._dl_logs_worker.ok.connect(_on_ok)
+        self._dl_logs_worker.failed.connect(_on_fail)
+        self._dl_logs_worker.start()

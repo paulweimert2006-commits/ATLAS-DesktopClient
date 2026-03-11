@@ -43,6 +43,7 @@ from api.releases import ReleasesAPI
 from api.model_pricing import ModelPricingAPI
 from i18n import de as texts
 
+from ui.components.module_sidebar import ModuleSidebar
 from ui.styles.tokens import (
     PRIMARY_900, PRIMARY_500, PRIMARY_0,
     ACCENT_500,
@@ -119,117 +120,49 @@ class AdminView(QWidget):
         root = QHBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
-        
-        # === Admin-Sidebar ===
-        admin_sidebar = QFrame()
-        admin_sidebar.setObjectName("admin_sidebar")
-        admin_sidebar.setFixedWidth(SIDEBAR_WIDTH_INT)
-        admin_sidebar.setStyleSheet(f"""
-            QFrame#admin_sidebar {{
-                background-color: {SIDEBAR_BG};
-                border: none;
-            }}
-        """)
-        
-        sb_layout = QVBoxLayout(admin_sidebar)
-        sb_layout.setContentsMargins(0, 8, 0, 20)
-        sb_layout.setSpacing(2)
-        
-        back_btn = QPushButton(f"  \u2190  {texts.DASHBOARD_BACK}")
-        back_btn.setCursor(Qt.PointingHandCursor)
-        back_btn.setMinimumHeight(44)
-        back_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: transparent;
-                border: none;
-                border-bottom: 1px solid rgba(136, 169, 195, 0.15);
-                padding: 10px 16px;
-                text-align: left;
-                font-family: {FONT_BODY};
-                font-size: {FONT_SIZE_BODY};
-                color: {ACCENT_500};
-                font-weight: 600;
-            }}
-            QPushButton:hover {{
-                background-color: {SIDEBAR_HOVER};
-            }}
-        """)
-        back_btn.clicked.connect(self.back_requested.emit)
-        sb_layout.addWidget(back_btn)
-        
+
+        self._sidebar_frame = ModuleSidebar("admin_sidebar", parent=self)
+        self._sidebar_frame.back_requested.connect(self.back_requested.emit)
+
         self._nav_buttons: list[AdminNavButton] = []
-        
-        def add_section(label_text: str):
-            line = QFrame()
-            line.setFixedHeight(1)
-            line.setStyleSheet(f"background-color: {ACCENT_500}; border: none; margin: 0;")
-            sb_layout.addWidget(line)
-            
-            lbl = QLabel(label_text)
-            lbl.setStyleSheet(f"""
-                background-color: transparent;
-                color: {PRIMARY_500};
-                font-size: {FONT_SIZE_CAPTION};
-                padding: 10px 20px 4px 20px;
-                letter-spacing: 1px;
-            """)
-            sb_layout.addWidget(lbl)
-        
+
         def add_nav(icon: str, text: str, index: int) -> AdminNavButton:
             btn = AdminNavButton(icon, text)
             btn.clicked.connect(lambda checked, i=index: self._navigate_to(i))
-            sb_layout.addWidget(btn)
+            self._sidebar_frame.add_widget(btn)
             self._nav_buttons.append(btn)
             return btn
-        
-        # Trennlinie oben
-        top_line = QFrame()
-        top_line.setFixedHeight(1)
-        top_line.setStyleSheet(f"background-color: {ACCENT_500}; border: none; margin: 0;")
-        sb_layout.addWidget(top_line)
-        
-        # === VERWALTUNG ===
-        lbl_verwaltung = QLabel(texts.ADMIN_SECTION_MANAGEMENT)
-        lbl_verwaltung.setStyleSheet(f"""
-            background-color: transparent;
-            color: {PRIMARY_500};
-            font-size: {FONT_SIZE_CAPTION};
-            padding: 8px 20px 4px 20px;
-            letter-spacing: 1px;
-        """)
-        sb_layout.addWidget(lbl_verwaltung)
-        self._btn_users     = add_nav("›", texts.ADMIN_TAB_USERS, 0)
-        self._btn_sessions  = add_nav("›", texts.ADMIN_TAB_SESSIONS, 1)
-        self._btn_passwords = add_nav("›", texts.ADMIN_TAB_PASSWORDS, 2)
 
-        # === MONITORING ===
-        add_section(texts.ADMIN_SECTION_MONITORING)
-        self._btn_activity = add_nav("›", texts.ADMIN_TAB_ACTIVITY, 3)
-        self._btn_costs    = add_nav("›", texts.ADMIN_TAB_COSTS, 4)
-        self._btn_releases = add_nav("›", texts.ADMIN_TAB_RELEASES, 5)
+        self._sidebar_frame.add_admin_section(texts.ADMIN_SECTION_MANAGEMENT)
+        self._btn_users     = add_nav("\u203A", texts.ADMIN_TAB_USERS, 0)
+        self._btn_sessions  = add_nav("\u203A", texts.ADMIN_TAB_SESSIONS, 1)
+        self._btn_passwords = add_nav("\u203A", texts.ADMIN_TAB_PASSWORDS, 2)
 
-        # === KOMMUNIKATION ===
-        add_section("KOMMUNIKATION")
-        self._btn_messages = add_nav("›", texts.ADMIN_MSG_TAB, 6)
+        self._sidebar_frame.add_admin_section(texts.ADMIN_SECTION_MONITORING)
+        self._btn_activity = add_nav("\u203A", texts.ADMIN_TAB_ACTIVITY, 3)
+        self._btn_costs    = add_nav("\u203A", texts.ADMIN_TAB_COSTS, 4)
+        self._btn_releases = add_nav("\u203A", texts.ADMIN_TAB_RELEASES, 5)
 
-        # === SYSTEM ===
-        add_section(texts.ADMIN_SECTION_SYSTEM)
-        self._btn_server_health = add_nav("›", texts.ADMIN_TAB_SERVER_HEALTH, 7)
-        self._btn_migrations    = add_nav("›", texts.ADMIN_TAB_MIGRATIONS, 8)
+        self._sidebar_frame.add_admin_section("KOMMUNIKATION")
+        self._btn_messages = add_nav("\u203A", texts.ADMIN_MSG_TAB, 6)
+
+        self._sidebar_frame.add_admin_section(texts.ADMIN_SECTION_SYSTEM)
+        self._btn_server_health = add_nav("\u203A", texts.ADMIN_TAB_SERVER_HEALTH, 7)
+        self._btn_migrations    = add_nav("\u203A", texts.ADMIN_TAB_MIGRATIONS, 8)
 
         user = self._auth_api.current_user if self._auth_api else None
         if user and user.is_super_admin:
-            add_section(texts.ADMIN_SUPPORT_SECTION)
-            self._btn_support = add_nav("›", texts.ADMIN_SUPPORT_NAV, 9)
+            self._sidebar_frame.add_admin_section(texts.ADMIN_SUPPORT_SECTION)
+            self._btn_support = add_nav("\u203A", texts.ADMIN_SUPPORT_NAV, 9)
 
-            add_section(texts.SRVMGMT_SECTION)
-            self._btn_server_mgmt = add_nav("›", texts.SRVMGMT_TITLE, 10)
+            self._sidebar_frame.add_admin_section(texts.SRVMGMT_SECTION)
+            self._btn_server_mgmt = add_nav("\u203A", texts.SRVMGMT_TITLE, 10)
         else:
             self._btn_support = None
             self._btn_server_mgmt = None
-        
-        sb_layout.addStretch()
-        root.addWidget(admin_sidebar)
+
+        self._sidebar_frame.add_stretch()
+        root.addWidget(self._sidebar_frame)
         
         # === Content-Bereich (QStackedWidget mit Platzhaltern) ===
         self._content_stack = QStackedWidget()

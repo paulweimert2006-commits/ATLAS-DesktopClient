@@ -2,21 +2,27 @@
 """
 ACENCIA ATLAS - App Router
 
-Shell-Fenster das zwischen Dashboard, MainHub (Core) und ProvisionHub (Ledger)
-per QStackedWidget umschaltet. Ersetzt die direkte MainHub-Instanziierung in main.py.
+Shell-Fenster mit persistenter Sidebar links und QStackedWidget rechts.
+Die Sidebar zeigt Module dynamisch basierend auf User-Berechtigungen an.
 """
 
 import os
 import logging
+import warnings
 
-from PySide6.QtWidgets import QMainWindow, QStackedWidget, QWidget, QVBoxLayout, QLabel, QMessageBox, QApplication
+from PySide6.QtWidgets import (
+    QMainWindow, QStackedWidget, QWidget, QVBoxLayout, QHBoxLayout,
+    QLabel, QMessageBox, QApplication,
+)
 from PySide6.QtGui import QIcon
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 
 from api.client import APIClient
 from api.auth import AuthAPI
 from i18n import de as texts
 from ui.dashboard_screen import DashboardScreen
+from ui.components.sidebar import AppSidebar
+from ui.components.module_sidebar import ModuleSidebar
 from ui.toast import ToastManager
 from services.global_heartbeat import GlobalHeartbeat
 from ui.styles.tokens import (
@@ -36,7 +42,7 @@ _IDX_CONTACT = 4
 
 
 class AppRouter(QMainWindow):
-    """Router-Shell: Dashboard -> Core (MainHub) / Ledger (ProvisionHub)."""
+    """Router-Shell: Sidebar links + Content-Stack rechts."""
 
     def __init__(self, api_client: APIClient, auth_api: AuthAPI):
         super().__init__()
@@ -50,19 +56,44 @@ class AppRouter(QMainWindow):
             self.setWindowTitle(f"ACENCIA ATLAS - {tenant_name} - {username}")
         else:
             self.setWindowTitle(f"ACENCIA ATLAS - {username}")
-        self.setMinimumSize(1400, 900)
+        self.setMinimumSize(1460, 900)
 
         icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "icon.ico")
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
 
-        self._stack = QStackedWidget()
-        self.setCentralWidget(self._stack)
+        # -- Central widget: Sidebar + Content Stack --
+        central = QWidget()
+        main_layout = QHBoxLayout(central)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
 
-        self._core_widget = None      # MainHub, lazy
-        self._ledger_widget = None    # ProvisionHub, lazy
-        self._workforce_widget = None # WorkforceHub, lazy
-        self._contact_widget = None   # ContactHub, lazy
+        # Sidebar
+        self._sidebar = AppSidebar()
+        self._sidebar.dashboard_requested.connect(self.show_dashboard)
+        self._sidebar.module_requested.connect(self._open_module)
+        self._sidebar.admin_requested.connect(self._open_module)
+        self._sidebar.settings_requested.connect(self._on_settings_from_sidebar)
+        self._sidebar.global_admin_requested.connect(
+            lambda: self._open_module("admin")
+        )
+        main_layout.addWidget(self._sidebar)
+
+        # Content Stack
+        self._stack = QStackedWidget()
+        main_layout.addWidget(self._stack, 1)
+
+        self.setCentralWidget(central)
+
+        self._core_widget = None
+        self._ledger_widget = None
+        self._workforce_widget = None
+        self._contact_widget = None
+
+        self._pending_module_id: str | None = None
+        self._pending_from_dashboard: bool = False
+        self._pending_exit_sidebar: ModuleSidebar | None = None
+        self._pending_action: str | None = None
 
         app_version = self._read_version()
 
@@ -92,19 +123,28 @@ class AppRouter(QMainWindow):
             username=username, app_version=app_version,
             api_client=api_client, auth_api=auth_api, tenant_name=tenant_name,
             user_email=user_email, user_account_type=user_account_type,
+            user=user,
         )
         self._dashboard.set_modules(visible)
         self._dashboard.module_requested.connect(self._open_module)
+        self._dashboard.quick_action_requested.connect(self._on_quick_action)
         self._dashboard.logout_requested.connect(self._on_logout)
         self._dashboard.forced_logout_requested.connect(self._on_forced_logout)
         self._stack.addWidget(self._dashboard)  # Index 0
 
         self._dashboard.load_messages(api_client)
+        self._dashboard.load_kpi_data()
 
         self._stack.addWidget(QWidget())  # Placeholder Index 1 (Core)
         self._stack.addWidget(QWidget())  # Placeholder Index 2 (Ledger)
         self._stack.addWidget(QWidget())  # Placeholder Index 3 (Workforce)
         self._stack.addWidget(QWidget())  # Placeholder Index 4 (Contact)
+
+        # Sidebar mit User-Daten befuellen
+        self._sidebar.set_version(app_version)
+        if user:
+            self._sidebar.set_user(user)
+        self._sidebar.set_active("dashboard")
 
         self._toast_manager = ToastManager(self)
         self._active_module: str | None = None
@@ -116,34 +156,134 @@ class AppRouter(QMainWindow):
         self._heartbeat.modules_updated.connect(self._on_modules_updated)
         self._heartbeat.start()
 
+        self._preload_queue = self._build_preload_queue(user)
+        if self._preload_queue:
+            QTimer.singleShot(0, self._preload_next_module)
+
+    # ------------------------------------------------------------------
+    # Boot-Preload
+    # ------------------------------------------------------------------
+
+    def _build_preload_queue(self, user) -> list:
+        """Baut die Liste der vorab zu ladenden Module basierend auf Nutzerrechten."""
+        queue = []
+        if user and user.has_module("core"):
+            queue.append(self._ensure_core)
+        if user and user.has_module("provision"):
+            queue.append(self._ensure_ledger)
+        if user and user.has_module("workforce"):
+            queue.append(self._ensure_workforce)
+        if user and user.has_module("contact"):
+            queue.append(self._ensure_contact)
+        return queue
+
+    def _preload_next_module(self):
+        """Laedt das naechste Modul aus der Queue (1 pro Event-Loop-Durchlauf)."""
+        if not self._preload_queue:
+            return
+        ensure_fn = self._preload_queue.pop(0)
+        try:
+            ensure_fn()
+        except Exception:
+            logger.exception("Modul-Preload fehlgeschlagen")
+        if self._preload_queue:
+            QTimer.singleShot(0, self._preload_next_module)
+
     # ------------------------------------------------------------------
     # Navigation
     # ------------------------------------------------------------------
 
     def show_dashboard(self):
         """Zeigt das Dashboard (Index 0)."""
+        old_sidebar = self._get_current_module_sidebar() if self._active_module else None
+
+        if old_sidebar:
+            self._pending_exit_sidebar = old_sidebar
+            self._safe_connect_exit(old_sidebar, self._on_exit_finished_show_dashboard)
+            old_sidebar.play_exit_animation()
+            return
+
+        self._do_show_dashboard()
+
+    def _on_exit_finished_show_dashboard(self):
+        """Callback nach Exit-Animation: zeigt das Dashboard."""
+        if self._pending_exit_sidebar:
+            self._safe_disconnect_exit(self._pending_exit_sidebar, self._on_exit_finished_show_dashboard)
+            self._pending_exit_sidebar.reset_animation_state()
+            self._pending_exit_sidebar = None
+        QTimer.singleShot(0, self._do_show_dashboard)
+
+    def _do_show_dashboard(self):
+        """Fuehrt den eigentlichen Wechsel zum Dashboard durch."""
         self._stop_active_module_heartbeat()
+        if self._core_widget is not None:
+            self._core_widget.reset_to_default_view()
         self._active_module = None
         self._stack.setCurrentIndex(_IDX_DASHBOARD)
+        self._sidebar.set_active("dashboard")
+        QTimer.singleShot(0, lambda: self._sidebar.set_expanded(True))
+
+    def _on_settings_from_sidebar(self):
+        """Oeffnet die Einstellungen im Dashboard-Overlay."""
+        self.show_dashboard()
+        self._dashboard.open_settings_overlay()
+
+    def _on_quick_action(self, module_id: str, action_id: str):
+        """Schnellaktion vom Dashboard: Modul oeffnen + Sub-Aktion ausfuehren."""
+        self._pending_action = action_id
+        self._open_module(module_id)
 
     def _open_module(self, module_id: str):
+        from_dashboard = self._active_module is None
+        from_module = not from_dashboard
+
+        old_sidebar = self._get_current_module_sidebar() if from_module else None
+
+        if old_sidebar:
+            self._pending_module_id = module_id
+            self._pending_from_dashboard = False
+            self._pending_exit_sidebar = old_sidebar
+            self._safe_connect_exit(old_sidebar, self._on_exit_finished_open_module)
+            old_sidebar.play_exit_animation()
+            return
+
+        self._do_open_module(module_id, from_dashboard)
+
+    def _on_exit_finished_open_module(self):
+        """Callback nach Exit-Animation: oeffnet das gepufferte Modul."""
+        if self._pending_exit_sidebar:
+            self._safe_disconnect_exit(self._pending_exit_sidebar, self._on_exit_finished_open_module)
+            self._pending_exit_sidebar.reset_animation_state()
+            self._pending_exit_sidebar = None
+
+        mid = self._pending_module_id
+        fd = self._pending_from_dashboard
+        self._pending_module_id = None
+        self._pending_from_dashboard = False
+        if mid:
+            self._do_open_module(mid, fd)
+
+    def _do_open_module(self, module_id: str, from_dashboard: bool):
+        """Fuehrt den eigentlichen Modulwechsel durch."""
         self._stop_active_module_heartbeat()
+
+        action = getattr(self, '_pending_action', None)
+        self._pending_action = None
 
         if module_id == "core":
             self._ensure_core()
-            self._core_widget.reset_to_default_view()
             self._stack.setCurrentIndex(_IDX_CORE)
-            self._start_module_heartbeat(self._core_widget, "core")
+            QTimer.singleShot(0, lambda: self._start_module_heartbeat(self._core_widget, "core"))
+            self._dispatch_core_action(action)
         elif module_id == "admin":
             user = self.auth_api.current_user
             if not user or not user.is_admin:
                 logger.warning("Admin-Zugriff ohne Admin-Recht abgelehnt")
                 return
             self._ensure_core()
-            self._core_widget.reset_to_default_view()
             self._stack.setCurrentIndex(_IDX_CORE)
             self._core_widget.navigate_to_admin()
-            self._start_module_heartbeat(self._core_widget, "core")
+            QTimer.singleShot(0, lambda: self._start_module_heartbeat(self._core_widget, "core"))
         elif module_id == "ledger":
             user = self.auth_api.current_user
             if not user or not user.has_module('provision'):
@@ -151,7 +291,7 @@ class AppRouter(QMainWindow):
                 return
             self._ensure_ledger()
             self._stack.setCurrentIndex(_IDX_LEDGER)
-            self._start_module_heartbeat(self._ledger_widget, "ledger")
+            QTimer.singleShot(0, lambda: self._start_module_heartbeat(self._ledger_widget, "ledger"))
         elif module_id == "workforce":
             user = self.auth_api.current_user
             if not user or not user.has_module('workforce'):
@@ -159,7 +299,7 @@ class AppRouter(QMainWindow):
                 return
             self._ensure_workforce()
             self._stack.setCurrentIndex(_IDX_WORKFORCE)
-            self._start_module_heartbeat(self._workforce_widget, "workforce")
+            QTimer.singleShot(0, lambda: self._start_module_heartbeat(self._workforce_widget, "workforce"))
         elif module_id == "contact":
             user = self.auth_api.current_user
             if not user or not user.has_module('contact'):
@@ -167,23 +307,94 @@ class AppRouter(QMainWindow):
                 return
             self._ensure_contact()
             self._stack.setCurrentIndex(_IDX_CONTACT)
-            self._start_module_heartbeat(self._contact_widget, "contact")
+            QTimer.singleShot(0, lambda: self._start_module_heartbeat(self._contact_widget, "contact"))
+            self._dispatch_contact_action(action)
         elif module_id == "contact_admin":
-            self._open_module_admin("contact", "Contact")
+            self._open_module_admin("contact", "Contact", from_dashboard)
+            return
         elif module_id == "core_admin":
-            self._open_module_admin("core", "Core")
+            self._open_module_admin("core", "Core", from_dashboard)
+            return
         elif module_id == "ledger_admin":
-            self._open_module_admin("provision", "Provision")
+            self._open_module_admin("provision", "Provision", from_dashboard)
+            return
         elif module_id == "workforce_admin":
-            self._open_module_admin("workforce", "Workforce")
+            self._open_module_admin("workforce", "Workforce", from_dashboard)
+            return
 
-    def _open_module_admin(self, module_key: str, module_name: str):
+        if self._sidebar._is_expanded:
+            self._sidebar.set_expanded(False)
+            self._sidebar.collapse_finished.connect(
+                self._play_module_sidebar_enter, Qt.SingleShotConnection
+            )
+        else:
+            self._play_module_sidebar_enter()
+
+    def _dispatch_core_action(self, action: str | None):
+        """Fuehrt Sub-Aktionen im Core-Modul aus."""
+        if not action or not self._core_widget:
+            return
+        if action == "open_inbox":
+            self._core_widget.navigate_to_inbox()
+        elif action == "upload_doc":
+            self._core_widget.navigate_to_inbox()
+            QTimer.singleShot(200, self._core_widget.open_upload_dialog)
+        elif action == "bipro_fetch":
+            self._core_widget.navigate_to_bipro()
+
+    def _dispatch_contact_action(self, action: str | None):
+        """Fuehrt Sub-Aktionen im Contact-Modul aus."""
+        if not action or not self._contact_widget:
+            return
+        if action == "new_call_note":
+            QTimer.singleShot(200, self._contact_widget.open_quick_call_note)
+
+    @staticmethod
+    def _safe_connect_exit(sidebar: 'ModuleSidebar', slot):
+        """Verbindet exit_animation_finished sicher: erst alle vorherigen Verbindungen
+        dieses Slots entfernen, dann genau einmal verbinden."""
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            try:
+                sidebar.exit_animation_finished.disconnect(slot)
+            except (RuntimeError, TypeError):
+                pass
+        sidebar.exit_animation_finished.connect(slot)
+
+    @staticmethod
+    def _safe_disconnect_exit(sidebar: 'ModuleSidebar', slot):
+        """Trennt den Slot sicher von exit_animation_finished."""
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            try:
+                sidebar.exit_animation_finished.disconnect(slot)
+            except (RuntimeError, TypeError):
+                pass
+
+    def _get_current_module_sidebar(self) -> 'ModuleSidebar | None':
+        """Findet die ModuleSidebar des aktuell sichtbaren Modul-Widgets."""
+        widget = self._stack.currentWidget()
+        if widget is None:
+            return None
+        sidebar = getattr(widget, '_sidebar', None) or getattr(widget, '_sidebar_frame', None)
+        if isinstance(sidebar, ModuleSidebar):
+            return sidebar
+        return None
+
+    def _play_module_sidebar_enter(self):
+        """Spielt die Eingangsanimation der Modul-Sidebar des aktuellen Widgets ab."""
+        sidebar = self._get_current_module_sidebar()
+        if sidebar:
+            sidebar.reset_animation_state()
+            sidebar.play_enter_animation()
+
+    def _open_module_admin(self, module_key: str, module_name: str,
+                           from_dashboard: bool = False):
         """Oeffnet die Modul-Admin-Verwaltung als eigenstaendige Ansicht."""
         user = self.auth_api.current_user
         if not user or not user.is_module_admin(module_key):
             logger.warning(f"Modul-Admin-Zugriff fuer {module_key} abgelehnt")
             return
-
         attr = f'_module_admin_{module_key}'
         if not hasattr(self, attr) or getattr(self, attr) is None:
             from ui.module_admin import ModuleAdminShell
@@ -204,6 +415,16 @@ class AppRouter(QMainWindow):
         idx = self._stack.indexOf(widget)
         self._stack.setCurrentIndex(idx)
         widget.load_data()
+
+        if from_dashboard and self._sidebar._is_expanded:
+            self._sidebar.set_expanded(False)
+            self._sidebar.collapse_finished.connect(
+                self._play_module_sidebar_enter, Qt.SingleShotConnection
+            )
+        elif from_dashboard:
+            self._play_module_sidebar_enter()
+        else:
+            self._sidebar.set_expanded(False)
 
     def _get_core_admin_config_panels(self):
         """Config-Panel-Factories fuer das Core-Modul."""
@@ -307,7 +528,7 @@ class AppRouter(QMainWindow):
             self._core_widget.on_system_status_changed(status, message)
 
     def _on_modules_updated(self):
-        """Reagiert auf Modul-Aenderungen: Dashboard-Tiles aktualisieren, ggf. Modul schliessen."""
+        """Reagiert auf Modul-Aenderungen: Sidebar + Dashboard aktualisieren, ggf. Modul schliessen."""
         user = self.auth_api.current_user
         if not user:
             return
@@ -333,6 +554,7 @@ class AppRouter(QMainWindow):
             visible.append("contact_admin")
 
         self._dashboard.set_modules(visible)
+        self._sidebar.update_modules(user)
 
         module_check = {
             "core": lambda: user.has_module("core"),
@@ -413,6 +635,7 @@ class AppRouter(QMainWindow):
             logger.warning("[CALL-POP] Contact-Modul nicht freigeschaltet")
             return
         self._stop_active_module_heartbeat()
+        self._sidebar.set_expanded(False)
         self._ensure_contact()
         self._stack.setCurrentIndex(_IDX_CONTACT)
         self._start_module_heartbeat(self._contact_widget, "contact")

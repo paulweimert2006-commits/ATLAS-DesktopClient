@@ -2,13 +2,14 @@
 """
 ACENCIA ATLAS - Dashboard / Startseite
 
-Tageszeitabhaengige Begruessung, System-Mitteilungen, Modul-Tiles (am unteren Rand),
-Uhrzeit und Abmelden.
+Informatives Dashboard mit KPI-Karten, Schnellaktionen und kompakten
+System-Mitteilungen. Module werden nicht mehr hier angezeigt sondern
+in der persistenten App-Sidebar.
 """
 
 import logging
 from datetime import datetime
-from typing import List, Dict
+from typing import List, Dict, Optional
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
@@ -38,10 +39,11 @@ from ui.styles.tokens import (
     CRITICAL, CRITICAL_LIGHT,
     INDIGO,
 )
+from api.auth import User
+from ui.components.kpi_card import KpiCardsWidget
+from ui.components.quick_actions import QuickActionsWidget
 
 logger = logging.getLogger(__name__)
-
-_TILE_LABEL = "ATLAS"
 
 _SEVERITY_COLORS = {
     'info': (INFO, INFO_LIGHT),
@@ -84,71 +86,6 @@ class _LoadMessagesWorker(QThread):
             self.finished.emit(result.get('data', []))
         except Exception:
             self.finished.emit([])
-
-
-# ======================================================================
-# Tile
-# ======================================================================
-
-class _ModuleTile(QPushButton):
-
-    def __init__(self, title: str, description: str,
-                 accent_color: str, parent=None):
-        super().__init__(parent)
-        self.setCursor(Qt.PointingHandCursor)
-        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        self.setFixedSize(200, 160)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 16, 20, 20)
-        layout.setSpacing(4)
-
-        accent_line = QFrame()
-        accent_line.setFixedSize(32, 3)
-        accent_line.setStyleSheet(f"background-color: {accent_color}; border: none;")
-        accent_line.setAttribute(Qt.WA_TransparentForMouseEvents)
-        layout.addWidget(accent_line)
-
-        atlas_label = QLabel(_TILE_LABEL)
-        atlas_label.setStyleSheet(
-            f"font-family: {_tokens.FONT_HEADLINE}; font-size: {FONT_SIZE_CAPTION}; "
-            f"letter-spacing: 2px; color: {PRIMARY_500}; background: transparent;"
-        )
-        atlas_label.setAttribute(Qt.WA_TransparentForMouseEvents)
-        layout.addWidget(atlas_label)
-
-        layout.addSpacing(2)
-
-        title_label = QLabel(title)
-        title_label.setStyleSheet(
-            f"font-family: {_tokens.FONT_HEADLINE}; font-size: {FONT_SIZE_H3}; "
-            f"font-weight: {FONT_WEIGHT_BOLD}; color: {PRIMARY_900}; background: transparent;"
-        )
-        title_label.setAttribute(Qt.WA_TransparentForMouseEvents)
-        layout.addWidget(title_label)
-
-        desc_label = QLabel(description)
-        desc_label.setWordWrap(True)
-        desc_label.setStyleSheet(
-            f"font-family: {_tokens.FONT_BODY}; font-size: {FONT_SIZE_CAPTION}; "
-            f"color: {PRIMARY_500}; background: transparent;"
-        )
-        desc_label.setAttribute(Qt.WA_TransparentForMouseEvents)
-        layout.addWidget(desc_label)
-
-        layout.addStretch()
-
-        self.setStyleSheet(f"""
-            _ModuleTile {{
-                background-color: {PRIMARY_0};
-                border: 1px solid {BORDER_DEFAULT};
-                border-radius: {RADIUS_LG};
-                text-align: left;
-            }}
-            _ModuleTile:hover {{
-                border-color: {accent_color};
-            }}
-        """)
 
 
 # ======================================================================
@@ -237,7 +174,6 @@ class _SettingsOverlay(QWidget):
         )
         p_layout.addWidget(div)
 
-        # ── Tab Widget ──────────────────────────────────────────────
         tabs = QTabWidget()
         tabs.setStyleSheet(f"""
             QTabWidget::pane {{
@@ -258,7 +194,7 @@ class _SettingsOverlay(QWidget):
             }}
         """)
 
-        # ── Tab: Darstellung ────────────────────────────────────────
+        # Tab: Darstellung
         appearance = QWidget()
         appearance.setStyleSheet("background: transparent;")
         a_layout = QVBoxLayout(appearance)
@@ -327,7 +263,7 @@ class _SettingsOverlay(QWidget):
 
         a_layout.addSpacing(8)
 
-        # ── Theme (Dark/Light) ─────────────────────────────────────
+        # Theme (Dark/Light)
         theme_header = QLabel(texts.SETTINGS_THEME_SECTION)
         theme_header.setStyleSheet(
             f"font-family: {_tokens.FONT_HEADLINE}; font-size: {FONT_SIZE_H3}; "
@@ -460,10 +396,7 @@ class _SettingsOverlay(QWidget):
         self.setGraphicsEffect(self._opacity)
         self._anim = None
 
-    # -- Konto-Tab -------------------------------------------------------
-
     def _build_account_tab(self) -> QWidget:
-        """Baut den 'Konto'-Tab mit Profil-Info und Passwort-Ändern-Button."""
         tab = QWidget()
         tab.setStyleSheet("background: transparent;")
         layout = QVBoxLayout(tab)
@@ -493,7 +426,7 @@ class _SettingsOverlay(QWidget):
             )
             row_layout.addWidget(lbl)
 
-            val = QLabel(value_text if value_text else "—")
+            val = QLabel(value_text if value_text else "\u2014")
             val.setStyleSheet(
                 f"font-family: {_tokens.FONT_BODY}; font-size: {FONT_SIZE_BODY}; "
                 f"font-weight: {FONT_WEIGHT_MEDIUM}; color: {PRIMARY_900}; border: none;"
@@ -545,8 +478,6 @@ class _SettingsOverlay(QWidget):
         layout.addStretch()
         return tab
 
-    # -- Font preset handling --------------------------------------------
-
     def _on_font_preset_changed(self, _button):
         self._update_font_card_styles()
 
@@ -566,7 +497,6 @@ class _SettingsOverlay(QWidget):
         self.save_requested.emit(font_preset, lang_code, theme_id)
 
     def reset_to_current(self):
-        """Setzt die Radio-Buttons auf den aktuell gespeicherten Wert."""
         current = QSettings(
             "ACENCIA GmbH", "ACENCIA ATLAS"
         ).value("appearance/font_preset", "classic")
@@ -642,8 +572,6 @@ class _SettingsOverlay(QWidget):
                     }}
                 """)
 
-    # -- Animation -------------------------------------------------------
-
     def _ensure_opacity_effect(self):
         try:
             self._opacity.opacity()
@@ -677,8 +605,6 @@ class _SettingsOverlay(QWidget):
             self._anim.finished.connect(callback)
         self._anim.start()
 
-    # -- Events ----------------------------------------------------------
-
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.fillRect(self.rect(), QColor(0, 15, 30, 100))
@@ -701,15 +627,18 @@ class _SettingsOverlay(QWidget):
 # ======================================================================
 
 class DashboardScreen(QWidget):
-    """Startseite nach Login."""
+    """Startseite nach Login - informatives Dashboard ohne Modul-Tiles."""
 
     module_requested = Signal(str)
+    quick_action_requested = Signal(str, str)
     logout_requested = Signal()
     forced_logout_requested = Signal()
+    settings_requested = Signal()
 
     def __init__(self, username: str = "", app_version: str = "",
                  api_client=None, auth_api=None, tenant_name: str = "",
                  user_email: str = "", user_account_type: str = "user",
+                 user: Optional[User] = None,
                  parent=None):
         super().__init__(parent)
         self._username = username
@@ -719,7 +648,7 @@ class DashboardScreen(QWidget):
         self._tenant_name = tenant_name
         self._user_email = user_email
         self._user_account_type = user_account_type
-        self._tiles: dict[str, _ModuleTile] = {}
+        self._user = user
         self._messages_worker = None
 
         self._setup_ui()
@@ -742,11 +671,11 @@ class DashboardScreen(QWidget):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        # ── Header ────────────────────────────────────────────────────
+        # -- Header --
         header = QWidget()
-        header.setStyleSheet(f"background-color: {BG_TERTIARY};")
+        header.setStyleSheet(f"background-color: {PRIMARY_0}; border-bottom: 1px solid {BORDER_DEFAULT};")
         h_layout = QHBoxLayout(header)
-        h_layout.setContentsMargins(48, 32, 48, 16)
+        h_layout.setContentsMargins(32, 20, 32, 20)
         h_layout.setSpacing(0)
 
         greeting_col = QVBoxLayout()
@@ -754,21 +683,27 @@ class DashboardScreen(QWidget):
 
         self._greeting_label = QLabel()
         self._greeting_label.setStyleSheet(
-            f"font-family: {_tokens.FONT_HEADLINE}; font-size: 20pt; "
-            f"color: {PRIMARY_900}; background: transparent;"
+            f"font-family: {_tokens.FONT_HEADLINE}; font-size: 18pt; "
+            f"color: {PRIMARY_900}; background: transparent; border: none;"
         )
         greeting_col.addWidget(self._greeting_label)
 
-        self._tenant_label = QLabel()
-        self._tenant_label.setStyleSheet(
-            f"font-family: {_tokens.FONT_BODY}; font-size: 10pt; "
-            f"color: {TEXT_SECONDARY}; background: transparent;"
-        )
+        role_map = {
+            "super_admin": texts.DASHBOARD_ROLE_SUPER_ADMIN,
+            "admin": texts.DASHBOARD_ROLE_ADMIN,
+            "user": texts.DASHBOARD_ROLE_USER,
+        }
+        role_text = role_map.get(self._user_account_type, texts.DASHBOARD_ROLE_USER)
+        meta_parts = [role_text]
         if self._tenant_name:
-            self._tenant_label.setText(self._tenant_name)
-        else:
-            self._tenant_label.hide()
-        greeting_col.addWidget(self._tenant_label)
+            meta_parts.append(self._tenant_name)
+
+        self._meta_label = QLabel(" \u00B7 ".join(meta_parts))
+        self._meta_label.setStyleSheet(
+            f"font-family: {_tokens.FONT_BODY}; font-size: {FONT_SIZE_CAPTION}; "
+            f"color: {TEXT_SECONDARY}; background: transparent; border: none;"
+        )
+        greeting_col.addWidget(self._meta_label)
 
         h_layout.addLayout(greeting_col)
         h_layout.addStretch()
@@ -783,37 +718,20 @@ class DashboardScreen(QWidget):
         self._date_label = QLabel()
         self._date_label.setAlignment(Qt.AlignRight)
         self._date_label.setStyleSheet(
-            f"font-family: {_tokens.FONT_BODY}; font-size: {FONT_SIZE_BODY}; "
-            f"color: {PRIMARY_500}; background: transparent;"
+            f"font-family: {_tokens.FONT_BODY}; font-size: {FONT_SIZE_CAPTION}; "
+            f"color: {PRIMARY_500}; background: transparent; border: none;"
         )
         datetime_col.addWidget(self._date_label)
 
         self._time_label = QLabel()
         self._time_label.setAlignment(Qt.AlignRight)
         self._time_label.setStyleSheet(
-            f"font-family: {_tokens.FONT_HEADLINE}; font-size: {FONT_SIZE_H1}; "
-            f"color: {PRIMARY_900}; background: transparent;"
+            f"font-family: {_tokens.FONT_HEADLINE}; font-size: 16pt; "
+            f"color: {PRIMARY_900}; background: transparent; border: none;"
         )
         datetime_col.addWidget(self._time_label)
 
         right_area.addLayout(datetime_col)
-
-        settings_btn = QPushButton(f"\u2699  {texts.NAV_EINSTELLUNGEN}")
-        settings_btn.setCursor(Qt.PointingHandCursor)
-        settings_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: transparent;
-                border: 1px solid {PRIMARY_500};
-                border-radius: {RADIUS_LG};
-                font-family: {_tokens.FONT_BODY}; font-size: {FONT_SIZE_BODY};
-                color: {PRIMARY_500}; padding: 8px 24px;
-            }}
-            QPushButton:hover {{
-                color: {PRIMARY_900}; border-color: {PRIMARY_900};
-            }}
-        """)
-        settings_btn.clicked.connect(self._open_settings)
-        right_area.addWidget(settings_btn, alignment=Qt.AlignVCenter)
 
         self._admin_header_btn = QPushButton(f"\U0001F6E0  {texts.DASHBOARD_TILE_ADMIN}")
         self._admin_header_btn.setCursor(Qt.PointingHandCursor)
@@ -853,202 +771,93 @@ class DashboardScreen(QWidget):
         h_layout.addLayout(right_area)
         root.addWidget(header)
 
-        # ── Divider ───────────────────────────────────────────────────
-        div1 = QFrame()
-        div1.setFrameShape(QFrame.HLine)
-        div1.setStyleSheet(
-            f"color: {BORDER_DEFAULT}; background: {BORDER_DEFAULT}; max-height: 1px;"
+        # -- Scrollable dashboard content --
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+
+        dashboard_content = QWidget()
+        dashboard_content.setStyleSheet(f"background-color: {BG_TERTIARY};")
+        dc_layout = QVBoxLayout(dashboard_content)
+        dc_layout.setContentsMargins(32, 24, 32, 24)
+        dc_layout.setSpacing(24)
+
+        has_any_module = self._user and any([
+            self._user.has_module("core"),
+            self._user.has_module("provision"),
+            self._user.has_module("workforce"),
+            self._user.has_module("contact"),
+        ])
+
+        # -- KPI Cards --
+        if self._user and has_any_module:
+            self._kpi_widget = KpiCardsWidget(self._user, self._api_client)
+            self._kpi_widget.card_clicked.connect(self._on_kpi_clicked)
+            dc_layout.addWidget(self._kpi_widget)
+        else:
+            self._kpi_widget = None
+
+        # -- Quick Actions --
+        if self._user and has_any_module:
+            self._quick_actions = QuickActionsWidget(self._user)
+            self._quick_actions.action_requested.connect(self._on_quick_action)
+            if self._quick_actions.has_actions():
+                dc_layout.addWidget(self._quick_actions)
+        else:
+            self._quick_actions = None
+
+        # -- Compact Messages Section --
+        msg_section = QVBoxLayout()
+        msg_section.setSpacing(12)
+
+        msg_header_row = QHBoxLayout()
+        msg_title = QLabel(texts.DASHBOARD_MESSAGES_HEADER)
+        msg_title.setStyleSheet(
+            f"font-family: {_tokens.FONT_BODY}; font-size: {FONT_SIZE_BODY}; "
+            f"font-weight: {FONT_WEIGHT_BOLD}; color: {PRIMARY_900}; "
+            f"background: transparent; border: none;"
         )
-        root.addWidget(div1)
+        msg_header_row.addWidget(msg_title)
+        msg_header_row.addStretch()
 
-        # ── System-Mitteilungen ───────────────────────────────────────
-        msg_section = QWidget()
-        msg_section.setStyleSheet(f"background-color: {BG_TERTIARY};")
-        msg_layout = QVBoxLayout(msg_section)
-        msg_layout.setContentsMargins(48, 24, 48, 0)
-        msg_layout.setSpacing(8)
-
-        msg_header = QLabel(texts.DASHBOARD_MESSAGES_HEADER)
-        msg_header.setStyleSheet(
-            f"font-family: {_tokens.FONT_HEADLINE}; font-size: {FONT_SIZE_H2}; "
-            f"font-weight: {FONT_WEIGHT_BOLD}; color: {PRIMARY_900}; background: transparent;"
+        self._msg_count_label = QLabel("")
+        self._msg_count_label.setCursor(Qt.PointingHandCursor)
+        self._msg_count_label.setStyleSheet(
+            f"font-size: {FONT_SIZE_CAPTION}; color: {ACCENT_500}; "
+            f"background: transparent; border: none;"
         )
-        msg_layout.addWidget(msg_header)
+        msg_header_row.addWidget(self._msg_count_label)
+        msg_section.addLayout(msg_header_row)
 
-        msg_div = QFrame()
-        msg_div.setFrameShape(QFrame.HLine)
-        msg_div.setStyleSheet(
-            f"color: {BORDER_DEFAULT}; background: {BORDER_DEFAULT}; max-height: 1px;"
-        )
-        msg_layout.addWidget(msg_div)
-
-        # Scrollbare Nachrichten-Card
-        self._msg_card = QFrame()
-        self._msg_card.setStyleSheet(f"""
-            QFrame {{
-                background-color: {PRIMARY_0};
-                border: 1px solid {BORDER_DEFAULT};
-                border-radius: {RADIUS_LG};
-            }}
-        """)
-        card_layout = QVBoxLayout(self._msg_card)
-        card_layout.setContentsMargins(20, 16, 20, 16)
-        card_layout.setSpacing(10)
+        self._msg_container = QVBoxLayout()
+        self._msg_container.setSpacing(10)
 
         self._msg_placeholder = QLabel(texts.DASHBOARD_MESSAGES_LOADING)
         self._msg_placeholder.setStyleSheet(
             f"font-family: {_tokens.FONT_BODY}; font-size: {FONT_SIZE_BODY}; "
             f"color: {PRIMARY_500}; background: transparent; border: none;"
         )
-        card_layout.addWidget(self._msg_placeholder)
+        self._msg_container.addWidget(self._msg_placeholder)
 
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setWidget(self._msg_card)
-        scroll.setFrameShape(QFrame.NoFrame)
-        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
-        msg_layout.addWidget(scroll, stretch=1)
+        msg_section.addLayout(self._msg_container)
+        dc_layout.addLayout(msg_section)
 
-        root.addWidget(msg_section, stretch=1)
+        if not has_any_module and self._user:
+            hint = QLabel(texts.DASHBOARD_NO_MODULES_HINT)
+            hint.setWordWrap(True)
+            hint.setStyleSheet(
+                f"font-family: {_tokens.FONT_BODY}; font-size: {FONT_SIZE_BODY}; "
+                f"color: {TEXT_SECONDARY}; padding: 24px; "
+                f"background-color: {PRIMARY_0}; border: 1px solid {BORDER_DEFAULT}; "
+                f"border-radius: {RADIUS_LG};"
+            )
+            dc_layout.addWidget(hint)
 
-        # ── Module (am unteren Rand fixiert) ──────────────────────────
-        bottom = QWidget()
-        bottom.setStyleSheet(f"background-color: {BG_TERTIARY};")
-        b_layout = QVBoxLayout(bottom)
-        b_layout.setContentsMargins(48, 16, 48, 16)
-        b_layout.setSpacing(8)
+        dc_layout.addStretch()
 
-        mod_header = QLabel(texts.DASHBOARD_MODULES_HEADER)
-        mod_header.setStyleSheet(
-            f"font-family: {_tokens.FONT_HEADLINE}; font-size: {FONT_SIZE_H2}; "
-            f"font-weight: {FONT_WEIGHT_BOLD}; color: {PRIMARY_900}; background: transparent;"
-        )
-        b_layout.addWidget(mod_header)
-
-        mod_div = QFrame()
-        mod_div.setFrameShape(QFrame.HLine)
-        mod_div.setStyleSheet(
-            f"color: {BORDER_DEFAULT}; background: {BORDER_DEFAULT}; max-height: 1px;"
-        )
-        b_layout.addWidget(mod_div)
-        b_layout.addSpacing(12)
-
-        tiles_row = QHBoxLayout()
-        tiles_row.setSpacing(16)
-        tiles_row.setAlignment(Qt.AlignLeft)
-
-        _ma_btn_style = f"""
-            QPushButton {{
-                background-color: {PRIMARY_0};
-                border: 1px solid {BORDER_DEFAULT};
-                border-radius: {RADIUS_MD};
-                padding: 5px 14px;
-                text-align: left;
-                font-family: {_tokens.FONT_BODY}; font-size: {FONT_SIZE_CAPTION};
-                color: {PRIMARY_500};
-            }}
-            QPushButton:hover {{
-                border-color: {ACCENT_500}; color: {ACCENT_500};
-            }}
-        """
-
-        # -- Core --
-        core_group = QVBoxLayout()
-        core_group.setSpacing(6)
-        tile_core = _ModuleTile(
-            texts.DASHBOARD_TILE_CORE, texts.DASHBOARD_TILE_CORE_DESC, PRIMARY_900,
-        )
-        tile_core.clicked.connect(lambda: self.module_requested.emit("core"))
-        core_group.addWidget(tile_core)
-        self._tiles["core"] = tile_core
-
-        self._core_admin_btn = QPushButton(f"  \U0001F6E0  {texts.MODULE_ADMIN_BTN}")
-        self._core_admin_btn.setCursor(Qt.PointingHandCursor)
-        self._core_admin_btn.setFixedWidth(200)
-        self._core_admin_btn.setStyleSheet(_ma_btn_style)
-        self._core_admin_btn.clicked.connect(lambda: self.module_requested.emit("core_admin"))
-        self._core_admin_btn.setVisible(False)
-        core_group.addWidget(self._core_admin_btn)
-        self._tiles["core_admin"] = self._core_admin_btn
-
-        tiles_row.addLayout(core_group)
-
-        # -- Ledger --
-        ledger_group = QVBoxLayout()
-        ledger_group.setSpacing(6)
-        tile_ledger = _ModuleTile(
-            texts.DASHBOARD_TILE_LEDGER, texts.DASHBOARD_TILE_LEDGER_DESC, ACCENT_500,
-        )
-        tile_ledger.clicked.connect(lambda: self.module_requested.emit("ledger"))
-        ledger_group.addWidget(tile_ledger)
-        self._tiles["ledger"] = tile_ledger
-
-        self._ledger_admin_btn = QPushButton(f"  \U0001F6E0  {texts.MODULE_ADMIN_BTN}")
-        self._ledger_admin_btn.setCursor(Qt.PointingHandCursor)
-        self._ledger_admin_btn.setFixedWidth(200)
-        self._ledger_admin_btn.setStyleSheet(_ma_btn_style)
-        self._ledger_admin_btn.clicked.connect(lambda: self.module_requested.emit("ledger_admin"))
-        self._ledger_admin_btn.setVisible(False)
-        ledger_group.addWidget(self._ledger_admin_btn)
-        self._tiles["ledger_admin"] = self._ledger_admin_btn
-
-        tiles_row.addLayout(ledger_group)
-
-        # -- Workforce --
-        wf_group = QVBoxLayout()
-        wf_group.setSpacing(6)
-        tile_workforce = _ModuleTile(
-            texts.WF_DASHBOARD_TILE, texts.WF_DASHBOARD_TILE_DESC, _tokens.SUCCESS,
-        )
-        tile_workforce.clicked.connect(lambda: self.module_requested.emit("workforce"))
-        wf_group.addWidget(tile_workforce)
-        self._tiles["workforce"] = tile_workforce
-
-        self._wf_admin_btn = QPushButton(f"  \U0001F6E0  {texts.MODULE_ADMIN_BTN}")
-        self._wf_admin_btn.setCursor(Qt.PointingHandCursor)
-        self._wf_admin_btn.setFixedWidth(200)
-        self._wf_admin_btn.setStyleSheet(_ma_btn_style)
-        self._wf_admin_btn.clicked.connect(lambda: self.module_requested.emit("workforce_admin"))
-        self._wf_admin_btn.setVisible(False)
-        wf_group.addWidget(self._wf_admin_btn)
-        self._tiles["workforce_admin"] = self._wf_admin_btn
-
-        tiles_row.addLayout(wf_group)
-
-        # -- Contact (Telefonbuch) --
-        contact_group = QVBoxLayout()
-        contact_group.setSpacing(6)
-        tile_contact = _ModuleTile(
-            texts.CONTACT_DASHBOARD_TILE, texts.CONTACT_DASHBOARD_TILE_DESC, INDIGO,
-        )
-        tile_contact.clicked.connect(lambda: self.module_requested.emit("contact"))
-        contact_group.addWidget(tile_contact)
-        self._tiles["contact"] = tile_contact
-
-        self._contact_admin_btn = QPushButton(f"  \U0001F6E0  {texts.MODULE_ADMIN_BTN}")
-        self._contact_admin_btn.setCursor(Qt.PointingHandCursor)
-        self._contact_admin_btn.setFixedWidth(200)
-        self._contact_admin_btn.setStyleSheet(_ma_btn_style)
-        self._contact_admin_btn.clicked.connect(lambda: self.module_requested.emit("contact_admin"))
-        self._contact_admin_btn.setVisible(False)
-        contact_group.addWidget(self._contact_admin_btn)
-        self._tiles["contact_admin"] = self._contact_admin_btn
-
-        tiles_row.addLayout(contact_group)
-
-        b_layout.addLayout(tiles_row)
-        b_layout.addSpacing(4)
-
-        version_text = f"ATLAS v{self._app_version}" if self._app_version else "ATLAS"
-        version_label = QLabel(version_text)
-        version_label.setAlignment(Qt.AlignRight)
-        version_label.setStyleSheet(
-            f"font-family: {_tokens.FONT_BODY}; font-size: {FONT_SIZE_CAPTION}; "
-            f"color: {ACCENT_500}; background: transparent;"
-        )
-        b_layout.addWidget(version_label)
-
-        root.addWidget(bottom)
+        scroll.setWidget(dashboard_content)
+        root.addWidget(scroll, stretch=1)
 
         self._update_clock()
 
@@ -1065,6 +874,33 @@ class DashboardScreen(QWidget):
 
         self._build_feedback_pill()
         self._build_feedback_overlay()
+
+    # ------------------------------------------------------------------
+    # KPI / Quick Action handlers
+    # ------------------------------------------------------------------
+
+    def _on_kpi_clicked(self, card_id: str):
+        mapping = {
+            "inbox": "core",
+            "messages": None,
+        }
+        module_id = mapping.get(card_id)
+        if module_id:
+            self.module_requested.emit(module_id)
+
+    def _on_quick_action(self, action_id: str):
+        mapping = {
+            "open_inbox": "core",
+            "upload_doc": "core",
+            "bipro_fetch": "core",
+            "search_phone": "contact",
+            "new_call_note": "contact",
+            "search_employee": "workforce",
+            "check_provision": "ledger",
+        }
+        module_id = mapping.get(action_id)
+        if module_id:
+            self.quick_action_requested.emit(module_id, action_id)
 
     # ------------------------------------------------------------------
     # Feedback pill button + overlay
@@ -1161,7 +997,6 @@ class DashboardScreen(QWidget):
             pass
 
     def _rebuild_feedback_overlay(self):
-        """Erstellt das Feedback-Overlay neu, wenn es in einem ungueltigen Zustand ist."""
         try:
             old = getattr(self, '_feedback_overlay', None)
             if old:
@@ -1183,7 +1018,6 @@ class DashboardScreen(QWidget):
             self._show_feedback_toast(True)
 
     def _submit_feedback_async(self, payload: dict):
-        """Sendet Feedback im Hintergrund-Thread an die API."""
         from api.support import SupportAPI
 
         class _Worker(QThread):
@@ -1231,7 +1065,6 @@ class DashboardScreen(QWidget):
             logger.debug("Toast not available for feedback confirmation")
 
     def _find_toast_manager(self):
-        """Sucht den ToastManager in der Widget-Hierarchie."""
         widget = self.parent()
         while widget:
             if hasattr(widget, '_toast_manager'):
@@ -1303,7 +1136,6 @@ class DashboardScreen(QWidget):
         QTimer.singleShot(0, self._rebuild_ui)
 
     def _rebuild_ui(self):
-        """Baut die gesamte Dashboard-UI neu auf."""
         self._clock_timer.stop()
 
         if self._messages_worker and self._messages_worker.isRunning():
@@ -1339,6 +1171,8 @@ class DashboardScreen(QWidget):
 
         if self._api_client:
             self.load_messages(self._api_client)
+            if self._kpi_widget:
+                self._kpi_widget.load_data(self._api_client)
 
     # ------------------------------------------------------------------
     # Resize
@@ -1359,13 +1193,11 @@ class DashboardScreen(QWidget):
     # ------------------------------------------------------------------
 
     def set_modules(self, visible_modules: list[str]):
-        for module_id, tile in self._tiles.items():
-            tile.setVisible(module_id in visible_modules)
+        """Kompatibilitaets-Methode: Steuert Admin-Button Sichtbarkeit."""
         if hasattr(self, '_admin_header_btn'):
             self._admin_header_btn.setVisible('admin' in visible_modules)
 
     def load_messages(self, api_client):
-        """Startet asynchrones Laden der System-Mitteilungen."""
         if self._messages_worker and self._messages_worker.isRunning():
             return
         self._api_client = api_client
@@ -1379,12 +1211,11 @@ class DashboardScreen(QWidget):
             logger.exception("Mitteilungen konnten nicht geladen werden")
             self._msg_placeholder.setText(texts.DASHBOARD_MESSAGES_EMPTY)
 
-    def on_notifications_updated(self, summary: dict):
-        """Empfaengt Notification-Summary vom GlobalHeartbeat.
+    def load_kpi_data(self):
+        if self._kpi_widget and self._api_client:
+            self._kpi_widget.load_data(self._api_client)
 
-        Aktualisiert die System-Mitteilungen auf dem Dashboard neu,
-        wenn sich die Anzahl ungelesener System-Nachrichten aendert.
-        """
+    def on_notifications_updated(self, summary: dict):
         unread_system = summary.get('unread_system_messages', 0)
         prev = getattr(self, '_prev_unread_system', -1)
         if unread_system != prev:
@@ -1392,12 +1223,15 @@ class DashboardScreen(QWidget):
             if hasattr(self, '_api_client') and self._api_client:
                 self._reload_messages()
 
+    def open_settings_overlay(self):
+        """Wird vom AppRouter aufgerufen wenn in der Sidebar auf Einstellungen geklickt wird."""
+        self._open_settings()
+
     # ------------------------------------------------------------------
     # Slots
     # ------------------------------------------------------------------
 
     def _reload_messages(self):
-        """Laedt System-Mitteilungen erneut (z.B. bei Heartbeat-Update)."""
         if not hasattr(self, '_api_client') or not self._api_client:
             return
         if self._messages_worker and self._messages_worker.isRunning():
@@ -1412,40 +1246,37 @@ class DashboardScreen(QWidget):
             logger.debug("Mitteilungen-Reload fehlgeschlagen")
 
     def _on_messages_reloaded(self, messages: list):
-        """Callback fuer Heartbeat-getriebenes Nachladen der Mitteilungen."""
-        layout = self._msg_card.layout()
-        while layout.count():
-            item = layout.takeAt(0)
+        self._render_messages(messages)
+
+    def _on_messages_loaded(self, messages: list):
+        self._render_messages(messages)
+
+    def _render_messages(self, messages: list):
+        while self._msg_container.count():
+            item = self._msg_container.takeAt(0)
             w = item.widget()
             if w:
                 w.deleteLater()
 
         if not messages:
-            self._msg_placeholder.setText(texts.DASHBOARD_MESSAGES_EMPTY)
-            self._msg_placeholder.show()
+            self._msg_placeholder = QLabel(texts.DASHBOARD_MESSAGES_EMPTY)
+            self._msg_placeholder.setStyleSheet(
+                f"font-family: {_tokens.FONT_BODY}; font-size: {FONT_SIZE_BODY}; "
+                f"color: {PRIMARY_500}; background: transparent; border: none;"
+            )
+            self._msg_container.addWidget(self._msg_placeholder)
+            self._msg_count_label.setText("")
             return
 
-        self._msg_placeholder.hide()
-        for msg in messages:
+        display_msgs = messages[:3]
+        total = len(messages)
+        self._msg_count_label.setText(
+            texts.DASHBOARD_MESSAGES_ALL.format(count=total)
+        )
+
+        for msg in display_msgs:
             card = self._build_message_card(msg)
-            layout.addWidget(card)
-        layout.addStretch()
-
-    def _on_messages_loaded(self, messages: list):
-        layout = self._msg_card.layout()
-
-        self._msg_placeholder.hide()
-
-        if not messages:
-            self._msg_placeholder.setText(texts.DASHBOARD_MESSAGES_EMPTY)
-            self._msg_placeholder.show()
-            return
-
-        for msg in messages:
-            card = self._build_message_card(msg)
-            layout.addWidget(card)
-
-        layout.addStretch()
+            self._msg_container.addWidget(card)
 
     def _build_message_card(self, msg: dict) -> QFrame:
         severity = msg.get('severity', 'info')
@@ -1459,7 +1290,6 @@ class DashboardScreen(QWidget):
                 border: 1px solid {BORDER_DEFAULT};
                 border-left: 4px solid {fg_color};
                 border-radius: {RADIUS_MD};
-                margin-bottom: 2px;
             }}
         """)
 
