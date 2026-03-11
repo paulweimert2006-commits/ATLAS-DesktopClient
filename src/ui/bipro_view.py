@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
     QDialogButtonBox, QCheckBox, QFrame, QProgressBar,
     QScrollArea, QGridLayout,
 )
-from PySide6.QtCore import Qt, Signal, QThread, QTimer, QSettings
+from PySide6.QtCore import Qt, Signal, QThread, QTimer, QSettings, QObject, QRunnable, QThreadPool
 from PySide6.QtGui import QFont, QColor, QPainter, QShortcut, QKeySequence
 
 from api.client import APIClient
@@ -3513,44 +3513,63 @@ class BiPROView(QWidget):
     def _fetch_mails(self):
         """Mails vom IMAP-Postfach abholen und Anhaenge importieren."""
         from i18n import de as texts
-        from api.smartscan import SmartScanAPI, EmailAccountsAPI
-        
+
         if self._mail_import_worker is not None:
             self._toast_manager.show_info(texts.BIPRO_MAIL_FETCH_RUNNING)
             return
-        
-        # IMAP-Konto ermitteln (aus SmartScan-Settings oder erstes aktives IMAP-Konto)
-        account_id = None
-        try:
-            smartscan_api = SmartScanAPI(self.api_client)
-            settings = smartscan_api.get_settings()
-            if settings:
-                poll_id = settings.get('imap_poll_account_id')
-                if poll_id:
-                    account_id = int(poll_id)
-        except Exception as e:
-            logger.warning(f"SmartScan-Settings konnten nicht geladen werden: {e}")
-        
-        # Fallback: Erstes aktives IMAP-Konto suchen
+
+        self.mail_fetch_btn.setEnabled(False)
+
+        class _ResolveSignals(QObject):
+            resolved = Signal(object)
+
+        class _ResolveAccountWorker(QRunnable):
+            def __init__(self, api_client):
+                super().__init__()
+                self.signals = _ResolveSignals()
+                self._api_client = api_client
+
+            def run(self):
+                from api.smartscan import SmartScanAPI, EmailAccountsAPI
+                account_id = None
+                try:
+                    smartscan_api = SmartScanAPI(self._api_client)
+                    settings = smartscan_api.get_settings()
+                    if settings:
+                        poll_id = settings.get('imap_poll_account_id')
+                        if poll_id:
+                            account_id = int(poll_id)
+                except Exception as e:
+                    logger.warning(f"SmartScan-Settings konnten nicht geladen werden: {e}")
+
+                if not account_id:
+                    try:
+                        email_api = EmailAccountsAPI(self._api_client)
+                        accounts = email_api.get_accounts()
+                        for acc in accounts:
+                            imap_host = acc.get('imap_host', '')
+                            is_active = bool(int(acc.get('is_active', 0) or 0))
+                            if imap_host and is_active:
+                                account_id = int(acc['id'])
+                                break
+                    except Exception as e:
+                        logger.warning(f"E-Mail-Konten konnten nicht geladen werden: {e}")
+
+                self.signals.resolved.emit(account_id)
+
+        worker = _ResolveAccountWorker(self.api_client)
+        worker.signals.resolved.connect(self._on_mail_account_resolved)
+        worker.setAutoDelete(True)
+        QThreadPool.globalInstance().start(worker)
+
+    def _on_mail_account_resolved(self, account_id):
+        """Callback nach asynchroner IMAP-Account-Ermittlung."""
+        from i18n import de as texts
+
         if not account_id:
-            try:
-                email_api = EmailAccountsAPI(self.api_client)
-                accounts = email_api.get_accounts()
-                for acc in accounts:
-                    imap_host = acc.get('imap_host', '')
-                    is_active = bool(int(acc.get('is_active', 0) or 0))
-                    if imap_host and is_active:
-                        account_id = int(acc['id'])
-                        break
-            except Exception as e:
-                logger.warning(f"E-Mail-Konten konnten nicht geladen werden: {e}")
-        
-        if not account_id:
+            self.mail_fetch_btn.setEnabled(True)
             self._toast_manager.show_error(texts.BIPRO_MAIL_FETCH_NO_ACCOUNT)
             return
-        
-        # Button deaktivieren (Toast wird via phase_changed erstellt)
-        self.mail_fetch_btn.setEnabled(False)
         self._log(texts.BIPRO_MAIL_FETCH_RUNNING)
         self._mail_progress_toast = None
         

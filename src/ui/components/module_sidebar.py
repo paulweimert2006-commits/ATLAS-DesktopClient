@@ -304,6 +304,7 @@ class ModuleSidebar(QFrame):
 
         tl = QTimeLine(self._ENTER_DURATION, self)
         tl.setFrameRange(0, 1000)
+        tl.setUpdateInterval(32)
         tl.setEasingCurve(QEasingCurve.OutCubic)
         tl.frameChanged.connect(self._apply_enter_frame)
         tl.finished.connect(self._on_enter_finished)
@@ -326,6 +327,7 @@ class ModuleSidebar(QFrame):
 
         tl = QTimeLine(self._EXIT_DURATION, self)
         tl.setFrameRange(0, 1000)
+        tl.setUpdateInterval(32)
         tl.setEasingCurve(QEasingCurve.InCubic)
         tl.frameChanged.connect(self._apply_exit_frame)
         tl.finished.connect(self._on_exit_finished)

@@ -633,6 +633,8 @@ class FeedbackOverlay(QWidget):
 
     def show_animated(self):
         self._ensure_opacity_effect()
+        if hasattr(self, '_anim') and self._anim is not None:
+            self._anim.stop()
         self._opacity.setOpacity(0.0)
         self.show()
         self.raise_()
@@ -646,6 +648,8 @@ class FeedbackOverlay(QWidget):
 
     def close_animated(self, callback=None):
         self._ensure_opacity_effect()
+        if hasattr(self, '_anim') and self._anim is not None:
+            self._anim.stop()
         self._anim = QPropertyAnimation(self._opacity, b"opacity")
         self._anim.setDuration(180)
         self._anim.setStartValue(1.0)

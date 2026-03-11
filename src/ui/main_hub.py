@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Optional, List
 
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QStackedWidget,
+    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QFrame, QMessageBox, QSizePolicy, QSpacerItem,
     QProgressDialog
 )
@@ -32,6 +32,7 @@ from api.client import APIClient
 from api.auth import AuthAPI
 from i18n import de as texts
 from ui.components.module_sidebar import ModuleSidebar
+from ui.components.fade_stacked_widget import FadeStackedWidget
 
 from ui.styles.tokens import (
     PRIMARY_900, PRIMARY_500, PRIMARY_100, PRIMARY_0,
@@ -363,9 +364,20 @@ class MainHub(QMainWindow):
         """Oeffentliche Methode: BiPRO-Bereich oeffnen."""
         self._show_bipro()
 
+    def _restore_sidebar(self):
+        """Stellt die ModuleSidebar vollstaendig in den sichtbaren Zustand her.
+
+        Stoppt laufende Animationen und setzt Opacity/Margins zurueck,
+        damit der AppRouter die Sidebar korrekt animieren kann.
+        """
+        self._sidebar._stop_running()
+        self._sidebar.setContentsMargins(0, 0, 0, 0)
+        self._sidebar._opacity_effect.setOpacity(1.0)
+        self._sidebar.show()
+
     def reset_to_default_view(self):
         """Setzt MainHub auf Standard-Ansicht zurueck (Sidebar sichtbar, Mitteilungszentrale)."""
-        self._sidebar.show()
+        self._restore_sidebar()
         self._show_message_center()
 
     def __init__(self, api_client: APIClient, auth_api: AuthAPI):
@@ -528,8 +540,8 @@ class MainHub(QMainWindow):
 
         main_layout.addWidget(self._sidebar)
         
-        # === Content Area ===
-        self.content_stack = QStackedWidget()
+        # === Content Area (Fade-Through bei Sub-View-Wechsel) ===
+        self.content_stack = FadeStackedWidget(fade_out_ms=80, fade_in_ms=120)
         self.content_stack.setStyleSheet(f"background-color: {PRIMARY_0};")
         main_layout.addWidget(self.content_stack)
         
@@ -736,7 +748,7 @@ class MainHub(QMainWindow):
     
     def _leave_provision(self):
         """Verlaesst das Provisionsmanagement."""
-        self._sidebar.show()
+        self._restore_sidebar()
         self._show_archive()
     
     def _show_admin(self):
@@ -786,15 +798,14 @@ class MainHub(QMainWindow):
         """Verlaesst den Chat und zeigt die Mitteilungszentrale."""
         if self._chat_view:
             self._chat_view.stop_auto_refresh()
-        self._sidebar.show()
+        self._restore_sidebar()
         self._show_message_center()
     
     def _leave_admin(self):
         """Verlässt den Admin-Bereich und kehrt zum Dashboard zurueck."""
-        self._sidebar.show()
-        if self._archive_view and hasattr(self._archive_view, '_load_smartscan_status'):
-            self._archive_view._load_smartscan_status()
-            self._archive_view.sidebar._smartscan_enabled = self._archive_view._smartscan_enabled
+        self._restore_sidebar()
+        if self._archive_view and hasattr(self._archive_view, '_load_smartscan_status_async'):
+            self._archive_view._load_smartscan_status_async()
         self.back_to_dashboard_requested.emit()
 
     def _show_core_module_admin(self):
@@ -817,7 +828,7 @@ class MainHub(QMainWindow):
         self._core_module_admin_view.load_data()
 
     def _leave_core_module_admin(self):
-        self._sidebar.show()
+        self._restore_sidebar()
         self._show_message_center()
 
     def _get_core_config_panels(self):

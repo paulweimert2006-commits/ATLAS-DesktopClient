@@ -582,6 +582,8 @@ class _SettingsOverlay(QWidget):
 
     def show_animated(self):
         self._ensure_opacity_effect()
+        if hasattr(self, '_anim') and self._anim is not None:
+            self._anim.stop()
         self._opacity.setOpacity(0.0)
         self.show()
         self.raise_()
@@ -595,6 +597,8 @@ class _SettingsOverlay(QWidget):
 
     def close_animated(self, callback=None):
         self._ensure_opacity_effect()
+        if hasattr(self, '_anim') and self._anim is not None:
+            self._anim.stop()
         self._anim = QPropertyAnimation(self._opacity, b"opacity")
         self._anim.setDuration(150)
         self._anim.setStartValue(1.0)
@@ -964,9 +968,7 @@ class DashboardScreen(QWidget):
             if self._feedback_overlay.isVisible():
                 return
             self._feedback_overlay.reset()
-            blur = QGraphicsBlurEffect()
-            blur.setBlurRadius(8)
-            self._content.setGraphicsEffect(blur)
+            self._content.setGraphicsEffect(None)
             self._feedback_btn.setEnabled(False)
             self._feedback_overlay.setGeometry(self.rect())
             self._feedback_overlay.show_animated()
@@ -1080,18 +1082,14 @@ class DashboardScreen(QWidget):
         if self._settings_overlay.isVisible():
             return
         self._settings_overlay.reset_to_current()
-        blur = QGraphicsBlurEffect()
-        blur.setBlurRadius(8)
-        self._content.setGraphicsEffect(blur)
+        self._content.setGraphicsEffect(None)
         self._settings_overlay.setGeometry(self.rect())
         self._settings_overlay.show_animated()
 
     def _close_settings(self):
         if not self._settings_overlay.isVisible():
             return
-        self._settings_overlay.close_animated(
-            callback=lambda: self._content.setGraphicsEffect(None)
-        )
+        self._settings_overlay.close_animated()
 
     def _on_change_password_requested(self):
         from ui.change_password_dialog import ChangeOwnPasswordDialog
@@ -1122,16 +1120,22 @@ class DashboardScreen(QWidget):
         QSettings("ACENCIA GmbH", "ACENCIA ATLAS").setValue(
             "appearance/theme", theme_id
         )
-        _tok.apply_font_preset(preset_id)
-        _tok.apply_theme(theme_id)
-        _i18n_mod.set_language(lang_code)
 
         app = QApplication.instance()
-        app.setStyleSheet(_tok.get_application_stylesheet())
+        # Repaints unterdruecken waehrend globale Styles angewendet werden
+        app.setUpdatesEnabled(False)
+        try:
+            _tok.apply_font_preset(preset_id)
+            _tok.apply_theme(theme_id)
+            _i18n_mod.set_language(lang_code)
 
-        _body = _tok.FONT_BODY.split(",")[0].strip().strip('"')
-        if QFontDatabase.hasFamily(_body):
-            app.setFont(QFont(_body, 10))
+            app.setStyleSheet(_tok.get_application_stylesheet())
+
+            _body = _tok.FONT_BODY.split(",")[0].strip().strip('"')
+            if QFontDatabase.hasFamily(_body):
+                app.setFont(QFont(_body, 10))
+        finally:
+            app.setUpdatesEnabled(True)
 
         QTimer.singleShot(0, self._rebuild_ui)
 
@@ -1151,13 +1155,20 @@ class DashboardScreen(QWidget):
         old_feedback_btn = getattr(self, '_feedback_btn', None)
 
         old_content.setGraphicsEffect(None)
-        old_content.hide()
-        old_overlay.hide()
-        if old_feedback_overlay:
-            old_feedback_overlay.hide()
 
-        self._setup_ui()
-        self._content.setGeometry(self.rect())
+        # Repaints unterdruecken waehrend des kompletten Rebuilds
+        self.setUpdatesEnabled(False)
+        try:
+            old_content.hide()
+            old_overlay.hide()
+            if old_feedback_overlay:
+                old_feedback_overlay.hide()
+
+            self._setup_ui()
+            self._content.setGeometry(self.rect())
+        finally:
+            self.setUpdatesEnabled(True)
+
         self._content.show()
 
         old_content.deleteLater()
@@ -1169,6 +1180,11 @@ class DashboardScreen(QWidget):
 
         self._clock_timer.start(1_000)
 
+        if self._api_client:
+            QTimer.singleShot(0, lambda: self._deferred_reload_data())
+
+    def _deferred_reload_data(self):
+        """Laedt Daten erst im naechsten Event-Loop-Zyklus nach dem UI-Rebuild."""
         if self._api_client:
             self.load_messages(self._api_client)
             if self._kpi_widget:
@@ -1220,7 +1236,7 @@ class DashboardScreen(QWidget):
         prev = getattr(self, '_prev_unread_system', -1)
         if unread_system != prev:
             self._prev_unread_system = unread_system
-            if hasattr(self, '_api_client') and self._api_client:
+            if self.isVisible() and hasattr(self, '_api_client') and self._api_client:
                 self._reload_messages()
 
     def open_settings_overlay(self):
@@ -1252,6 +1268,12 @@ class DashboardScreen(QWidget):
         self._render_messages(messages)
 
     def _render_messages(self, messages: list):
+        # Diff-Guard: Nur aktualisieren wenn sich Daten tatsaechlich geaendert haben
+        msg_fingerprint = tuple((m.get('id'), m.get('is_read')) for m in messages) if messages else ()
+        if getattr(self, '_last_msg_fingerprint', None) == msg_fingerprint:
+            return
+        self._last_msg_fingerprint = msg_fingerprint
+
         while self._msg_container.count():
             item = self._msg_container.takeAt(0)
             w = item.widget()

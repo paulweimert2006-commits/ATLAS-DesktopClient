@@ -11,7 +11,7 @@ import logging
 import warnings
 
 from PySide6.QtWidgets import (
-    QMainWindow, QStackedWidget, QWidget, QVBoxLayout, QHBoxLayout,
+    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QMessageBox, QApplication,
 )
 from PySide6.QtGui import QIcon
@@ -23,6 +23,7 @@ from i18n import de as texts
 from ui.dashboard_screen import DashboardScreen
 from ui.components.sidebar import AppSidebar
 from ui.components.module_sidebar import ModuleSidebar
+from ui.components.fade_stacked_widget import FadeStackedWidget
 from ui.toast import ToastManager
 from services.global_heartbeat import GlobalHeartbeat
 from ui.styles.tokens import (
@@ -79,8 +80,8 @@ class AppRouter(QMainWindow):
         )
         main_layout.addWidget(self._sidebar)
 
-        # Content Stack
-        self._stack = QStackedWidget()
+        # Content Stack mit Fade-Through-Transition (250ms gesamt: 100ms out + 150ms in)
+        self._stack = FadeStackedWidget(fade_out_ms=100, fade_in_ms=150)
         main_layout.addWidget(self._stack, 1)
 
         self.setCentralWidget(central)
@@ -195,7 +196,7 @@ class AppRouter(QMainWindow):
 
     def show_dashboard(self):
         """Zeigt das Dashboard (Index 0)."""
-        old_sidebar = self._get_current_module_sidebar() if self._active_module else None
+        old_sidebar = self._get_module_sidebar() if self._active_module else None
 
         if old_sidebar:
             self._pending_exit_sidebar = old_sidebar
@@ -216,8 +217,7 @@ class AppRouter(QMainWindow):
     def _do_show_dashboard(self):
         """Fuehrt den eigentlichen Wechsel zum Dashboard durch."""
         self._stop_active_module_heartbeat()
-        if self._core_widget is not None:
-            self._core_widget.reset_to_default_view()
+        self._reset_leaving_module()
         self._active_module = None
         self._stack.setCurrentIndex(_IDX_DASHBOARD)
         self._sidebar.set_active("dashboard")
@@ -237,7 +237,7 @@ class AppRouter(QMainWindow):
         from_dashboard = self._active_module is None
         from_module = not from_dashboard
 
-        old_sidebar = self._get_current_module_sidebar() if from_module else None
+        old_sidebar = self._get_module_sidebar() if from_module else None
 
         if old_sidebar:
             self._pending_module_id = module_id
@@ -266,13 +266,16 @@ class AppRouter(QMainWindow):
     def _do_open_module(self, module_id: str, from_dashboard: bool):
         """Fuehrt den eigentlichen Modulwechsel durch."""
         self._stop_active_module_heartbeat()
+        self._reset_leaving_module()
 
         action = getattr(self, '_pending_action', None)
         self._pending_action = None
+        target_index: int | None = None
 
         if module_id == "core":
             self._ensure_core()
-            self._stack.setCurrentIndex(_IDX_CORE)
+            target_index = _IDX_CORE
+            self._stack.setCurrentIndex(target_index)
             QTimer.singleShot(0, lambda: self._start_module_heartbeat(self._core_widget, "core"))
             self._dispatch_core_action(action)
         elif module_id == "admin":
@@ -281,7 +284,8 @@ class AppRouter(QMainWindow):
                 logger.warning("Admin-Zugriff ohne Admin-Recht abgelehnt")
                 return
             self._ensure_core()
-            self._stack.setCurrentIndex(_IDX_CORE)
+            target_index = _IDX_CORE
+            self._stack.setCurrentIndex(target_index)
             self._core_widget.navigate_to_admin()
             QTimer.singleShot(0, lambda: self._start_module_heartbeat(self._core_widget, "core"))
         elif module_id == "ledger":
@@ -290,7 +294,8 @@ class AppRouter(QMainWindow):
                 logger.warning("Ledger-Zugriff ohne Modul-Freischaltung abgelehnt")
                 return
             self._ensure_ledger()
-            self._stack.setCurrentIndex(_IDX_LEDGER)
+            target_index = _IDX_LEDGER
+            self._stack.setCurrentIndex(target_index)
             QTimer.singleShot(0, lambda: self._start_module_heartbeat(self._ledger_widget, "ledger"))
         elif module_id == "workforce":
             user = self.auth_api.current_user
@@ -298,7 +303,8 @@ class AppRouter(QMainWindow):
                 logger.warning("Workforce-Zugriff ohne Modul-Freischaltung abgelehnt")
                 return
             self._ensure_workforce()
-            self._stack.setCurrentIndex(_IDX_WORKFORCE)
+            target_index = _IDX_WORKFORCE
+            self._stack.setCurrentIndex(target_index)
             QTimer.singleShot(0, lambda: self._start_module_heartbeat(self._workforce_widget, "workforce"))
         elif module_id == "contact":
             user = self.auth_api.current_user
@@ -306,7 +312,8 @@ class AppRouter(QMainWindow):
                 logger.warning("Contact-Zugriff ohne Modul-Freischaltung abgelehnt")
                 return
             self._ensure_contact()
-            self._stack.setCurrentIndex(_IDX_CONTACT)
+            target_index = _IDX_CONTACT
+            self._stack.setCurrentIndex(target_index)
             QTimer.singleShot(0, lambda: self._start_module_heartbeat(self._contact_widget, "contact"))
             self._dispatch_contact_action(action)
         elif module_id == "contact_admin":
@@ -322,13 +329,8 @@ class AppRouter(QMainWindow):
             self._open_module_admin("workforce", "Workforce", from_dashboard)
             return
 
-        if self._sidebar._is_expanded:
-            self._sidebar.set_expanded(False)
-            self._sidebar.collapse_finished.connect(
-                self._play_module_sidebar_enter, Qt.SingleShotConnection
-            )
-        else:
-            self._play_module_sidebar_enter()
+        if target_index is not None:
+            self._schedule_module_sidebar_enter(target_index)
 
     def _dispatch_core_action(self, action: str | None):
         """Fuehrt Sub-Aktionen im Core-Modul aus."""
@@ -371,9 +373,33 @@ class AppRouter(QMainWindow):
             except (RuntimeError, TypeError):
                 pass
 
-    def _get_current_module_sidebar(self) -> 'ModuleSidebar | None':
-        """Findet die ModuleSidebar des aktuell sichtbaren Modul-Widgets."""
-        widget = self._stack.currentWidget()
+    def _get_module_sidebar(self, widget: QWidget | None = None) -> 'ModuleSidebar | None':
+        """Findet die ModuleSidebar eines Widgets.
+
+        Gibt nur eine Sidebar zurueck, die tatsaechlich sichtbar ist.
+        Einige Views (z.B. MainHub im Admin-Modus) verstecken ihre
+        eigene Sidebar per hide(), wenn ein Sub-View eine eigene hat.
+
+        Wenn kein Widget angegeben wird, wird das aktuell sichtbare
+        Widget im Stack verwendet.
+        """
+        if widget is None:
+            widget = self._stack.currentWidget()
+        if widget is None:
+            return None
+        sidebar = getattr(widget, '_sidebar', None) or getattr(widget, '_sidebar_frame', None)
+        if isinstance(sidebar, ModuleSidebar) and not sidebar.isHidden():
+            return sidebar
+        return None
+
+    def _get_sidebar_of_stack_index(self, index: int) -> 'ModuleSidebar | None':
+        """Findet die ModuleSidebar des Widgets an einem bestimmten Stack-Index.
+
+        Im Gegensatz zu _get_module_sidebar prueft diese Methode nicht isHidden,
+        weil die Sidebar eines Ziel-Widgets vor der Transition im Default-Zustand
+        sein kann (sichtbar aber visuell zurueckgesetzt).
+        """
+        widget = self._stack.widget(index)
         if widget is None:
             return None
         sidebar = getattr(widget, '_sidebar', None) or getattr(widget, '_sidebar_frame', None)
@@ -381,9 +407,45 @@ class AppRouter(QMainWindow):
             return sidebar
         return None
 
+    def _schedule_module_sidebar_enter(self, target_index: int):
+        """Bereitet die ModuleSidebar-Enter-Animation vor.
+
+        Die Sidebar des Ziel-Widgets wird sofort unsichtbar gemacht
+        (reset_animation_state). Die eigentliche Enter-Animation startet
+        erst nachdem:
+        1. Die AppSidebar-Collapse-Animation fertig ist (falls noetig)
+        2. Die FadeStackedWidget-Transition fertig ist (falls animiert)
+        """
+        target_sidebar = self._get_sidebar_of_stack_index(target_index)
+        if target_sidebar:
+            target_sidebar.reset_animation_state()
+
+        needs_collapse = self._sidebar._is_expanded
+
+        if needs_collapse:
+            self._sidebar.set_expanded(False)
+            self._sidebar.collapse_finished.connect(
+                self._on_collapse_then_enter_sidebar, Qt.SingleShotConnection
+            )
+        elif self._stack.is_transitioning:
+            self._stack.transition_finished.connect(
+                self._play_module_sidebar_enter, Qt.SingleShotConnection
+            )
+        else:
+            self._play_module_sidebar_enter()
+
+    def _on_collapse_then_enter_sidebar(self):
+        """Callback: AppSidebar-Collapse fertig, jetzt auf Fade-Transition warten."""
+        if self._stack.is_transitioning:
+            self._stack.transition_finished.connect(
+                self._play_module_sidebar_enter, Qt.SingleShotConnection
+            )
+        else:
+            self._play_module_sidebar_enter()
+
     def _play_module_sidebar_enter(self):
         """Spielt die Eingangsanimation der Modul-Sidebar des aktuellen Widgets ab."""
-        sidebar = self._get_current_module_sidebar()
+        sidebar = self._get_module_sidebar()
         if sidebar:
             sidebar.reset_animation_state()
             sidebar.play_enter_animation()
@@ -411,20 +473,14 @@ class AppRouter(QMainWindow):
             setattr(self, attr, shell)
             self._stack.addWidget(shell)
 
+        self._reset_leaving_module()
+
         widget = getattr(self, attr)
         idx = self._stack.indexOf(widget)
         self._stack.setCurrentIndex(idx)
         widget.load_data()
 
-        if from_dashboard and self._sidebar._is_expanded:
-            self._sidebar.set_expanded(False)
-            self._sidebar.collapse_finished.connect(
-                self._play_module_sidebar_enter, Qt.SingleShotConnection
-            )
-        elif from_dashboard:
-            self._play_module_sidebar_enter()
-        else:
-            self._sidebar.set_expanded(False)
+        self._schedule_module_sidebar_enter(idx)
 
     def _get_core_admin_config_panels(self):
         """Config-Panel-Factories fuer das Core-Modul."""
@@ -474,6 +530,17 @@ class AppRouter(QMainWindow):
             ("Smart!Scan Historie", _ss_history),
             ("E-Mail Posteingang", _email_inbox),
         ]
+
+    def _reset_leaving_module(self):
+        """Setzt den aktuell aktiven Hub in seinen Default-Zustand zurueck.
+
+        Stellt sicher, dass versteckte Sidebars (z.B. wenn der User im
+        Admin-Bereich innerhalb des Core-Moduls war) wieder sichtbar sind,
+        damit beim naechsten Oeffnen des Moduls kein inkonsistenter Zustand
+        entsteht.
+        """
+        if self._active_module == "core" and self._core_widget is not None:
+            self._core_widget.reset_to_default_view()
 
     # ------------------------------------------------------------------
     # Module Heartbeat Lifecycle
@@ -553,8 +620,13 @@ class AppRouter(QMainWindow):
         if user.is_module_admin("contact"):
             visible.append("contact_admin")
 
-        self._dashboard.set_modules(visible)
-        self._sidebar.update_modules(user)
+        # Diff-Guard: Sidebar und Dashboard nur aktualisieren wenn sich Module tatsaechlich geaendert haben
+        visible_hash = tuple(sorted(visible))
+        prev_hash = getattr(self, '_prev_visible_modules_hash', None)
+        if visible_hash != prev_hash:
+            self._prev_visible_modules_hash = visible_hash
+            self._dashboard.set_modules(visible)
+            self._sidebar.update_modules(user)
 
         module_check = {
             "core": lambda: user.has_module("core"),
@@ -583,10 +655,7 @@ class AppRouter(QMainWindow):
         hub.back_to_dashboard_requested.connect(self.show_dashboard)
         self._core_widget = hub
 
-        old = self._stack.widget(_IDX_CORE)
-        self._stack.removeWidget(old)
-        old.deleteLater()
-        self._stack.insertWidget(_IDX_CORE, hub)
+        self._replace_stack_placeholder(_IDX_CORE, hub)
 
     def _ensure_ledger(self):
         if self._ledger_widget is not None:
@@ -601,10 +670,7 @@ class AppRouter(QMainWindow):
             widget = self._create_ledger_placeholder()
         self._ledger_widget = widget
 
-        old = self._stack.widget(_IDX_LEDGER)
-        self._stack.removeWidget(old)
-        old.deleteLater()
-        self._stack.insertWidget(_IDX_LEDGER, widget)
+        self._replace_stack_placeholder(_IDX_LEDGER, widget)
 
     def _ensure_workforce(self):
         if self._workforce_widget is not None:
@@ -619,10 +685,7 @@ class AppRouter(QMainWindow):
             widget = self._create_workforce_placeholder()
         self._workforce_widget = widget
 
-        old = self._stack.widget(_IDX_WORKFORCE)
-        self._stack.removeWidget(old)
-        old.deleteLater()
-        self._stack.insertWidget(_IDX_WORKFORCE, widget)
+        self._replace_stack_placeholder(_IDX_WORKFORCE, widget)
 
     # ------------------------------------------------------------------
     # Call-Pop (Teams PSTN Screen-Pop)
@@ -635,10 +698,30 @@ class AppRouter(QMainWindow):
             logger.warning("[CALL-POP] Contact-Modul nicht freigeschaltet")
             return
         self._stop_active_module_heartbeat()
-        self._sidebar.set_expanded(False)
+        self._reset_leaving_module()
         self._ensure_contact()
+
+        # ModuleSidebar in unsichtbaren Zustand versetzen bevor View sichtbar wird
+        if self._contact_widget:
+            cs = getattr(self._contact_widget, '_sidebar', None) or getattr(self._contact_widget, '_sidebar_frame', None)
+            if isinstance(cs, ModuleSidebar):
+                cs.reset_animation_state()
+
+        # Call-Pop: Sofort wechseln ohne Fade (Geschwindigkeit vor Aesthetik)
+        self._stack.set_animated(False)
         self._stack.setCurrentIndex(_IDX_CONTACT)
-        self._start_module_heartbeat(self._contact_widget, "contact")
+        self._stack.set_animated(True)
+        self._active_module = "contact"
+
+        if self._sidebar._is_expanded:
+            self._sidebar.set_expanded(False)
+            self._sidebar.collapse_finished.connect(
+                self._play_module_sidebar_enter, Qt.SingleShotConnection
+            )
+        else:
+            self._play_module_sidebar_enter()
+
+        QTimer.singleShot(0, lambda: self._start_module_heartbeat(self._contact_widget, "contact"))
         if hasattr(self._contact_widget, 'handle_call_pop'):
             self._contact_widget.handle_call_pop(phone)
         self._bring_window_to_front()
@@ -668,10 +751,18 @@ class AppRouter(QMainWindow):
             widget = self._create_contact_placeholder()
         self._contact_widget = widget
 
-        old = self._stack.widget(_IDX_CONTACT)
-        self._stack.removeWidget(old)
-        old.deleteLater()
-        self._stack.insertWidget(_IDX_CONTACT, widget)
+        self._replace_stack_placeholder(_IDX_CONTACT, widget)
+
+    def _replace_stack_placeholder(self, index: int, widget: QWidget):
+        """Ersetzt einen Placeholder im Stack mit setUpdatesEnabled-Guard."""
+        self._stack.setUpdatesEnabled(False)
+        try:
+            old = self._stack.widget(index)
+            self._stack.removeWidget(old)
+            old.deleteLater()
+            self._stack.insertWidget(index, widget)
+        finally:
+            self._stack.setUpdatesEnabled(True)
 
     def _create_contact_placeholder(self) -> QWidget:
         w = QWidget()

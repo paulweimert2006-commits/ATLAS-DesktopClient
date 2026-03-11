@@ -10,8 +10,9 @@ import hashlib
 
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QFrame, QPushButton,
-    QStackedWidget, QLabel, QSizePolicy,
+    QLabel, QSizePolicy,
 )
+from ui.components.fade_stacked_widget import FadeStackedWidget
 from PySide6.QtCore import Signal, Qt, QTimer, QObject, QRunnable, QThreadPool
 
 from api.client import APIClient
@@ -185,7 +186,7 @@ class ProvisionHub(QWidget):
         self._nav_buttons = self._sidebar.nav_buttons
         root.addWidget(self._sidebar)
 
-        self._content_stack = QStackedWidget()
+        self._content_stack = FadeStackedWidget(fade_out_ms=80, fade_in_ms=120)
         for i in range(self._TOTAL_PANELS):
             self._content_stack.addWidget(self._create_panel_placeholder(i))
         root.addWidget(self._content_stack)

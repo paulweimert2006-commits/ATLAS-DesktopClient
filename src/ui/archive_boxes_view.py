@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
     QStackedWidget
 )
 from PySide6.QtCore import (
-    Qt, Signal, QMimeData, QTimer, QSize,
+    Qt, Signal, QMimeData, QTimer, QSize, QObject, QRunnable, QThreadPool,
     QAbstractTableModel, QModelIndex, QSortFilterProxyModel
 )
 from shiboken6 import isValid
@@ -209,10 +209,11 @@ class ArchiveBoxesView(QWidget):
         
         # SmartScan-Enabled Status cachen (fuer Kontextmenue- und Button-Sichtbarkeit)
         self._smartscan_enabled = False
-        self._load_smartscan_status()
         self.sidebar._smartscan_enabled = self._smartscan_enabled
         if hasattr(self, '_smartscan_btn'):
             self._smartscan_btn.setVisible(self._smartscan_enabled)
+        # SmartScan-Status DEFERRED laden – kein synchroner API-Call im Konstruktor
+        QTimer.singleShot(0, self._load_smartscan_status_async)
         
         # Historie-Toggle-Button: Nur sichtbar wenn Berechtigung vorhanden
         self._history_enabled = self._has_history_permission()
@@ -237,10 +238,40 @@ class ArchiveBoxesView(QWidget):
         return self._presenter
     
     def _load_smartscan_status(self):
-        """Laedt den SmartScan-Enabled-Status ueber den Presenter."""
+        """Laedt den SmartScan-Enabled-Status ueber den Presenter (synchron).
+        DEPRECATED: Nur noch fuer Legacy-Aufrufe. Neue Aufrufe nutzen _load_smartscan_status_async()."""
         self._smartscan_enabled = self._presenter.load_smartscan_status()
-    
-    
+
+    def _load_smartscan_status_async(self):
+        """Laedt den SmartScan-Enabled-Status asynchron im ThreadPool."""
+        class _SmartScanSignals(QObject):
+            finished = Signal(bool)
+
+        class _SmartScanWorker(QRunnable):
+            def __init__(self, presenter):
+                super().__init__()
+                self.signals = _SmartScanSignals()
+                self._presenter = presenter
+
+            def run(self):
+                try:
+                    result = self._presenter.load_smartscan_status()
+                except Exception:
+                    result = False
+                self.signals.finished.emit(result)
+
+        worker = _SmartScanWorker(self._presenter)
+        worker.signals.finished.connect(self._on_smartscan_status_loaded)
+        worker.setAutoDelete(True)
+        QThreadPool.globalInstance().start(worker)
+
+    def _on_smartscan_status_loaded(self, enabled: bool):
+        """Callback nach asynchronem SmartScan-Status-Laden."""
+        self._smartscan_enabled = enabled
+        self.sidebar._smartscan_enabled = enabled
+        if hasattr(self, '_smartscan_btn'):
+            self._smartscan_btn.setVisible(enabled)
+
     def _is_worker_running(self, attr_name: str) -> bool:
         """Prueft sicher ob ein Worker noch laeuft (C++-Objekt kann bereits geloescht sein)."""
         worker = getattr(self, attr_name, None)
@@ -293,8 +324,6 @@ class ArchiveBoxesView(QWidget):
             self._loading_overlay.setGeometry(self.rect())
             self._loading_overlay.raise_()
             self._loading_overlay.setVisible(True)
-            # Event-Loop kurz verarbeiten damit Overlay sofort sichtbar ist
-            QApplication.processEvents()
     
     def _hide_loading(self):
         """Versteckt das Loading-Overlay."""
@@ -792,17 +821,12 @@ class ArchiveBoxesView(QWidget):
         logger.debug("Auto-Refresh beendet")
         self._initial_load_done = True
         
-        # SmartScan-Status nur alle 5 Minuten aktualisieren (statt bei jedem
-        # 20-Sekunden-Refresh). _load_smartscan_status() ist ein SYNCHRONER
-        # API-Call auf dem Main Thread - zu haeufig verursacht UI-Haenger.
+        # SmartScan-Status alle 5 Minuten ASYNCHRON aktualisieren.
         now = datetime.now()
         last_ss_check = getattr(self, '_last_smartscan_check', None)
         if last_ss_check is None or (now - last_ss_check).total_seconds() > 300:
             self._last_smartscan_check = now
-            self._load_smartscan_status()
-            self.sidebar._smartscan_enabled = self._smartscan_enabled
-            if hasattr(self, '_smartscan_btn'):
-                self._smartscan_btn.setVisible(self._smartscan_enabled)
+            self._load_smartscan_status_async()
         
         # Einmalig: Dokumente ohne Text-Extraktion pruefen (Scan-Uploads etc.)
         if not self._missing_ai_data_checked:

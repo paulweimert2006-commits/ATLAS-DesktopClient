@@ -270,6 +270,22 @@ class AppSidebar(QFrame):
 
         if self._anim_group and self._anim_group.state() == QParallelAnimationGroup.Running:
             self._anim_group.stop()
+            # Abgebrochene Collapse-Animation: Zustand sauber abschliessen und
+            # collapse_finished emittieren, damit Downstream-Animationen nicht blockiert werden.
+            if self._pending_collapse:
+                self._pending_collapse = False
+                end_w = _W_COLLAPSED
+                self.setFixedWidth(end_w)
+                for item in self._nav_items.values():
+                    item.set_collapsed(True)
+                for lbl in self._collapsible_labels:
+                    lbl._expanded_text = lbl.text()
+                    lbl.setText("")
+                for lbl in self._collapsible_labels:
+                    effect = lbl.graphicsEffect()
+                    if isinstance(effect, QGraphicsOpacityEffect):
+                        effect.setOpacity(1.0)
+                self.collapse_finished.emit()
 
         self._pending_collapse = not expanded
 
@@ -325,18 +341,22 @@ class AppSidebar(QFrame):
                 group.addAnimation(fade)
 
     def _on_anim_finished(self):
-        if self._pending_collapse:
-            self._pending_collapse = False
-            for item in self._nav_items.values():
-                item.set_collapsed(True)
-            for lbl in self._collapsible_labels:
-                lbl._expanded_text = lbl.text()
-                lbl.setText("")
+        self.setUpdatesEnabled(False)
+        try:
+            if self._pending_collapse:
+                self._pending_collapse = False
+                for item in self._nav_items.values():
+                    item.set_collapsed(True)
+                for lbl in self._collapsible_labels:
+                    lbl._expanded_text = lbl.text()
+                    lbl.setText("")
 
-        for lbl in self._collapsible_labels:
-            effect = lbl.graphicsEffect()
-            if isinstance(effect, QGraphicsOpacityEffect):
-                effect.setOpacity(1.0)
+            for lbl in self._collapsible_labels:
+                effect = lbl.graphicsEffect()
+                if isinstance(effect, QGraphicsOpacityEffect):
+                    effect.setOpacity(1.0)
+        finally:
+            self.setUpdatesEnabled(True)
 
         if not self._is_expanded:
             self.collapse_finished.emit()
@@ -384,7 +404,23 @@ class AppSidebar(QFrame):
             item.setChecked(key == item_id)
 
     def update_modules(self, user: User):
-        """Aktualisiert die Module nach einem Heartbeat-Update."""
+        """Aktualisiert die Module nach einem Heartbeat-Update.
+        Diff-Vergleich: Nur bei tatsaechlicher Aenderung neu aufbauen."""
+        new_keys = []
+        for module_key in _MODULE_META:
+            if user.has_module(module_key):
+                new_keys.append(module_key)
+
+        current_keys = [
+            getattr(w, '_item_id', None)
+            for w in (self._module_container.itemAt(i).widget()
+                      for i in range(self._module_container.count()))
+            if w is not None
+        ] if self._module_container else []
+
+        if new_keys == current_keys:
+            return
+
         self.set_user(user)
 
     # ------------------------------------------------------------------
