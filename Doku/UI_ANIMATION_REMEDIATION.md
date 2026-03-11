@@ -272,8 +272,8 @@ Von 37 dokumentierten Findings wurden **30 behoben** (inkl. Findings #25/#26 via
 ### Finding #38 – Preload blockiert UI-Thread (RESOLVED)
 
 **Dateien:** `app_router.py`
-**Änderung:** `QTimer.singleShot(0, ...)` durch `QTimer.singleShot(50, ...)` ersetzt. Konstante `_PRELOAD_DELAY_MS = 50`.
-**Warum besser:** `singleShot(0)` läuft im nächsten Event-Loop-Tick; bei schwerer `ensure_fn()`-Arbeit (Widget-Erstellung, Stylesheet-Parsing) blockiert der UI-Thread. 50ms lassen Frames zwischen Modul-Loads rendern.
+**Änderung:** `QTimer.singleShot(0, ...)` durch `QTimer.singleShot(75, ...)` ersetzt. Konstante `_PRELOAD_DELAY_MS = 75`.
+**Warum besser:** `singleShot(0)` läuft im nächsten Event-Loop-Tick; bei schwerer `ensure_fn()`-Arbeit (Widget-Erstellung, Stylesheet-Parsing) blockiert der UI-Thread. 75ms lassen Frames zwischen Modul-Loads rendern.
 **Regressionsrisiko:** Keines. Preload dauert minimal länger, UI bleibt responsiv.
 
 ### Finding #39 – Scrollbar- und List-Performance (DOCUMENTED)

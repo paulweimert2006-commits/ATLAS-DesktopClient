@@ -43,8 +43,8 @@ _IDX_CONTACT = 4
 
 # Verzoegerung zwischen Modul-Preloads (ms). Ermoeglicht UI-Thread-Atmung:
 # ensure_fn() kann Widget-Erstellung/Stylesheet-Parsing machen; mit 0ms
-# blockiert der naechste Event-Loop-Tick. 50–100ms lassen Frames rendern.
-_PRELOAD_DELAY_MS = 50
+# blockiert der naechste Event-Loop-Tick. 75–100ms lassen Frames rendern.
+_PRELOAD_DELAY_MS = 75
 
 
 class AppRouter(QMainWindow):
