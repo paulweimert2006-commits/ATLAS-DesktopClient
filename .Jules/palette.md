@@ -1,0 +1,4 @@
+## 2026-03-11 - BiPRO UI Simplification and Progressive Disclosure
+**Learning:** Consolidating secondary actions (e.g., Mail Fetch, Single VU Fetch) into a "More" menu (•••) significantly reduces cognitive load in a complex technician-style interface without losing functionality. Adding keyboard shortcut hints directly to localized tooltips improves discoverability for power users. Using emojis in button text provides immediate functional recognition and a touch of "delight."
+
+**Action:** For complex action bars, identify the primary interaction path and move secondary actions into a consolidated menu. Always define `setAccessibleName` for simplified UI elements to ensure screen reader users have full context. In PySide6/Qt, ensure actions with shortcuts are added to the parent widget via `self.addAction(action)` so they trigger globally even when the menu is closed.
