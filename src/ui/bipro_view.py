@@ -1740,10 +1740,11 @@ class BiPROView(QWidget):
             BIPRO_HEADER, BIPRO_VIEW_TOGGLE_STANDARD, BIPRO_VIEW_TOGGLE_ADMIN,
             BIPRO_FETCH_ALL, BIPRO_FETCH_ALL_TOOLTIP, BIPRO_FETCH_ALL_LAST_INFO,
             BIPRO_MAIL_FETCH_TOOLTIP,
-            BIPRO_FETCH_ONLY_MAIL, BIPRO_FETCH_ONLY_VU,
+            BIPRO_FETCH_ONLY_MAIL, BIPRO_FETCH_ONLY_VU, BIPRO_FETCH_ONLY_VU_TOOLTIP,
             BIPRO_SHOW_DETAILS, BIPRO_HIDE_DETAILS, BIPRO_GO_TO_ARCHIVE,
-            BIPRO_ACK_BUTTON, BIPRO_ACK_LAST_INFO,
+            BIPRO_ACK_BUTTON, BIPRO_ACK_LAST_INFO, BIPRO_ACK_TOOLTIP,
             BIPRO_PREVIEW_REFRESH, BIPRO_PREVIEW_LOADING, BIPRO_PREVIEW_EMPTY,
+            BIPRO_PREVIEW_REFRESH_TOOLTIP, BIPRO_ADMIN_TOGGLE_TOOLTIP,
         )
 
         layout = QVBoxLayout(self)
@@ -1766,7 +1767,8 @@ class BiPROView(QWidget):
         self._refresh_btn = QPushButton(BIPRO_PREVIEW_REFRESH)
         self._refresh_btn.setFixedHeight(28)
         self._refresh_btn.setStyleSheet(get_button_ghost_style())
-        self._refresh_btn.setToolTip("Vorschau manuell aktualisieren (max. 1x / 30s)")
+        self._refresh_btn.setToolTip(BIPRO_PREVIEW_REFRESH_TOOLTIP)
+        self._refresh_btn.setShortcut("Ctrl+R")
         self._refresh_btn.clicked.connect(self._on_manual_refresh)
         header_row.addWidget(self._refresh_btn)
 
@@ -1791,6 +1793,8 @@ class BiPROView(QWidget):
                 border-color: {PRIMARY_900};
             }}
         """)
+        self._admin_toggle.setToolTip(BIPRO_ADMIN_TOGGLE_TOOLTIP)
+        self._admin_toggle.setShortcut("Ctrl+T")
         self._admin_toggle.toggled.connect(self._toggle_view_mode)
         self._admin_toggle.setVisible(self._is_admin)
         header_row.addWidget(self._admin_toggle)
@@ -1826,12 +1830,15 @@ class BiPROView(QWidget):
         self.mail_fetch_btn.setFixedHeight(30)
         self.mail_fetch_btn.setStyleSheet(get_button_secondary_style())
         self.mail_fetch_btn.setToolTip(BIPRO_MAIL_FETCH_TOOLTIP)
+        self.mail_fetch_btn.setShortcut("Ctrl+M")
         self.mail_fetch_btn.clicked.connect(self._fetch_mails)
         action_bar.addWidget(self.mail_fetch_btn)
 
         self.fetch_single_vu_btn = QPushButton(BIPRO_FETCH_ONLY_VU)
         self.fetch_single_vu_btn.setFixedHeight(30)
         self.fetch_single_vu_btn.setStyleSheet(get_button_secondary_style())
+        self.fetch_single_vu_btn.setToolTip(BIPRO_FETCH_ONLY_VU_TOOLTIP)
+        self.fetch_single_vu_btn.setShortcut("Shift+F5")
         self.fetch_single_vu_btn.clicked.connect(self._fetch_selected_vu)
         action_bar.addWidget(self.fetch_single_vu_btn)
 
@@ -1840,10 +1847,8 @@ class BiPROView(QWidget):
         self._ack_btn = QPushButton(BIPRO_ACK_BUTTON)
         self._ack_btn.setFixedHeight(36)
         self._ack_btn.setStyleSheet(get_button_danger_style())
-        self._ack_btn.setToolTip(
-            "Quittiert ALLE gelisteten Lieferungen bei allen Versicherern.\n"
-            "ACHTUNG: Quittierte Lieferungen werden vom Server geloescht!"
-        )
+        self._ack_btn.setToolTip(BIPRO_ACK_TOOLTIP)
+        self._ack_btn.setShortcut("Ctrl+Alt+A")
         self._ack_btn.clicked.connect(self._acknowledge_all_listed)
         action_bar.addWidget(self._ack_btn)
 
