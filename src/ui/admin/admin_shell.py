@@ -1,38 +1,30 @@
 """
 ACENCIA ATLAS - Admin-Shell (Sidebar + Panel-Wechsel mit Lazy Loading)
 
-Vollbild-Layout mit eigener Sidebar-Navigation (16 Bereiche):
+Vollbild-Layout mit eigener Sidebar-Navigation (11 Panels):
 
 VERWALTUNG:
 0. Nutzerverwaltung (CRUD)
 1. Sessions (Einsicht + Kill)
-2. Passwoerter (PDF/ZIP Passwort-Verwaltung) #####- musss in die Core Admin verwaltung
+2. Passwoerter (PDF/ZIP Passwort-Verwaltung)
 
 MONITORING:
 3. Aktivitaetslog (Filter + Pagination)
 4. KI-Kosten (Verarbeitungshistorie + Kosten-Statistiken + Request-Details)
 5. Releases (Auto-Update Verwaltung)
 
-VERARBEITUNG:
-6. KI-Klassifikation (Prompts, Modelle, Pipeline-Visualisierung)
-7. KI-Provider (API-Key-Verwaltung OpenRouter/OpenAI)
-8. Modell-Preise (Kostenberechnung pro Modell)
-9. Dokumenten-Regeln (Automatische Aktionen bei Duplikaten/leeren Seiten)
-
-E-MAIL:
-10. E-Mail-Konten (SMTP/IMAP Verwaltung)
-11. Smart!Scan (Einstellungen)
-12. Smart!Scan Historie
-13. E-Mail Posteingang
-
 KOMMUNIKATION:
-14. Mitteilungen (System + Admin-Mitteilungen verwalten)
+6. Mitteilungen (System + Admin-Mitteilungen verwalten)
 
 SYSTEM:
-15. Server-Gesundheit (Health-Check mit ~35 Einzel-Checks + Trend-Vergleich)
-16. Migrationen (DB-Migrationen aus setup/ anzeigen + ausfuehren)
+7. Server-Gesundheit (Health-Check mit ~35 Einzel-Checks + Trend-Vergleich)
+8. Migrationen (DB-Migrationen aus setup/ anzeigen + ausfuehren)
 
-Extrahiert aus admin_view.py (Schritt 4 Refactoring).
+SUPPORT (Super-Admin):
+9. Support & Feedback (Eingereichte Feedbacks, Feature-Wuensche, Bug-Reports)
+
+SERVER (Super-Admin):
+10. Server-Verwaltung (VPS-Steuerung)
 """
 
 import logging
@@ -62,7 +54,7 @@ from ui.styles.tokens import (
 
 logger = logging.getLogger(__name__)
 
-NUM_PANELS = 10
+NUM_PANELS = 11
 
 
 class AdminNavButton(QPushButton):
@@ -227,9 +219,13 @@ class AdminView(QWidget):
 
         user = self._auth_api.current_user if self._auth_api else None
         if user and user.is_super_admin:
+            add_section(texts.ADMIN_SUPPORT_SECTION)
+            self._btn_support = add_nav("›", texts.ADMIN_SUPPORT_NAV, 9)
+
             add_section(texts.SRVMGMT_SECTION)
-            self._btn_server_mgmt = add_nav("›", texts.SRVMGMT_TITLE, 9)
+            self._btn_server_mgmt = add_nav("›", texts.SRVMGMT_TITLE, 10)
         else:
+            self._btn_support = None
             self._btn_server_mgmt = None
         
         sb_layout.addStretch()
@@ -275,7 +271,7 @@ class AdminView(QWidget):
         self._content_stack.insertWidget(index, panel)
     
     def _create_panel(self, index: int) -> Optional[QWidget]:
-        """Erstellt das Panel fuer den gegebenen Index (9 Panels)."""
+        """Erstellt das Panel fuer den gegebenen Index (11 Panels)."""
         tm = getattr(self, '_toast_manager', None)
         ac = self._api_client
 
@@ -325,6 +321,9 @@ class AdminView(QWidget):
                 api_client=ac, toast_manager=tm, admin_api=self._admin_api
             )
         elif index == 9:
+            from ui.admin.panels.support_feedback_panel import SupportFeedbackPanel
+            return SupportFeedbackPanel(api_client=ac, toast_manager=tm)
+        elif index == 10:
             from ui.admin.panels.server_mgmt_panel import ServerMgmtPanel
             return ServerMgmtPanel(api_client=ac, toast_manager=tm)
 

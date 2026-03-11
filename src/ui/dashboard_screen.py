@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QSizePolicy, QFrame, QScrollArea,
     QGraphicsBlurEffect, QGraphicsOpacityEffect,
     QTabWidget, QRadioButton, QButtonGroup,
+    QGraphicsDropShadowEffect,
 )
 from PySide6.QtCore import Signal, Qt, QTimer, QThread, QPropertyAnimation, QEasingCurve, QSettings
 from PySide6.QtGui import QPainter, QColor
@@ -643,7 +644,17 @@ class _SettingsOverlay(QWidget):
 
     # -- Animation -------------------------------------------------------
 
+    def _ensure_opacity_effect(self):
+        try:
+            self._opacity.opacity()
+        except (RuntimeError, AttributeError):
+            self._opacity = QGraphicsOpacityEffect(self)
+            self._opacity.setOpacity(0.0)
+            self.setGraphicsEffect(self._opacity)
+
     def show_animated(self):
+        self._ensure_opacity_effect()
+        self._opacity.setOpacity(0.0)
         self.show()
         self.raise_()
         self.setFocus()
@@ -655,6 +666,7 @@ class _SettingsOverlay(QWidget):
         self._anim.start()
 
     def close_animated(self, callback=None):
+        self._ensure_opacity_effect()
         self._anim = QPropertyAnimation(self._opacity, b"opacity")
         self._anim.setDuration(150)
         self._anim.setStartValue(1.0)
@@ -1051,6 +1063,182 @@ class DashboardScreen(QWidget):
         self._settings_overlay.save_requested.connect(self._on_settings_saved)
         self._settings_overlay.change_password_requested.connect(self._on_change_password_requested)
 
+        self._build_feedback_pill()
+        self._build_feedback_overlay()
+
+    # ------------------------------------------------------------------
+    # Feedback pill button + overlay
+    # ------------------------------------------------------------------
+
+    def _build_feedback_pill(self):
+        self._feedback_btn = QPushButton(f"\U0001F4AC  {texts.FEEDBACK_BTN_TEXT}")
+        self._feedback_btn.setParent(self)
+        self._feedback_btn.setCursor(Qt.PointingHandCursor)
+        self._feedback_btn.setToolTip(texts.FEEDBACK_BTN_TOOLTIP)
+        self._feedback_btn.setFixedHeight(44)
+        self._feedback_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {PRIMARY_900};
+                color: {TEXT_INVERSE};
+                border: 1px solid {PRIMARY_500};
+                border-radius: 22px;
+                padding: 0 20px;
+                font-family: {_tokens.FONT_BODY};
+                font-size: {FONT_SIZE_BODY};
+                font-weight: {FONT_WEIGHT_MEDIUM};
+            }}
+            QPushButton:hover {{
+                background-color: rgba(0, 31, 61, 0.85);
+                border-color: {ACCENT_500};
+            }}
+            QPushButton:pressed {{
+                background-color: rgba(0, 31, 61, 0.95);
+            }}
+        """)
+        shadow = QGraphicsDropShadowEffect(self._feedback_btn)
+        shadow.setBlurRadius(16)
+        shadow.setXOffset(0)
+        shadow.setYOffset(4)
+        shadow.setColor(QColor(0, 31, 61, 50))
+        self._feedback_btn.setGraphicsEffect(shadow)
+        self._feedback_btn.clicked.connect(self._open_feedback)
+        self._feedback_btn.show()
+        self._feedback_btn.raise_()
+
+    def _build_feedback_overlay(self):
+        from ui.feedback_overlay import FeedbackOverlay
+
+        self._feedback_overlay = FeedbackOverlay(self)
+        self._feedback_overlay.hide()
+        self._feedback_overlay.close_requested.connect(self._close_feedback)
+        self._feedback_overlay.submit_requested.connect(self._on_feedback_submitted)
+
+    def _position_feedback_pill(self):
+        if not hasattr(self, '_feedback_btn'):
+            return
+        btn = self._feedback_btn
+        btn.adjustSize()
+        x = self.width() - btn.width() - 24
+        y = self.height() - btn.height() - 56
+        btn.move(x, y)
+        btn.raise_()
+
+    def _open_feedback(self):
+        try:
+            if self._feedback_overlay.isVisible():
+                return
+            self._feedback_overlay.reset()
+            blur = QGraphicsBlurEffect()
+            blur.setBlurRadius(8)
+            self._content.setGraphicsEffect(blur)
+            self._feedback_btn.setEnabled(False)
+            self._feedback_overlay.setGeometry(self.rect())
+            self._feedback_overlay.show_animated()
+        except RuntimeError as e:
+            logger.error("Feedback-Overlay konnte nicht geoeffnet werden: %s", e)
+            self._rebuild_feedback_overlay()
+
+    def _close_feedback(self):
+        try:
+            if not self._feedback_overlay.isVisible():
+                return
+            self._feedback_overlay.close_animated(
+                callback=self._on_feedback_close_done
+            )
+        except RuntimeError as e:
+            logger.error("Feedback-Overlay konnte nicht geschlossen werden: %s", e)
+            self._content.setGraphicsEffect(None)
+            self._feedback_btn.setEnabled(True)
+
+    def _on_feedback_close_done(self):
+        try:
+            self._content.setGraphicsEffect(None)
+        except RuntimeError:
+            pass
+        try:
+            self._feedback_btn.setEnabled(True)
+        except RuntimeError:
+            pass
+
+    def _rebuild_feedback_overlay(self):
+        """Erstellt das Feedback-Overlay neu, wenn es in einem ungueltigen Zustand ist."""
+        try:
+            old = getattr(self, '_feedback_overlay', None)
+            if old:
+                old.hide()
+                old.deleteLater()
+        except RuntimeError:
+            pass
+        self._build_feedback_overlay()
+        logger.info("Feedback-Overlay wurde neu erstellt")
+
+    def _on_feedback_submitted(self, payload: dict):
+        logger.info("Feedback payload collected: type=%s, prio=%s",
+                     payload.get('feedback_type'), payload.get('priority'))
+        self._close_feedback()
+
+        if hasattr(self, '_api_client') and self._api_client:
+            self._submit_feedback_async(payload)
+        else:
+            self._show_feedback_toast(True)
+
+    def _submit_feedback_async(self, payload: dict):
+        """Sendet Feedback im Hintergrund-Thread an die API."""
+        from api.support import SupportAPI
+
+        class _Worker(QThread):
+            finished = Signal(bool, str)
+
+            def __init__(self, api_client, data, parent=None):
+                super().__init__(parent)
+                self._api_client = api_client
+                self._data = data
+
+            def run(self):
+                try:
+                    support_api = SupportAPI(self._api_client)
+                    support_api.submit_feedback(
+                        feedback_type=self._data.get("feedback_type", "feedback"),
+                        priority=self._data.get("priority", "low"),
+                        content=self._data.get("content", ""),
+                        subject=self._data.get("subject", ""),
+                        reproduction_steps=self._data.get("reproduction_steps", ""),
+                        screenshot_path=self._data.get("screenshot_path"),
+                        include_logs=self._data.get("include_logs", False),
+                    )
+                    self.finished.emit(True, "")
+                except Exception as e:
+                    self.finished.emit(False, str(e))
+
+        self._feedback_worker = _Worker(self._api_client, payload, parent=self)
+        self._feedback_worker.finished.connect(self._on_feedback_api_done)
+        self._feedback_worker.start()
+
+    def _on_feedback_api_done(self, success: bool, error_msg: str):
+        self._show_feedback_toast(success)
+        if not success:
+            logger.warning("Feedback-Submit fehlgeschlagen: %s", error_msg)
+
+    def _show_feedback_toast(self, success: bool):
+        try:
+            tm = self._find_toast_manager()
+            if tm:
+                if success:
+                    tm.show_success(texts.FEEDBACK_SUCCESS)
+                else:
+                    tm.show_error(texts.FEEDBACK_ERROR)
+        except Exception:
+            logger.debug("Toast not available for feedback confirmation")
+
+    def _find_toast_manager(self):
+        """Sucht den ToastManager in der Widget-Hierarchie."""
+        widget = self.parent()
+        while widget:
+            if hasattr(widget, '_toast_manager'):
+                return widget._toast_manager
+            widget = widget.parent()
+        return None
+
     # ------------------------------------------------------------------
     # Settings overlay
     # ------------------------------------------------------------------
@@ -1127,10 +1315,14 @@ class DashboardScreen(QWidget):
 
         old_content = self._content
         old_overlay = self._settings_overlay
+        old_feedback_overlay = getattr(self, '_feedback_overlay', None)
+        old_feedback_btn = getattr(self, '_feedback_btn', None)
 
         old_content.setGraphicsEffect(None)
         old_content.hide()
         old_overlay.hide()
+        if old_feedback_overlay:
+            old_feedback_overlay.hide()
 
         self._setup_ui()
         self._content.setGeometry(self.rect())
@@ -1138,6 +1330,10 @@ class DashboardScreen(QWidget):
 
         old_content.deleteLater()
         old_overlay.deleteLater()
+        if old_feedback_overlay:
+            old_feedback_overlay.deleteLater()
+        if old_feedback_btn:
+            old_feedback_btn.deleteLater()
 
         self._clock_timer.start(1_000)
 
@@ -1154,6 +1350,9 @@ class DashboardScreen(QWidget):
             self._content.setGeometry(self.rect())
         if hasattr(self, '_settings_overlay') and self._settings_overlay.isVisible():
             self._settings_overlay.setGeometry(self.rect())
+        if hasattr(self, '_feedback_overlay') and self._feedback_overlay.isVisible():
+            self._feedback_overlay.setGeometry(self.rect())
+        self._position_feedback_pill()
 
     # ------------------------------------------------------------------
     # Public API
