@@ -341,22 +341,21 @@ class AppSidebar(QFrame):
                 group.addAnimation(fade)
 
     def _on_anim_finished(self):
-        self.setUpdatesEnabled(False)
-        try:
-            if self._pending_collapse:
-                self._pending_collapse = False
-                for item in self._nav_items.values():
-                    item.set_collapsed(True)
-                for lbl in self._collapsible_labels:
-                    lbl._expanded_text = lbl.text()
-                    lbl.setText("")
-
+        # Kein setUpdatesEnabled-Guard: Unterdrueckt Repaints und kann waehrend/
+        # nach der Animation zu sichtbarem Freeze-Frame fuehren. Die wenigen
+        # State-Aenderungen (Nav-Items, Labels, Opacity) sind akzeptabel.
+        if self._pending_collapse:
+            self._pending_collapse = False
+            for item in self._nav_items.values():
+                item.set_collapsed(True)
             for lbl in self._collapsible_labels:
-                effect = lbl.graphicsEffect()
-                if isinstance(effect, QGraphicsOpacityEffect):
-                    effect.setOpacity(1.0)
-        finally:
-            self.setUpdatesEnabled(True)
+                lbl._expanded_text = lbl.text()
+                lbl.setText("")
+
+        for lbl in self._collapsible_labels:
+            effect = lbl.graphicsEffect()
+            if isinstance(effect, QGraphicsOpacityEffect):
+                effect.setOpacity(1.0)
 
         if not self._is_expanded:
             self.collapse_finished.emit()

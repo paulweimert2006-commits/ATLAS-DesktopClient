@@ -41,6 +41,11 @@ _IDX_LEDGER = 2
 _IDX_WORKFORCE = 3
 _IDX_CONTACT = 4
 
+# Verzoegerung zwischen Modul-Preloads (ms). Ermoeglicht UI-Thread-Atmung:
+# ensure_fn() kann Widget-Erstellung/Stylesheet-Parsing machen; mit 0ms
+# blockiert der naechste Event-Loop-Tick. 50–100ms lassen Frames rendern.
+_PRELOAD_DELAY_MS = 50
+
 
 class AppRouter(QMainWindow):
     """Router-Shell: Sidebar links + Content-Stack rechts."""
@@ -159,7 +164,7 @@ class AppRouter(QMainWindow):
 
         self._preload_queue = self._build_preload_queue(user)
         if self._preload_queue:
-            QTimer.singleShot(0, self._preload_next_module)
+            QTimer.singleShot(_PRELOAD_DELAY_MS, self._preload_next_module)
 
     # ------------------------------------------------------------------
     # Boot-Preload
@@ -188,7 +193,7 @@ class AppRouter(QMainWindow):
         except Exception:
             logger.exception("Modul-Preload fehlgeschlagen")
         if self._preload_queue:
-            QTimer.singleShot(0, self._preload_next_module)
+            QTimer.singleShot(_PRELOAD_DELAY_MS, self._preload_next_module)
 
     # ------------------------------------------------------------------
     # Navigation

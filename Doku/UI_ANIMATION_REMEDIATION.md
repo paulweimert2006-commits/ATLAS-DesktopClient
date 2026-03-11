@@ -262,12 +262,25 @@ Von 37 dokumentierten Findings wurden **30 behoben** (inkl. Findings #25/#26 via
 **Status:** Deferred.
 **Begründung:** Phasen-Aufbau des Dashboards erfordert signifikante Architekturänderung mit Risiko für Timing-Probleme bei der Datenlade-Reihenfolge.
 
-### Finding #37 – Batch-Repaints nach Collapse-Animation (RESOLVED)
+### Finding #37 – Batch-Repaints nach Collapse-Animation (REVISED)
 
 **Dateien:** `components/sidebar.py`
-**Änderung:** `setUpdatesEnabled(False/True)` um die Post-Animation-Loops in `_on_anim_finished()`.
-**Warum besser:** Nur ein einziger Repaint nach allen Text-/Opacity-Änderungen statt N einzelne.
+**Ursprünglich:** `setUpdatesEnabled(False/True)` um die Post-Animation-Loops.
+**Revision:** Guard entfernt. `setUpdatesEnabled(False)` unterdrückt alle Repaints und kann während/nach der Animation zu sichtbarem Freeze-Frame führen. Die wenigen State-Änderungen (Nav-Items, Labels, Opacity) sind ohne Batch akzeptabel.
 **Regressionsrisiko:** Keines.
+
+### Finding #38 – Preload blockiert UI-Thread (RESOLVED)
+
+**Dateien:** `app_router.py`
+**Änderung:** `QTimer.singleShot(0, ...)` durch `QTimer.singleShot(50, ...)` ersetzt. Konstante `_PRELOAD_DELAY_MS = 50`.
+**Warum besser:** `singleShot(0)` läuft im nächsten Event-Loop-Tick; bei schwerer `ensure_fn()`-Arbeit (Widget-Erstellung, Stylesheet-Parsing) blockiert der UI-Thread. 50ms lassen Frames zwischen Modul-Loads rendern.
+**Regressionsrisiko:** Keines. Preload dauert minimal länger, UI bleibt responsiv.
+
+### Finding #39 – Scrollbar- und List-Performance (DOCUMENTED)
+
+**Status:** Empfehlungen dokumentiert in `Doku/UI_LIST_PERFORMANCE.md`.
+**Kernpunkte:** QTableView+QAbstractTableModel (archive_boxes bereits umgesetzt), QListView+Delegate für Listen, fetchMore/canFetchMore für On-Demand-Loading (erfordert API-Pagination).
+**Legacy:** `archive_view.py` nutzt noch QTableWidget; Migration analog archive_boxes empfohlen.
 
 ---
 
@@ -275,12 +288,12 @@ Von 37 dokumentierten Findings wurden **30 behoben** (inkl. Findings #25/#26 via
 
 | Datei | Findings | Änderungstyp |
 |-------|----------|-------------|
-| `app_router.py` | #9, #16, #18, #21, #27, #29 | Diff-Guard, setUpdatesEnabled, Animation-Sequencing, Signal-Bereinigung |
+| `app_router.py` | #9, #16, #18, #21, #27, #29, #38 | Diff-Guard, setUpdatesEnabled, Animation-Sequencing, Signal-Bereinigung, Preload-Delay |
 | `archive_boxes_view.py` | #1, #3, #14 | Async SmartScan, processEvents-Entfernung |
 | `main_hub.py` | #2 | Async SmartScan-Status |
 | `dashboard_screen.py` | #11, #20, #22, #23, #28, #30, #31 | Diff-Guard, Blur-Entfernung, setUpdatesEnabled, Animation-Stop |
 | `feedback_overlay.py` | #20 | Animation-Stop-Guard |
-| `components/sidebar.py` | #19, #24, #37 | Collapse-Guard, Diff-Update, Batch-Repaint |
+| `components/sidebar.py` | #19, #24, #37 | Collapse-Guard, Diff-Update, setUpdatesEnabled entfernt |
 | `components/module_sidebar.py` | #17, #32 | Reduzierte Update-Frequenz |
 | `components/fade_stacked_widget.py` | #25, #26 | **NEU:** Drop-in FadeStackedWidget |
 | `archive/widgets.py` | #15 | processEvents-Entfernung |
