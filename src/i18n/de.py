@@ -3695,3 +3695,8 @@ DASHBOARD_ROLE_ADMIN = "Admin"
 DASHBOARD_ROLE_SUPER_ADMIN = "Super-Admin"
 DASHBOARD_ROLE_USER = "Benutzer"
 DASHBOARD_LAST_LOGIN = "Letzter Login: {time}"
+
+# === System Tray ===
+TRAY_TOOLTIP = "ACENCIA ATLAS"
+TRAY_SHOW_WINDOW = "ATLAS oeffnen"
+TRAY_QUIT = "ATLAS beenden"

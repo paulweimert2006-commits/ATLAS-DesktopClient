@@ -12,9 +12,9 @@ import warnings
 
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QMessageBox, QApplication,
+    QLabel, QMessageBox, QApplication, QSystemTrayIcon, QMenu,
 )
-from PySide6.QtGui import QIcon
+from PySide6.QtGui import QIcon, QAction, QCloseEvent
 from PySide6.QtCore import Qt, QTimer
 
 from api.client import APIClient
@@ -829,6 +829,70 @@ class AppRouter(QMainWindow):
         return w
 
     # ------------------------------------------------------------------
+    # System Tray
+    # ------------------------------------------------------------------
+
+    def setup_tray_icon(self):
+        """Erstellt das System-Tray-Icon mit Kontextmenue."""
+        icon_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "assets", "icon.ico"
+        )
+        icon = QIcon(icon_path) if os.path.exists(icon_path) else QIcon()
+
+        self._tray_icon = QSystemTrayIcon(icon, self)
+        self._tray_icon.setToolTip(texts.TRAY_TOOLTIP)
+
+        tray_menu = QMenu()
+        show_action = QAction(texts.TRAY_SHOW_WINDOW, self)
+        show_action.triggered.connect(self._tray_show_window)
+        tray_menu.addAction(show_action)
+
+        tray_menu.addSeparator()
+
+        quit_action = QAction(texts.TRAY_QUIT, self)
+        quit_action.triggered.connect(self._tray_quit)
+        tray_menu.addAction(quit_action)
+
+        self._tray_icon.setContextMenu(tray_menu)
+        self._tray_icon.activated.connect(self._on_tray_activated)
+        self._tray_icon.show()
+
+        self._force_quit = False
+
+    def _on_tray_activated(self, reason):
+        if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
+            self._tray_show_window()
+
+    def _tray_show_window(self):
+        """Fenster aus dem Tray wiederherstellen."""
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
+    def _tray_quit(self):
+        """App komplett beenden (ueber Tray-Menue)."""
+        self._force_quit = True
+        self.close()
+
+    def closeEvent(self, event: QCloseEvent):
+        """Fenster verstecken statt App beenden (Minimize-to-Tray)."""
+        if getattr(self, '_force_quit', False):
+            self._heartbeat.stop()
+            self._stop_active_module_heartbeat()
+            if hasattr(self, '_tray_icon'):
+                self._tray_icon.hide()
+            event.accept()
+            QApplication.instance().quit()
+            return
+
+        if hasattr(self, '_tray_icon') and self._tray_icon.isVisible():
+            self.hide()
+            event.ignore()
+            return
+
+        event.accept()
+
+    # ------------------------------------------------------------------
     # Logout
     # ------------------------------------------------------------------
 
@@ -842,12 +906,14 @@ class AppRouter(QMainWindow):
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply == QMessageBox.StandardButton.Yes:
+            self._force_quit = True
             self._heartbeat.stop()
             self._stop_active_module_heartbeat()
             self.auth_api.logout()
             self.close()
 
     def _on_forced_logout(self):
+        self._force_quit = True
         self._heartbeat.stop()
         self._stop_active_module_heartbeat()
         self.auth_api.logout()
