@@ -100,6 +100,7 @@ class AppRouter(QMainWindow):
         self._pending_from_dashboard: bool = False
         self._pending_exit_sidebar: ModuleSidebar | None = None
         self._pending_action: str | None = None
+        self._pending_reset_module: str | None = None
 
         app_version = self._read_version()
 
@@ -202,25 +203,37 @@ class AppRouter(QMainWindow):
     def show_dashboard(self):
         """Zeigt das Dashboard (Index 0)."""
         old_sidebar = self._get_module_sidebar() if self._active_module else None
+        leaving_module = self._active_module
 
         if old_sidebar:
             self._pending_exit_sidebar = old_sidebar
+            self._pending_reset_module = leaving_module
             self._safe_connect_exit(old_sidebar, self._on_exit_finished_show_dashboard)
             old_sidebar.play_exit_animation()
+            # Parallel: Dashboard-Wechsel sofort starten, aber den
+            # reset_leaving_module verschieben bis Exit fertig ist –
+            # _restore_sidebar() wuerde sonst die laufende Exit-Animation
+            # abbrechen und einen sichtbaren Ruckler erzeugen.
+            self._stop_active_module_heartbeat()
+            self._active_module = None
+            self._stack.setCurrentIndex(_IDX_DASHBOARD)
+            self._sidebar.set_active("dashboard")
+            QTimer.singleShot(0, lambda: self._sidebar.set_expanded(True))
             return
 
         self._do_show_dashboard()
 
     def _on_exit_finished_show_dashboard(self):
-        """Callback nach Exit-Animation: zeigt das Dashboard."""
+        """Callback nach Exit-Animation: raeume alte Sidebar auf und reset Modul."""
         if self._pending_exit_sidebar:
             self._safe_disconnect_exit(self._pending_exit_sidebar, self._on_exit_finished_show_dashboard)
             self._pending_exit_sidebar.reset_animation_state()
             self._pending_exit_sidebar = None
-        QTimer.singleShot(0, self._do_show_dashboard)
+
+        self._deferred_reset_leaving_module()
 
     def _do_show_dashboard(self):
-        """Fuehrt den eigentlichen Wechsel zum Dashboard durch."""
+        """Fuehrt den eigentlichen Wechsel zum Dashboard durch (ohne Exit-Animation)."""
         self._stop_active_module_heartbeat()
         self._reset_leaving_module()
         self._active_module = None
@@ -241,6 +254,7 @@ class AppRouter(QMainWindow):
     def _open_module(self, module_id: str):
         from_dashboard = self._active_module is None
         from_module = not from_dashboard
+        leaving_module = self._active_module
 
         old_sidebar = self._get_module_sidebar() if from_module else None
 
@@ -248,30 +262,35 @@ class AppRouter(QMainWindow):
             self._pending_module_id = module_id
             self._pending_from_dashboard = False
             self._pending_exit_sidebar = old_sidebar
+            self._pending_reset_module = leaving_module
             self._safe_connect_exit(old_sidebar, self._on_exit_finished_open_module)
             old_sidebar.play_exit_animation()
+            # Parallel: Fade-Transition + View-Switch sofort starten.
+            # reset_leaving_module wird ins Exit-Cleanup verschoben,
+            # damit _restore_sidebar() nicht die laufende Animation killt.
+            self._do_open_module(module_id, False, skip_reset=True)
             return
 
         self._do_open_module(module_id, from_dashboard)
 
     def _on_exit_finished_open_module(self):
-        """Callback nach Exit-Animation: oeffnet das gepufferte Modul."""
+        """Callback nach Exit-Animation: raeume alte Sidebar auf und reset Modul."""
         if self._pending_exit_sidebar:
             self._safe_disconnect_exit(self._pending_exit_sidebar, self._on_exit_finished_open_module)
             self._pending_exit_sidebar.reset_animation_state()
             self._pending_exit_sidebar = None
 
-        mid = self._pending_module_id
-        fd = self._pending_from_dashboard
+        self._deferred_reset_leaving_module()
+
         self._pending_module_id = None
         self._pending_from_dashboard = False
-        if mid:
-            self._do_open_module(mid, fd)
 
-    def _do_open_module(self, module_id: str, from_dashboard: bool):
+    def _do_open_module(self, module_id: str, from_dashboard: bool,
+                        skip_reset: bool = False):
         """Fuehrt den eigentlichen Modulwechsel durch."""
         self._stop_active_module_heartbeat()
-        self._reset_leaving_module()
+        if not skip_reset:
+            self._reset_leaving_module()
 
         action = getattr(self, '_pending_action', None)
         self._pending_action = None
@@ -416,33 +435,23 @@ class AppRouter(QMainWindow):
         """Bereitet die ModuleSidebar-Enter-Animation vor.
 
         Die Sidebar des Ziel-Widgets wird sofort unsichtbar gemacht
-        (reset_animation_state). Die eigentliche Enter-Animation startet
-        erst nachdem:
-        1. Die AppSidebar-Collapse-Animation fertig ist (falls noetig)
-        2. Die FadeStackedWidget-Transition fertig ist (falls animiert)
+        (reset_animation_state). Die Enter-Animation startet parallel
+        zum Fade-In des Content-Stacks:
+        - Wenn die AppSidebar noch expanded ist (Dashboard->Modul),
+          wird sie collapsed. Collapse und Fade laufen parallel.
+        - Enter-Animation startet sobald der Fade-Out des Overlays
+          fertig ist (= View-Switch passiert), nicht erst nach Fade-In.
         """
         target_sidebar = self._get_sidebar_of_stack_index(target_index)
         if target_sidebar:
             target_sidebar.reset_animation_state()
 
         needs_collapse = self._sidebar._is_expanded
-
         if needs_collapse:
             self._sidebar.set_expanded(False)
-            self._sidebar.collapse_finished.connect(
-                self._on_collapse_then_enter_sidebar, Qt.SingleShotConnection
-            )
-        elif self._stack.is_transitioning:
-            self._stack.transition_finished.connect(
-                self._play_module_sidebar_enter, Qt.SingleShotConnection
-            )
-        else:
-            self._play_module_sidebar_enter()
 
-    def _on_collapse_then_enter_sidebar(self):
-        """Callback: AppSidebar-Collapse fertig, jetzt auf Fade-Transition warten."""
         if self._stack.is_transitioning:
-            self._stack.transition_finished.connect(
+            self._stack.view_switched.connect(
                 self._play_module_sidebar_enter, Qt.SingleShotConnection
             )
         else:
@@ -536,6 +545,8 @@ class AppRouter(QMainWindow):
             ("E-Mail Posteingang", _email_inbox),
         ]
 
+    _DEFERRED_RESET_DELAY_MS = 200
+
     def _reset_leaving_module(self):
         """Setzt den aktuell aktiven Hub in seinen Default-Zustand zurueck.
 
@@ -546,6 +557,21 @@ class AppRouter(QMainWindow):
         """
         if self._active_module == "core" and self._core_widget is not None:
             self._core_widget.reset_to_default_view()
+
+    def _deferred_reset_leaving_module(self):
+        """Fuehrt den Modul-Reset verzoegert aus.
+
+        Wird nach der Exit-Animation aufgerufen. Die kurze Pause laesst
+        laufende Fade-/Expand-Animationen sauber abklingen, bevor das
+        (nicht mehr sichtbare) Modul-Widget umgebaut wird.
+        """
+        module = self._pending_reset_module
+        self._pending_reset_module = None
+        if module == "core" and self._core_widget is not None:
+            QTimer.singleShot(
+                self._DEFERRED_RESET_DELAY_MS,
+                self._core_widget.reset_to_default_view,
+            )
 
     # ------------------------------------------------------------------
     # Module Heartbeat Lifecycle
@@ -720,11 +746,8 @@ class AppRouter(QMainWindow):
 
         if self._sidebar._is_expanded:
             self._sidebar.set_expanded(False)
-            self._sidebar.collapse_finished.connect(
-                self._play_module_sidebar_enter, Qt.SingleShotConnection
-            )
-        else:
-            self._play_module_sidebar_enter()
+
+        self._play_module_sidebar_enter()
 
         QTimer.singleShot(0, lambda: self._start_module_heartbeat(self._contact_widget, "contact"))
         if hasattr(self._contact_widget, 'handle_call_pop'):

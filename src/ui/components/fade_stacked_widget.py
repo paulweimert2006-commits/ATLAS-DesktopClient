@@ -64,6 +64,7 @@ class FadeStackedWidget(QStackedWidget):
     """
 
     transition_finished = Signal()
+    view_switched = Signal()
 
     def __init__(self, parent=None, fade_out_ms: int = _DEFAULT_FADE_OUT_MS,
                  fade_in_ms: int = _DEFAULT_FADE_IN_MS):
@@ -114,6 +115,7 @@ class FadeStackedWidget(QStackedWidget):
         """Sofortiger Wechsel ohne Animation."""
         self._overlay.hide()
         super().setCurrentIndex(index)
+        self.view_switched.emit()
         self.transition_finished.emit()
 
     def _start_fade_out(self, target_index: int):
@@ -135,7 +137,11 @@ class FadeStackedWidget(QStackedWidget):
         self._fade_anim.start()
 
     def _on_fade_out_done(self):
-        """Phase 2: View wechseln (hinter dem Overlay) und Overlay ausblenden."""
+        """Phase 2: View wechseln (hinter dem Overlay) und Overlay ausblenden.
+
+        Emittiert view_switched sofort nach dem Switch, damit Downstream-
+        Animationen (z.B. ModuleSidebar-Enter) parallel zum Fade-In starten.
+        """
         target = self._pending_index
         self._pending_index = None
 
@@ -146,6 +152,7 @@ class FadeStackedWidget(QStackedWidget):
             return
 
         super().setCurrentIndex(target)
+        self.view_switched.emit()
 
         self._fade_anim = QPropertyAnimation(self._overlay, b"opacity", self)
         self._fade_anim.setDuration(self._fade_in_ms)
