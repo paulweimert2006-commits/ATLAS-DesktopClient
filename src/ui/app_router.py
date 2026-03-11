@@ -545,7 +545,7 @@ class AppRouter(QMainWindow):
             ("E-Mail Posteingang", _email_inbox),
         ]
 
-    _DEFERRED_RESET_DELAY_MS = 200
+    _DEFERRED_RESET_DELAY_MS = 220
 
     def _reset_leaving_module(self):
         """Setzt den aktuell aktiven Hub in seinen Default-Zustand zurueck.
