@@ -86,13 +86,17 @@ class AppRouter(QMainWindow):
             if user.is_module_admin("workforce"):
                 visible.append("workforce_admin")
 
+        user_email = user.email or "" if user else ""
+        user_account_type = user.account_type if user else "user"
         self._dashboard = DashboardScreen(
             username=username, app_version=app_version,
-            api_client=api_client, tenant_name=tenant_name,
+            api_client=api_client, auth_api=auth_api, tenant_name=tenant_name,
+            user_email=user_email, user_account_type=user_account_type,
         )
         self._dashboard.set_modules(visible)
         self._dashboard.module_requested.connect(self._open_module)
         self._dashboard.logout_requested.connect(self._on_logout)
+        self._dashboard.forced_logout_requested.connect(self._on_forced_logout)
         self._stack.addWidget(self._dashboard)  # Index 0
 
         self._dashboard.load_messages(api_client)
@@ -500,6 +504,12 @@ class AppRouter(QMainWindow):
             self._stop_active_module_heartbeat()
             self.auth_api.logout()
             self.close()
+
+    def _on_forced_logout(self):
+        self._heartbeat.stop()
+        self._stop_active_module_heartbeat()
+        self.auth_api.logout()
+        self.close()
 
     # ------------------------------------------------------------------
     # Helpers

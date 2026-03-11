@@ -173,9 +173,13 @@ class _SettingsOverlay(QWidget):
 
     close_requested = Signal()
     save_requested = Signal(str, str, str)
+    change_password_requested = Signal()
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, username: str = "", email: str = "", account_type: str = "user"):
         super().__init__(parent)
+        self._username = username
+        self._email = email
+        self._account_type = account_type
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.setFocusPolicy(Qt.StrongFocus)
 
@@ -445,6 +449,7 @@ class _SettingsOverlay(QWidget):
         a_layout.addWidget(save_btn, alignment=Qt.AlignRight)
 
         tabs.addTab(appearance, texts.SETTINGS_TAB_APPEARANCE)
+        tabs.addTab(self._build_account_tab(), texts.SETTINGS_TAB_ACCOUNT)
         p_layout.addWidget(tabs, 1)
 
         outer.addWidget(self._panel)
@@ -453,6 +458,91 @@ class _SettingsOverlay(QWidget):
         self._opacity.setOpacity(0.0)
         self.setGraphicsEffect(self._opacity)
         self._anim = None
+
+    # -- Konto-Tab -------------------------------------------------------
+
+    def _build_account_tab(self) -> QWidget:
+        """Baut den 'Konto'-Tab mit Profil-Info und Passwort-Ändern-Button."""
+        tab = QWidget()
+        tab.setStyleSheet("background: transparent;")
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(4, 16, 4, 4)
+        layout.setSpacing(12)
+
+        def _section_header(text: str) -> QLabel:
+            lbl = QLabel(text)
+            lbl.setStyleSheet(
+                f"font-family: {_tokens.FONT_HEADLINE}; font-size: {FONT_SIZE_H3}; "
+                f"font-weight: {FONT_WEIGHT_BOLD}; color: {PRIMARY_900}; border: none;"
+            )
+            return lbl
+
+        def _info_row(label_text: str, value_text: str) -> QWidget:
+            row = QWidget()
+            row.setStyleSheet("background: transparent;")
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(0, 4, 0, 4)
+            row_layout.setSpacing(8)
+
+            lbl = QLabel(label_text)
+            lbl.setFixedWidth(130)
+            lbl.setStyleSheet(
+                f"font-family: {_tokens.FONT_BODY}; font-size: {FONT_SIZE_BODY}; "
+                f"color: {TEXT_SECONDARY}; border: none;"
+            )
+            row_layout.addWidget(lbl)
+
+            val = QLabel(value_text if value_text else "—")
+            val.setStyleSheet(
+                f"font-family: {_tokens.FONT_BODY}; font-size: {FONT_SIZE_BODY}; "
+                f"font-weight: {FONT_WEIGHT_MEDIUM}; color: {PRIMARY_900}; border: none;"
+            )
+            row_layout.addWidget(val, 1)
+            return row
+
+        _account_type_labels = {
+            "super_admin": texts.SETTINGS_ACCOUNT_TYPE_SUPER_ADMIN,
+            "admin": texts.SETTINGS_ACCOUNT_TYPE_ADMIN,
+            "user": texts.SETTINGS_ACCOUNT_TYPE_USER,
+        }
+        account_type_display = _account_type_labels.get(
+            self._account_type, texts.SETTINGS_ACCOUNT_TYPE_USER
+        )
+
+        layout.addWidget(_section_header(texts.SETTINGS_ACCOUNT_SECTION_PROFILE))
+        layout.addWidget(_info_row(texts.SETTINGS_ACCOUNT_USERNAME, self._username))
+        layout.addWidget(_info_row(texts.SETTINGS_ACCOUNT_EMAIL, self._email))
+        layout.addWidget(_info_row(texts.SETTINGS_ACCOUNT_TYPE, account_type_display))
+
+        div = QFrame()
+        div.setFrameShape(QFrame.HLine)
+        div.setStyleSheet(
+            f"color: {BORDER_DEFAULT}; background: {BORDER_DEFAULT}; "
+            f"max-height: 1px; border: none;"
+        )
+        layout.addWidget(div)
+
+        layout.addWidget(_section_header(texts.SETTINGS_ACCOUNT_SECTION_SECURITY))
+
+        change_pw_btn = QPushButton(texts.SETTINGS_ACCOUNT_CHANGE_PW_BTN)
+        change_pw_btn.setCursor(Qt.PointingHandCursor)
+        change_pw_btn.setStyleSheet(
+            f"QPushButton {{"
+            f"  background-color: {PRIMARY_0}; color: {PRIMARY_900}; "
+            f"  border: 1px solid {BORDER_DEFAULT}; border-radius: {RADIUS_MD}; "
+            f"  padding: 8px 20px; "
+            f"  font-family: {_tokens.FONT_BODY}; font-size: {FONT_SIZE_BODY}; "
+            f"  font-weight: {FONT_WEIGHT_MEDIUM}; "
+            f"}}"
+            f"QPushButton:hover {{"
+            f"  background-color: {PRIMARY_100}; border-color: {ACCENT_500}; "
+            f"}}"
+        )
+        change_pw_btn.clicked.connect(self.change_password_requested.emit)
+        layout.addWidget(change_pw_btn, alignment=Qt.AlignLeft)
+
+        layout.addStretch()
+        return tab
 
     # -- Font preset handling --------------------------------------------
 
@@ -603,14 +693,20 @@ class DashboardScreen(QWidget):
 
     module_requested = Signal(str)
     logout_requested = Signal()
+    forced_logout_requested = Signal()
 
     def __init__(self, username: str = "", app_version: str = "",
-                 api_client=None, tenant_name: str = "", parent=None):
+                 api_client=None, auth_api=None, tenant_name: str = "",
+                 user_email: str = "", user_account_type: str = "user",
+                 parent=None):
         super().__init__(parent)
         self._username = username
         self._app_version = app_version
         self._api_client = api_client
+        self._auth_api = auth_api
         self._tenant_name = tenant_name
+        self._user_email = user_email
+        self._user_account_type = user_account_type
         self._tiles: dict[str, _ModuleTile] = {}
         self._messages_worker = None
 
@@ -944,10 +1040,16 @@ class DashboardScreen(QWidget):
 
         self._update_clock()
 
-        self._settings_overlay = _SettingsOverlay(self)
+        self._settings_overlay = _SettingsOverlay(
+            self,
+            username=self._username,
+            email=getattr(self, '_user_email', ''),
+            account_type=getattr(self, '_user_account_type', 'user'),
+        )
         self._settings_overlay.hide()
         self._settings_overlay.close_requested.connect(self._close_settings)
         self._settings_overlay.save_requested.connect(self._on_settings_saved)
+        self._settings_overlay.change_password_requested.connect(self._on_change_password_requested)
 
     # ------------------------------------------------------------------
     # Settings overlay
@@ -969,6 +1071,23 @@ class DashboardScreen(QWidget):
         self._settings_overlay.close_animated(
             callback=lambda: self._content.setGraphicsEffect(None)
         )
+
+    def _on_change_password_requested(self):
+        from ui.change_password_dialog import ChangeOwnPasswordDialog
+
+        if not hasattr(self, '_auth_api') or self._auth_api is None:
+            return
+
+        dlg = ChangeOwnPasswordDialog(self._auth_api, parent=self)
+        dlg.password_changed.connect(self._on_password_changed_successfully)
+        dlg.max_attempts_reached.connect(self._on_max_attempts_logout)
+        dlg.exec()
+
+    def _on_password_changed_successfully(self):
+        QTimer.singleShot(200, self.logout_requested.emit)
+
+    def _on_max_attempts_logout(self):
+        QTimer.singleShot(200, self.forced_logout_requested.emit)
 
     def _on_settings_saved(self, preset_id: str, lang_code: str, theme_id: str):
         from PySide6.QtWidgets import QApplication
