@@ -25,13 +25,14 @@ from ui.styles.tokens import (
     ACCENT_500, FONT_HEADLINE, FONT_BODY,
     FONT_SIZE_H1, FONT_SIZE_BODY, FONT_SIZE_CAPTION,
     FONT_WEIGHT_MEDIUM, RADIUS_LG, RADIUS_MD,
+    MAINTENANCE_CARD_BG,
 )
 
 logger = logging.getLogger(__name__)
 
 RECHECK_INTERVAL_MS = 60_000
 
-_CARD_BG = "#0d3259"
+_CARD_BG = MAINTENANCE_CARD_BG
 _CARD_BORDER = "rgba(136, 169, 195, 0.15)"
 
 
@@ -276,7 +277,7 @@ class MaintenanceOverlay(QWidget):
 
     def _on_status_received(self, status: str, message: str):
         from api.system_status import has_access
-        from main import is_dev_mode
+        from config.runtime import is_dev_mode
 
         if has_access(status, self._user.is_admin, is_dev_mode()):
             self.hide_overlay()
@@ -395,7 +396,7 @@ class MaintenanceWindow(QMainWindow):
 
     def _on_status_received(self, status: str, message: str):
         from api.system_status import has_access
-        from main import is_dev_mode
+        from config.runtime import is_dev_mode
 
         if has_access(status, self._user.is_admin, is_dev_mode()):
             self._recheck_timer.stop()
