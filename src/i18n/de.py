@@ -196,8 +196,8 @@ SMARTADMIN_TOKEN_EXPIRED = "Token abgelaufen"
 
 # === Datenabruf (BiPRO + Mail) ===
 BIPRO_HEADER = "Datenabruf"
-BIPRO_VIEW_TOGGLE_STANDARD = "Standard"
-BIPRO_VIEW_TOGGLE_ADMIN = "Admin"
+BIPRO_VIEW_TOGGLE_STANDARD = "Standard-Modus"
+BIPRO_VIEW_TOGGLE_ADMIN = "Expertenmodus"
 
 BIPRO_FETCH_SHIPMENTS = "Lieferungen abrufen"
 BIPRO_NO_SHIPMENTS = "Keine neuen Lieferungen"
@@ -210,8 +210,8 @@ BIPRO_CREATED = "Erstellt am"
 BIPRO_DOCUMENTS = "Dokumente"
 
 # === Mail-Import ===
-BIPRO_MAIL_FETCH = "Mails abholen"
-BIPRO_MAIL_FETCH_TOOLTIP = "E-Mail-Postfach abrufen und Anhaenge importieren"
+BIPRO_MAIL_FETCH = "📧 Mails abholen"
+BIPRO_MAIL_FETCH_TOOLTIP = "E-Mail-Postfach abrufen und Anhaenge importieren (Strg+M)"
 BIPRO_MAIL_FETCH_RUNNING = "Mails werden abgeholt..."
 BIPRO_MAIL_FETCH_SUCCESS = "{new_mails} neue Mail(s), {imported} Anhang/Anhaenge importiert"
 BIPRO_MAIL_FETCH_NO_NEW = "Keine neuen Mails im Postfach"
@@ -222,8 +222,8 @@ BIPRO_MAIL_FETCH_PHASE_POLL = "Postfach abrufen..."
 BIPRO_MAIL_FETCH_PHASE_IMPORT = "Anhaenge importieren"
 
 # === Alle VUs abholen (Unified Fetch) ===
-BIPRO_FETCH_ALL = "Alle neuen Dokumente abrufen"
-BIPRO_FETCH_ALL_TOOLTIP = "Ruft Dokumente von allen Versicherern und E-Mail-Konten ab"
+BIPRO_FETCH_ALL = "🔄 Alle Dokumente abrufen"
+BIPRO_FETCH_ALL_TOOLTIP = "Ruft Dokumente von allen Versicherern und E-Mail-Konten ab (F5)"
 BIPRO_FETCH_ALL_LAST_INFO = "Zuletzt: {timestamp} von {user}"
 BIPRO_FETCH_ALL_NO_ACTIVE = "Keine aktiven VU-Verbindungen vorhanden."
 BIPRO_FETCH_ALL_START = "=== Starte Abruf fuer alle VUs ({count} aktive Verbindungen) ==="
@@ -248,11 +248,12 @@ BIPRO_STATUS_FETCH_SUCCESS = "{count} Dokumente erfolgreich importiert"
 BIPRO_SHOW_DETAILS = "Details anzeigen"
 BIPRO_HIDE_DETAILS = "Details ausblenden"
 BIPRO_GO_TO_ARCHIVE = "Zum Archiv"
-BIPRO_FETCH_ONLY_MAIL = "Nur Mails"
-BIPRO_FETCH_ONLY_VU = "Nur ausgewaehlte VU"
+BIPRO_FETCH_ONLY_MAIL = "📧 Nur Mails"
+BIPRO_FETCH_ONLY_VU = "📢 Nur ausgewaehlte VU"
+BIPRO_FETCH_ONLY_VU_TOOLTIP = "Nur die in der Liste ausgewaehlte VU abrufen (Umschalt+F5)"
 
 # === Quittieren ===
-BIPRO_ACK_BUTTON = "Quittieren"
+BIPRO_ACK_BUTTON = "⚠️ Quittieren"
 BIPRO_ACK_LAST_INFO = "Letzte Quittierung: {timestamp} von {user}"
 BIPRO_ACK_ALL_WARNING = (
     "ACHTUNG: Sie sind dabei, alle {count} gelisteten Lieferung(en) zu quittieren.\n\n"
@@ -261,6 +262,7 @@ BIPRO_ACK_ALL_WARNING = (
     "Haben Sie alle Dokumente heruntergeladen und gesichert?\n\n"
     "Moechten Sie fortfahren?"
 )
+BIPRO_ACK_ALL_TOOLTIP = "Alle gelisteten Lieferungen beim Versicherer quittieren (Strg+Alt+A)"
 BIPRO_ACK_SUCCESS = "{count} Lieferung(en) bei {vu_count} Versicherer(n) quittiert"
 BIPRO_ACK_NO_SHIPMENTS = "Keine Lieferungen zum Quittieren vorhanden."
 BIPRO_ACK_PREPARING = "Vorbereitung..."
@@ -269,7 +271,8 @@ BIPRO_ACK_IN_PROGRESS = "Quittiere {current}/{total}..."
 # === Vorschau-Karten ===
 BIPRO_PREVIEW_LOADING = "Lieferungen werden geladen..."
 BIPRO_PREVIEW_EMPTY = "Keine Lieferungen verfuegbar"
-BIPRO_PREVIEW_REFRESH = "Aktualisieren"
+BIPRO_PREVIEW_REFRESH = "🔄 Aktualisieren"
+BIPRO_PREVIEW_REFRESH_TOOLTIP = "Vorschau manuell aktualisieren (Strg+R)"
 BIPRO_PREVIEW_CARD_VU = "{vu_name}"
 BIPRO_PREVIEW_CARD_CATEGORY = "Kategorie: {name}"
 BIPRO_PREVIEW_CARD_DATE = "Eingestellt: {date}"
@@ -3700,3 +3703,11 @@ DASHBOARD_LAST_LOGIN = "Letzter Login: {time}"
 TRAY_TOOLTIP = "ACENCIA ATLAS"
 TRAY_SHOW_WINDOW = "ATLAS oeffnen"
 TRAY_QUIT = "ATLAS beenden"
+
+# === Barrierefreiheit (Accessible Names) ===
+ACC_FETCH_ALL = "Alle Dokumente von BiPRO und E-Mail abrufen"
+ACC_MAIL_FETCH = "E-Mail Postfach abrufen"
+ACC_VU_FETCH = "Ausgewaehlte Versicherung abrufen"
+ACC_ACK_ALL = "Alle sichtbaren Lieferungen quittieren und loeschen"
+ACC_REFRESH = "Vorschau aktualisieren"
+ACC_ADMIN_TOGGLE = "Zwischen Standard- und Expertenmodus wechseln"
