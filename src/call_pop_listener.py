@@ -56,6 +56,11 @@ class _CallPopHandler(BaseHTTPRequestHandler):
             self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
             self.send_header("Access-Control-Allow-Headers", "Content-Type")
             self.send_header("Access-Control-Max-Age", "86400")
+        # Private Network Access (PNA): Chrome/Edge senden diesen Header wenn eine
+        # oeffentliche HTTPS-Seite auf localhost zugreift. Ohne diese Antwort
+        # blockiert der Browser den Haupt-Request bevor er die App erreicht.
+        if self.headers.get("Access-Control-Request-Private-Network"):
+            self.send_header("Access-Control-Allow-Private-Network", "true")
         self.send_header("Content-Length", "0")
         self.end_headers()
 
@@ -123,6 +128,8 @@ class _CallPopHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(payload)))
         if allowed:
             self.send_header("Access-Control-Allow-Origin", allowed)
+        # Private Network Access: Antwort-Header damit Chrome/Edge localhost erlaubt
+        self.send_header("Access-Control-Allow-Private-Network", "true")
         self.end_headers()
         self.wfile.write(payload)
 
