@@ -266,7 +266,7 @@ BIPRO_ACK_NO_SHIPMENTS = "Keine Lieferungen zum Quittieren vorhanden."
 BIPRO_ACK_PREPARING = "Vorbereitung..."
 BIPRO_ACK_IN_PROGRESS = "Quittiere {current}/{total}..."
 
-# === Vorschau-Karten ===
+# === Vorschau-Tabelle ===
 BIPRO_PREVIEW_LOADING = "Lieferungen werden geladen..."
 BIPRO_PREVIEW_EMPTY = "Keine Lieferungen verfuegbar"
 BIPRO_PREVIEW_REFRESH = "Aktualisieren"
@@ -276,6 +276,13 @@ BIPRO_PREVIEW_CARD_DATE = "Eingestellt: {date}"
 BIPRO_PREVIEW_CARD_SHIPMENT = "ID: {id}"
 BIPRO_PREVIEW_COUNT = "{count} Lieferung(en) von {vu_count} Versicherer(n)"
 BIPRO_PREVIEW_ERROR = "{vu_name}: Fehler beim Laden"
+BIPRO_PREVIEW_COL_VU = "Versicherer"
+BIPRO_PREVIEW_COL_CATEGORY = "Kategorie"
+BIPRO_PREVIEW_COL_DATE = "Eingestellt"
+BIPRO_PREVIEW_COL_AVAILABLE_UNTIL = "Verfuegbar bis"
+BIPRO_PREVIEW_COL_TRANSFERS = "Abrufe"
+BIPRO_PREVIEW_COL_DATA_ONLY = "Nur Daten"
+BIPRO_PREVIEW_COL_ID = "ID"
 
 # === ATLAS Index (Volltextsuche) ===
 ATLAS_INDEX_TITLE = "ATLAS Index"

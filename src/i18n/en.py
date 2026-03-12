@@ -265,6 +265,13 @@ BIPRO_PREVIEW_CARD_DATE = "Posted: {date}"
 BIPRO_PREVIEW_CARD_SHIPMENT = "ID: {id}"
 BIPRO_PREVIEW_COUNT = "{count} shipment(s) from {vu_count} insurer(s)"
 BIPRO_PREVIEW_ERROR = "{vu_name}: Error while loading"
+BIPRO_PREVIEW_COL_VU = "Insurer"
+BIPRO_PREVIEW_COL_CATEGORY = "Category"
+BIPRO_PREVIEW_COL_DATE = "Posted"
+BIPRO_PREVIEW_COL_AVAILABLE_UNTIL = "Available until"
+BIPRO_PREVIEW_COL_TRANSFERS = "Transfers"
+BIPRO_PREVIEW_COL_DATA_ONLY = "Data only"
+BIPRO_PREVIEW_COL_ID = "ID"
 
 # === ATLAS Index (full-text search) ===
 ATLAS_INDEX_TITLE = "ATLAS Index"

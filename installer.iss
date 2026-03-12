@@ -52,7 +52,7 @@ Name: "german"; MessagesFile: "compiler:Languages\German.isl"
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 Name: "quicklaunchicon"; Description: "{cm:CreateQuickLaunchIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked; OnlyBelowVersion: 6.1; Check: not IsAdminInstallMode
-Name: "autostarticon"; Description: "Beim Windows-Start automatisch starten (minimiert)"; GroupDescription: "Autostart:"; Flags: checked
+Name: "autostarticon"; Description: "Beim Windows-Start automatisch starten (minimiert)"; GroupDescription: "Autostart:"
 
 [Files]
 Source: "dist\ACENCIA-ATLAS\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion

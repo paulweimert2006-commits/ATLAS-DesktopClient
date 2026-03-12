@@ -34,7 +34,7 @@ from ui.styles.tokens import (
     PRIMARY_900, PRIMARY_500, PRIMARY_100, PRIMARY_0,
     ACCENT_500,
     TEXT_PRIMARY, TEXT_SECONDARY,
-    BG_PRIMARY, BG_SECONDARY, BORDER_DEFAULT,
+    BG_PRIMARY, BG_SECONDARY, BG_TERTIARY, BORDER_DEFAULT,
     SUCCESS, WARNING, ERROR, INFO,
     FONT_HEADLINE, FONT_BODY,
     FONT_SIZE_H2, FONT_SIZE_BODY, FONT_SIZE_CAPTION,
@@ -1984,18 +1984,59 @@ class BiPROView(QWidget):
         self._preview_summary.setVisible(False)
         std_layout.addWidget(self._preview_summary)
 
-        self._preview_scroll = QScrollArea()
-        self._preview_scroll.setWidgetResizable(True)
-        self._preview_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        self._preview_scroll.setMinimumHeight(120)
-
-        self._preview_cards_widget = QWidget()
-        self._preview_cards_layout = QGridLayout(self._preview_cards_widget)
-        self._preview_cards_layout.setContentsMargins(0, 0, 0, 0)
-        self._preview_cards_layout.setHorizontalSpacing(6)
-        self._preview_cards_layout.setVerticalSpacing(6)
-        self._preview_scroll.setWidget(self._preview_cards_widget)
-        std_layout.addWidget(self._preview_scroll, 1)
+        from i18n.de import (
+            BIPRO_PREVIEW_COL_VU, BIPRO_PREVIEW_COL_CATEGORY,
+            BIPRO_PREVIEW_COL_DATE, BIPRO_PREVIEW_COL_AVAILABLE_UNTIL,
+            BIPRO_PREVIEW_COL_TRANSFERS, BIPRO_PREVIEW_COL_DATA_ONLY,
+        )
+        self._preview_table = QTableWidget()
+        self._preview_table.setColumnCount(6)
+        self._preview_table.setHorizontalHeaderLabels([
+            BIPRO_PREVIEW_COL_VU,
+            BIPRO_PREVIEW_COL_CATEGORY,
+            BIPRO_PREVIEW_COL_DATE,
+            BIPRO_PREVIEW_COL_AVAILABLE_UNTIL,
+            BIPRO_PREVIEW_COL_TRANSFERS,
+            BIPRO_PREVIEW_COL_DATA_ONLY,
+        ])
+        self._preview_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._preview_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self._preview_table.setAlternatingRowColors(True)
+        self._preview_table.verticalHeader().setVisible(False)
+        self._preview_table.setMinimumHeight(120)
+        self._preview_table.setStyleSheet(f"""
+            QTableWidget {{
+                background-color: {BG_PRIMARY};
+                alternate-background-color: {BG_TERTIARY};
+                border: 1px solid {BORDER_DEFAULT};
+                border-radius: 6px;
+                gridline-color: {BORDER_DEFAULT};
+                font-size: {FONT_SIZE_CAPTION};
+                color: {TEXT_PRIMARY};
+            }}
+            QTableWidget::item {{
+                padding: 4px 8px;
+                border-bottom: 1px solid {BORDER_DEFAULT};
+            }}
+            QHeaderView::section {{
+                background-color: {BG_SECONDARY};
+                border: none;
+                border-bottom: 2px solid {ACCENT_500};
+                font-family: {FONT_HEADLINE};
+                font-weight: 600;
+                font-size: {FONT_SIZE_CAPTION};
+                color: {TEXT_PRIMARY};
+                padding: 6px 8px;
+            }}
+        """)
+        ptbl_header = self._preview_table.horizontalHeader()
+        ptbl_header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        ptbl_header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        ptbl_header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        ptbl_header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        ptbl_header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        ptbl_header.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
+        std_layout.addWidget(self._preview_table, 1)
 
         layout.addWidget(self._standard_container)
 
@@ -2308,21 +2349,17 @@ class BiPROView(QWidget):
         logger.warning(BIPRO_PREVIEW_ERROR.format(vu_name=vu_name) + f": {error_msg}")
 
     def _clear_preview_cards(self):
-        """Entfernt alle Karten aus dem Preview-Grid."""
-        while self._preview_cards_layout.count():
-            item = self._preview_cards_layout.takeAt(0)
-            w = item.widget()
-            if w:
-                w.deleteLater()
+        """Leert die Preview-Tabelle."""
+        self._preview_table.setRowCount(0)
 
     def _render_preview_cards(self, results: list):
-        """Baut Zusammenfassung + Vorschau-Karten aus den Preview-Ergebnissen."""
+        """Baut Zusammenfassung + Vorschau-Tabelle aus den Preview-Ergebnissen."""
         from i18n.de import BIPRO_PREVIEW_COUNT, BIPRO_PREVIEW_EMPTY
         self._clear_preview_cards()
         self._clear_preview_summary()
 
         vu_stats: dict = {}
-        cards = []
+        rows = []
         for vu_name, shipments in results:
             if vu_name not in vu_stats:
                 vu_stats[vu_name] = {'count': 0, 'categories': set()}
@@ -2332,7 +2369,7 @@ class BiPROView(QWidget):
                     vu_stats[vu_name]['categories'].add(
                         get_category_short_name(ship.category) or ship.category
                     )
-                cards.append((vu_name, ship))
+                rows.append((vu_name, ship))
 
         total_shipments = sum(v['count'] for v in vu_stats.values())
 
@@ -2347,12 +2384,34 @@ class BiPROView(QWidget):
         )
         self._build_preview_summary(vu_stats, total_shipments)
 
-        available_w = self._preview_scroll.viewport().width() or self.width() - 40
-        cols = max(1, available_w // 180)
-        for i, (vu_name, ship) in enumerate(cards):
-            card = self._build_shipment_card(vu_name, ship)
-            row, col = divmod(i, cols)
-            self._preview_cards_layout.addWidget(card, row, col)
+        self._preview_table.setRowCount(len(rows))
+        for row_idx, (vu_name, ship) in enumerate(rows):
+            cat_code = ship.category or ""
+            cat_icon = get_category_icon(cat_code) if cat_code else ""
+            cat_full = get_category_name(cat_code) if cat_code else ""
+
+            vu_item = QTableWidgetItem(vu_name)
+            self._preview_table.setItem(row_idx, 0, vu_item)
+
+            cat_item = QTableWidgetItem(f"{cat_icon} {cat_full}")
+            cat_item.setToolTip(f"Code: {cat_code}" if cat_code else "")
+            self._preview_table.setItem(row_idx, 1, cat_item)
+
+            date_str = format_datetime_german(ship.created_at) if ship.created_at else ""
+            date_item = QTableWidgetItem(date_str)
+            date_item.setToolTip(ship.created_at or "")
+            self._preview_table.setItem(row_idx, 2, date_item)
+
+            avail_str = format_date_german(ship.available_until) if ship.available_until else ""
+            avail_item = QTableWidgetItem(avail_str)
+            avail_item.setToolTip(ship.available_until or "")
+            self._preview_table.setItem(row_idx, 3, avail_item)
+
+            transfers_str = str(ship.transfer_count) if ship.transfer_count else ""
+            self._preview_table.setItem(row_idx, 4, QTableWidgetItem(transfers_str))
+
+            data_only = "Ja" if ship.contains_only_data else "Nein"
+            self._preview_table.setItem(row_idx, 5, QTableWidgetItem(data_only))
 
     def _clear_preview_summary(self):
         """Entfernt alle Widgets aus der Zusammenfassungs-Karte."""
@@ -2387,62 +2446,6 @@ class BiPROView(QWidget):
                 font-size: {FONT_SIZE_CAPTION}; color: {TEXT_SECONDARY};
             """)
             self._preview_summary_layout.addWidget(line)
-
-    def _build_shipment_card(self, vu_name: str, shipment) -> QFrame:
-        """Erstellt eine einzelne Vorschau-Karte fuer eine Lieferung."""
-        from i18n.de import (
-            BIPRO_PREVIEW_CARD_CATEGORY, BIPRO_PREVIEW_CARD_DATE,
-        )
-
-        card = QFrame()
-        card.setObjectName("shipmentCard")
-        card.setMinimumWidth(160)
-        card.setStyleSheet(f"""
-            QFrame#shipmentCard {{
-                background-color: {BG_SECONDARY};
-                border: 1px solid {BORDER_DEFAULT};
-                border-radius: 12px;
-                padding: 10px;
-            }}
-            QFrame#shipmentCard:hover {{
-                border-color: {ACCENT_500};
-            }}
-            QFrame#shipmentCard QLabel {{
-                border: none;
-                background: transparent;
-            }}
-        """)
-        card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(10, 8, 10, 8)
-        card_layout.setSpacing(3)
-
-        cat_code = shipment.category or ""
-        cat_icon = get_category_icon(cat_code) if cat_code else ""
-        cat_name = get_category_short_name(cat_code) if cat_code else ""
-
-        vu_label = QLabel(f"{cat_icon} {vu_name}")
-        vu_label.setStyleSheet(f"""
-            font-family: {FONT_HEADLINE}; font-weight: 600;
-            font-size: {FONT_SIZE_BODY}; color: {TEXT_PRIMARY};
-        """)
-        card_layout.addWidget(vu_label)
-
-        if cat_name:
-            cat_label = QLabel(BIPRO_PREVIEW_CARD_CATEGORY.format(name=cat_name))
-            cat_label.setStyleSheet(f"""
-                font-size: {FONT_SIZE_CAPTION}; color: {TEXT_SECONDARY};
-            """)
-            card_layout.addWidget(cat_label)
-
-        date_str = format_date_german(shipment.created_at) if shipment.created_at else ""
-        if date_str:
-            date_label = QLabel(BIPRO_PREVIEW_CARD_DATE.format(date=date_str))
-            date_label.setStyleSheet(f"""
-                font-size: {FONT_SIZE_CAPTION}; color: {TEXT_PRIMARY};
-            """)
-            card_layout.addWidget(date_label)
-
-        return card
 
     # ── Acknowledge All Listed (Standard-View) ──
 
