@@ -198,6 +198,7 @@ SMARTADMIN_TOKEN_EXPIRED = "Token abgelaufen"
 BIPRO_HEADER = "Datenabruf"
 BIPRO_VIEW_TOGGLE_STANDARD = "Standard"
 BIPRO_VIEW_TOGGLE_ADMIN = "Admin"
+BIPRO_REFRESH_TOOLTIP = "Lieferungs-Vorschau manuell aktualisieren (Strg+R)"
 
 BIPRO_FETCH_SHIPMENTS = "Lieferungen abrufen"
 BIPRO_NO_SHIPMENTS = "Keine neuen Lieferungen"
@@ -211,7 +212,7 @@ BIPRO_DOCUMENTS = "Dokumente"
 
 # === Mail-Import ===
 BIPRO_MAIL_FETCH = "Mails abholen"
-BIPRO_MAIL_FETCH_TOOLTIP = "E-Mail-Postfach abrufen und Anhaenge importieren"
+BIPRO_MAIL_FETCH_TOOLTIP = "E-Mail-Postfach abrufen und Anhaenge importieren (Strg+M)"
 BIPRO_MAIL_FETCH_RUNNING = "Mails werden abgeholt..."
 BIPRO_MAIL_FETCH_SUCCESS = "{new_mails} neue Mail(s), {imported} Anhang/Anhaenge importiert"
 BIPRO_MAIL_FETCH_NO_NEW = "Keine neuen Mails im Postfach"
@@ -223,7 +224,7 @@ BIPRO_MAIL_FETCH_PHASE_IMPORT = "Anhaenge importieren"
 
 # === Alle VUs abholen (Unified Fetch) ===
 BIPRO_FETCH_ALL = "Alle neuen Dokumente abrufen"
-BIPRO_FETCH_ALL_TOOLTIP = "Ruft Dokumente von allen Versicherern und E-Mail-Konten ab"
+BIPRO_FETCH_ALL_TOOLTIP = "Ruft Dokumente von allen Versicherern und E-Mail-Konten ab (F5)"
 BIPRO_FETCH_ALL_LAST_INFO = "Zuletzt: {timestamp} von {user}"
 BIPRO_FETCH_ALL_NO_ACTIVE = "Keine aktiven VU-Verbindungen vorhanden."
 BIPRO_FETCH_ALL_START = "=== Starte Abruf fuer alle VUs ({count} aktive Verbindungen) ==="
@@ -250,10 +251,12 @@ BIPRO_HIDE_DETAILS = "Details ausblenden"
 BIPRO_GO_TO_ARCHIVE = "Zum Archiv"
 BIPRO_FETCH_ONLY_MAIL = "Nur Mails"
 BIPRO_FETCH_ONLY_VU = "Nur ausgewaehlte VU"
+BIPRO_FETCH_SINGLE_TOOLTIP = "Nur die aktuell ausgewaehlte VU-Verbindung abrufen (Umschalt+F5)"
 
 # === Quittieren ===
 BIPRO_ACK_BUTTON = "Quittieren"
 BIPRO_ACK_LAST_INFO = "Letzte Quittierung: {timestamp} von {user}"
+BIPRO_ACK_ALL_TOOLTIP = "Quittiert ALLE gelisteten Lieferungen bei allen Versicherern (Strg+Alt+A)"
 BIPRO_ACK_ALL_WARNING = (
     "ACHTUNG: Sie sind dabei, alle {count} gelisteten Lieferung(en) zu quittieren.\n\n"
     "Quittierte Lieferungen werden vom Versicherer-Server GELOESCHT\n"
@@ -265,6 +268,14 @@ BIPRO_ACK_SUCCESS = "{count} Lieferung(en) bei {vu_count} Versicherer(n) quittie
 BIPRO_ACK_NO_SHIPMENTS = "Keine Lieferungen zum Quittieren vorhanden."
 BIPRO_ACK_PREPARING = "Vorbereitung..."
 BIPRO_ACK_IN_PROGRESS = "Quittiere {current}/{total}..."
+
+# === BiPRO Accessibility (Barrierefreiheit) ===
+ACC_FETCH_ALL = "Alle Dokumente abrufen"
+ACC_MAIL_FETCH = "Nur E-Mails abrufen"
+ACC_FETCH_SINGLE = "Nur ausgewaehlte VU abrufen"
+ACC_ACK_ALL = "Alle Lieferungen quittieren"
+ACC_REFRESH = "Vorschau aktualisieren"
+ACC_ADMIN_TOGGLE = "Ansicht wechseln"
 
 # === Vorschau-Karten ===
 BIPRO_PREVIEW_LOADING = "Lieferungen werden geladen..."
