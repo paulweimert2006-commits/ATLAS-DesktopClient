@@ -210,8 +210,8 @@ BIPRO_CREATED = "Erstellt am"
 BIPRO_DOCUMENTS = "Dokumente"
 
 # === Mail-Import ===
-BIPRO_MAIL_FETCH = "Mails abholen"
-BIPRO_MAIL_FETCH_TOOLTIP = "E-Mail-Postfach abrufen und Anhaenge importieren"
+BIPRO_MAIL_FETCH = "\U0001F4E7 Mails abholen"
+BIPRO_MAIL_FETCH_TOOLTIP = "E-Mail-Postfach abrufen und Anhaenge importieren (Strg+M)"
 BIPRO_MAIL_FETCH_RUNNING = "Mails werden abgeholt..."
 BIPRO_MAIL_FETCH_SUCCESS = "{new_mails} neue Mail(s), {imported} Anhang/Anhaenge importiert"
 BIPRO_MAIL_FETCH_NO_NEW = "Keine neuen Mails im Postfach"
@@ -222,8 +222,8 @@ BIPRO_MAIL_FETCH_PHASE_POLL = "Postfach abrufen..."
 BIPRO_MAIL_FETCH_PHASE_IMPORT = "Anhaenge importieren"
 
 # === Alle VUs abholen (Unified Fetch) ===
-BIPRO_FETCH_ALL = "Alle neuen Dokumente abrufen"
-BIPRO_FETCH_ALL_TOOLTIP = "Ruft Dokumente von allen Versicherern und E-Mail-Konten ab"
+BIPRO_FETCH_ALL = "\U0001F504 Alle neuen Dokumente abrufen"
+BIPRO_FETCH_ALL_TOOLTIP = "Ruft Dokumente von allen Versicherern und E-Mail-Konten ab (F5)"
 BIPRO_FETCH_ALL_LAST_INFO = "Zuletzt: {timestamp} von {user}"
 BIPRO_FETCH_ALL_NO_ACTIVE = "Keine aktiven VU-Verbindungen vorhanden."
 BIPRO_FETCH_ALL_START = "=== Starte Abruf fuer alle VUs ({count} aktive Verbindungen) ==="
@@ -248,11 +248,14 @@ BIPRO_STATUS_FETCH_SUCCESS = "{count} Dokumente erfolgreich importiert"
 BIPRO_SHOW_DETAILS = "Details anzeigen"
 BIPRO_HIDE_DETAILS = "Details ausblenden"
 BIPRO_GO_TO_ARCHIVE = "Zum Archiv"
-BIPRO_FETCH_ONLY_MAIL = "Nur Mails"
-BIPRO_FETCH_ONLY_VU = "Nur ausgewaehlte VU"
+BIPRO_FETCH_ONLY_MAIL = "\U0001F4E7 Nur Mails"
+BIPRO_FETCH_ONLY_VU = "\U0001F4E3 Nur ausgewaehlte VU"
+BIPRO_FETCH_ONLY_VU_TOOLTIP = "Nur die aktuell markierte VU-Verbindung abrufen (Umschalt+F5)"
+BIPRO_ADMIN_TOGGLE_TOOLTIP = "Zwischen Standard- und Expertenmodus umschalten (Strg+T)"
 
 # === Quittieren ===
-BIPRO_ACK_BUTTON = "Quittieren"
+BIPRO_ACK_BUTTON = "\u26A0 Quittieren"
+BIPRO_ACK_ALL_TOOLTIP = "Quittiert ALLE gelisteten Lieferungen bei allen Versicherern (Strg+Alt+A). ACHTUNG: Quittierte Lieferungen werden vom Server geloescht!"
 BIPRO_ACK_LAST_INFO = "Letzte Quittierung: {timestamp} von {user}"
 BIPRO_ACK_ALL_WARNING = (
     "ACHTUNG: Sie sind dabei, alle {count} gelisteten Lieferung(en) zu quittieren.\n\n"
@@ -269,7 +272,8 @@ BIPRO_ACK_IN_PROGRESS = "Quittiere {current}/{total}..."
 # === Vorschau-Tabelle ===
 BIPRO_PREVIEW_LOADING = "Lieferungen werden geladen..."
 BIPRO_PREVIEW_EMPTY = "Keine Lieferungen verfuegbar"
-BIPRO_PREVIEW_REFRESH = "Aktualisieren"
+BIPRO_PREVIEW_REFRESH = "\U0001F504 Aktualisieren"
+BIPRO_PREVIEW_REFRESH_TOOLTIP = "Vorschau manuell aktualisieren (max. 1x / 30s) (Strg+R)"
 BIPRO_PREVIEW_CARD_VU = "{vu_name}"
 BIPRO_PREVIEW_CARD_CATEGORY = "Kategorie: {name}"
 BIPRO_PREVIEW_CARD_DATE = "Eingestellt: {date}"
@@ -3530,6 +3534,17 @@ CALL_POP_INCOMING = "Eingehender Anruf von {phone}"
 CALL_POP_CONTACT_FOUND = "Kontakt gefunden: {name}"
 CALL_POP_CONTACT_NOT_FOUND = "Kein Kontakt fuer {phone} – neuer Kontakt wird angelegt"
 CALL_POP_DUPLICATE = "Anruf bereits verarbeitet (Duplikat)"
+
+# =============================================================================
+# Barrierefreiheit (Accessibility)
+# =============================================================================
+
+ACC_BIPRO_FETCH_ALL = "Alle Dokumente abrufen"
+ACC_BIPRO_FETCH_VU = "Ausgewaehlte VU abrufen"
+ACC_BIPRO_MAIL_FETCH = "E-Mails abholen"
+ACC_BIPRO_REFRESH = "Vorschau aktualisieren"
+ACC_BIPRO_ACK_ALL = "Alle Lieferungen quittieren"
+ACC_BIPRO_ADMIN_TOGGLE = "Ansichtsmodus umschalten"
 
 # =============================================================================
 # Support-Feedback
