@@ -1807,26 +1807,41 @@ class BiPROView(QWidget):
         self.fetch_all_vus_btn.setStyleSheet(get_button_primary_style())
         self.fetch_all_vus_btn.setToolTip(BIPRO_FETCH_ALL_TOOLTIP)
         self.fetch_all_vus_btn.setShortcut("F5")
+        self.fetch_all_vus_btn.setAccessibleName("Alle Dokumente abrufen")
         self.fetch_all_vus_btn.clicked.connect(self._unified_fetch)
         action_bar.addWidget(self.fetch_all_vus_btn)
 
-        sep = QFrame()
-        sep.setFrameShape(QFrame.Shape.VLine)
-        sep.setStyleSheet(f"color: {BORDER_DEFAULT};")
-        action_bar.addWidget(sep)
+        # Sekundaere Aktionen in Dropdown konsolidieren
+        from PySide6.QtWidgets import QMenu
+        from PySide6.QtGui import QAction
 
-        self.mail_fetch_btn = QPushButton(BIPRO_FETCH_ONLY_MAIL)
-        self.mail_fetch_btn.setFixedHeight(30)
-        self.mail_fetch_btn.setStyleSheet(get_button_secondary_style())
-        self.mail_fetch_btn.setToolTip(BIPRO_MAIL_FETCH_TOOLTIP)
-        self.mail_fetch_btn.clicked.connect(self._fetch_mails)
-        action_bar.addWidget(self.mail_fetch_btn)
+        self._more_btn = QPushButton("\u2022\u2022\u2022")
+        self._more_btn.setFixedHeight(30)
+        self._more_btn.setFixedWidth(44)
+        self._more_btn.setStyleSheet(get_button_secondary_style())
+        self._more_btn.setToolTip("Weitere Abruf-Aktionen")
+        self._more_btn.setAccessibleName("Weitere Aktionen")
 
-        self.fetch_single_vu_btn = QPushButton(BIPRO_FETCH_ONLY_VU)
-        self.fetch_single_vu_btn.setFixedHeight(30)
-        self.fetch_single_vu_btn.setStyleSheet(get_button_secondary_style())
-        self.fetch_single_vu_btn.clicked.connect(self._fetch_selected_vu)
-        action_bar.addWidget(self.fetch_single_vu_btn)
+        more_menu = QMenu(self)
+
+        mail_action = QAction(BIPRO_FETCH_ONLY_MAIL, self)
+        mail_action.setShortcut("Ctrl+M")
+        mail_action.triggered.connect(self._fetch_mails)
+        more_menu.addAction(mail_action)
+        self.addAction(mail_action)  # Globaler Shortcut
+
+        vu_action = QAction(BIPRO_FETCH_ONLY_VU, self)
+        vu_action.setShortcut("Shift+F5")
+        vu_action.triggered.connect(self._fetch_selected_vu)
+        more_menu.addAction(vu_action)
+        self.addAction(vu_action)  # Globaler Shortcut
+
+        self._more_btn.setMenu(more_menu)
+        action_bar.addWidget(self._more_btn)
+
+        # Aliase fuer Kompatibilitaet mit bestehender Logik
+        self.mail_fetch_btn = self._more_btn
+        self.fetch_single_vu_btn = self._more_btn
 
         self._refresh_btn = QPushButton(BIPRO_PREVIEW_REFRESH)
         self._refresh_btn.setFixedHeight(30)
@@ -2730,6 +2745,9 @@ class BiPROView(QWidget):
         
         self._update_status_card_fetching()
         
+        self.fetch_all_vus_btn.setEnabled(False)
+        self._more_btn.setEnabled(False)
+
         self._fetch_mails()
         self._fetch_all_vus()
     
@@ -2743,6 +2761,9 @@ class BiPROView(QWidget):
         total_docs = self._all_vus_stats.get('total_docs', 0) + self._unified_mail_docs
         self._update_status_card_complete(total_docs)
         self._unified_fetch_active = False
+
+        self.fetch_all_vus_btn.setEnabled(True)
+        self._more_btn.setEnabled(True)
     
     def _fetch_selected_vu(self):
         """Ruft nur die aktuell ausgewaehlte VU-Verbindung ab."""
@@ -3203,6 +3224,7 @@ class BiPROView(QWidget):
         
         # UI sperren
         self.fetch_all_vus_btn.setEnabled(False)
+        self._more_btn.setEnabled(False)
         self.download_btn.setEnabled(False)
         self.download_all_btn.setEnabled(False)
         
@@ -3456,7 +3478,9 @@ class BiPROView(QWidget):
             self._log(f"  Uebersprungen: {stats['vus_skipped']} VU(s)")
         
         self._all_vus_mode = False
-        self.fetch_all_vus_btn.setEnabled(True)
+        if not self._unified_fetch_active:
+            self.fetch_all_vus_btn.setEnabled(True)
+            self._more_btn.setEnabled(True)
         self.fetch_all_vus_btn.setText(BIPRO_FETCH_ALL)
         
         self._progress_overlay._stats['download_success'] = stats['total_shipments']
@@ -3521,7 +3545,8 @@ class BiPROView(QWidget):
             self._toast_manager.show_info(texts.BIPRO_MAIL_FETCH_RUNNING)
             return
 
-        self.mail_fetch_btn.setEnabled(False)
+        self.fetch_all_vus_btn.setEnabled(False)
+        self._more_btn.setEnabled(False)
 
         class _ResolveSignals(QObject):
             resolved = Signal(object)
@@ -3617,7 +3642,9 @@ class BiPROView(QWidget):
         """Mail-Import abgeschlossen."""
         from i18n import de as texts
         
-        self.mail_fetch_btn.setEnabled(True)
+        if not self._unified_fetch_active:
+            self.fetch_all_vus_btn.setEnabled(True)
+            self._more_btn.setEnabled(True)
         
         toast = getattr(self, '_mail_progress_toast', None)
         if toast:
@@ -3656,7 +3683,9 @@ class BiPROView(QWidget):
         """Fehler beim Mail-Import."""
         from i18n import de as texts
         
-        self.mail_fetch_btn.setEnabled(True)
+        if not self._unified_fetch_active:
+            self.fetch_all_vus_btn.setEnabled(True)
+            self._more_btn.setEnabled(True)
         
         # Progress-Toast schliessen
         toast = getattr(self, '_mail_progress_toast', None)

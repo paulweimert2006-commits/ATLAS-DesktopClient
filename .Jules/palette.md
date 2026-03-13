@@ -1,0 +1,3 @@
+## 2026-03-13 - [BiPRO UI Consolidation]
+**Learning:** Consolidating secondary actions into a dropdown menu (e.g., '•••') significantly reduces cognitive load and establishes a clear primary path for the user. Localizing button labels with both emojis and keyboard shortcut hints provides immediate functional recognition and enhances power-user efficiency.
+**Action:** Always prefer a single dominant primary action for main workflows and tuck expert/secondary controls into consolidated menus or 'More' buttons. Use Unicode escape sequences for emojis in localization files to maintain ASCII compatibility.
