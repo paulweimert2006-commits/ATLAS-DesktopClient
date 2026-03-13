@@ -222,8 +222,8 @@ BIPRO_MAIL_FETCH_PHASE_POLL = "Postfach abrufen..."
 BIPRO_MAIL_FETCH_PHASE_IMPORT = "Anhaenge importieren"
 
 # === Alle VUs abholen (Unified Fetch) ===
-BIPRO_FETCH_ALL = "Alle neuen Dokumente abrufen"
-BIPRO_FETCH_ALL_TOOLTIP = "Ruft Dokumente von allen Versicherern und E-Mail-Konten ab"
+BIPRO_FETCH_ALL = "\U0001f504 Alle neuen Dokumente abrufen (F5)"
+BIPRO_FETCH_ALL_TOOLTIP = "Ruft Dokumente von allen Versicherern und E-Mail-Konten ab (F5)"
 BIPRO_FETCH_ALL_LAST_INFO = "Zuletzt: {timestamp} von {user}"
 BIPRO_FETCH_ALL_NO_ACTIVE = "Keine aktiven VU-Verbindungen vorhanden."
 BIPRO_FETCH_ALL_START = "=== Starte Abruf fuer alle VUs ({count} aktive Verbindungen) ==="
@@ -248,8 +248,8 @@ BIPRO_STATUS_FETCH_SUCCESS = "{count} Dokumente erfolgreich importiert"
 BIPRO_SHOW_DETAILS = "Details anzeigen"
 BIPRO_HIDE_DETAILS = "Details ausblenden"
 BIPRO_GO_TO_ARCHIVE = "Zum Archiv"
-BIPRO_FETCH_ONLY_MAIL = "Nur Mails"
-BIPRO_FETCH_ONLY_VU = "Nur ausgewaehlte VU"
+BIPRO_FETCH_ONLY_MAIL = "\U0001f4e7 Nur Mails (Strg+M)"
+BIPRO_FETCH_ONLY_VU = "\U0001f4e3 Nur ausgewaehlte VU (Umschalt+F5)"
 
 # === Quittieren ===
 BIPRO_ACK_BUTTON = "Quittieren"
