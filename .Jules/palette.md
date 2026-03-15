@@ -1,0 +1,3 @@
+## 2026-03-15 - BiPRO UI Consolidation and Shortcut Implementation
+**Learning:** Consolidating secondary actions into a `QMenu` dropdown significantly reduces cognitive load in complex technical views like BiPRO. Using functional emojis in localized strings provides immediate recognition. Global keyboard shortcuts must be manually restricted (e.g., via `setEnabled`) when their parent container is hidden/disabled to prevent background execution.
+**Action:** Use `QAction` objects inside a `QMenu` for secondary actions, and always add these actions to a scoped `QWidget` (like the standard mode container) to maintain strict mode-based shortcut access.
