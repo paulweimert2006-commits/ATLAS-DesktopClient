@@ -1737,14 +1737,18 @@ class BiPROView(QWidget):
     def _setup_ui(self):
         """UI aufbauen -- Standard-View (einfach) + Admin-View (technisch)."""
         from i18n.de import (
-            BIPRO_HEADER, BIPRO_VIEW_TOGGLE_STANDARD, BIPRO_VIEW_TOGGLE_ADMIN,
-            BIPRO_FETCH_ALL, BIPRO_FETCH_ALL_TOOLTIP, BIPRO_FETCH_ALL_LAST_INFO,
+            BIPRO_HEADER, BIPRO_VIEW_TOGGLE_STANDARD,
+            BIPRO_FETCH_ALL, BIPRO_FETCH_ALL_TOOLTIP,
             BIPRO_MAIL_FETCH_TOOLTIP,
-            BIPRO_FETCH_ONLY_MAIL, BIPRO_FETCH_ONLY_VU,
-            BIPRO_SHOW_DETAILS, BIPRO_HIDE_DETAILS, BIPRO_GO_TO_ARCHIVE,
-            BIPRO_ACK_BUTTON, BIPRO_ACK_LAST_INFO,
-            BIPRO_PREVIEW_REFRESH, BIPRO_PREVIEW_LOADING, BIPRO_PREVIEW_EMPTY,
+            BIPRO_FETCH_ONLY_MAIL, BIPRO_FETCH_ONLY_VU, BIPRO_FETCH_ONLY_VU_TOOLTIP,
+            BIPRO_SHOW_DETAILS, BIPRO_GO_TO_ARCHIVE,
+            BIPRO_ACK_BUTTON,
+            BIPRO_PREVIEW_REFRESH, BIPRO_PREVIEW_REFRESH_TOOLTIP,
+            BIPRO_PREVIEW_LOADING,
+            ACC_FETCH_ALL, BIPRO_MORE_TOOLTIP,
         )
+        from PySide6.QtWidgets import QMenu
+        from PySide6.QtGui import QAction
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 16, 16, 16)
@@ -1807,6 +1811,7 @@ class BiPROView(QWidget):
         self.fetch_all_vus_btn.setStyleSheet(get_button_primary_style())
         self.fetch_all_vus_btn.setToolTip(BIPRO_FETCH_ALL_TOOLTIP)
         self.fetch_all_vus_btn.setShortcut("F5")
+        self.fetch_all_vus_btn.setAccessibleName(ACC_FETCH_ALL)
         self.fetch_all_vus_btn.clicked.connect(self._unified_fetch)
         action_bar.addWidget(self.fetch_all_vus_btn)
 
@@ -1815,25 +1820,43 @@ class BiPROView(QWidget):
         sep.setStyleSheet(f"color: {BORDER_DEFAULT};")
         action_bar.addWidget(sep)
 
-        self.mail_fetch_btn = QPushButton(BIPRO_FETCH_ONLY_MAIL)
-        self.mail_fetch_btn.setFixedHeight(30)
-        self.mail_fetch_btn.setStyleSheet(get_button_secondary_style())
+        # "More" Button for consolidated secondary actions
+        self._more_btn = QPushButton("\u2022\u2022\u2022")
+        self._more_btn.setFixedHeight(30)
+        self._more_btn.setFixedWidth(44)
+        self._more_btn.setStyleSheet(get_button_secondary_style())
+        self._more_btn.setToolTip(BIPRO_MORE_TOOLTIP)
+
+        more_menu = QMenu(self)
+
+        # Action: Only Mails
+        self.mail_fetch_btn = QAction(BIPRO_FETCH_ONLY_MAIL, self)
+        self.mail_fetch_btn.setShortcut("Ctrl+M")
         self.mail_fetch_btn.setToolTip(BIPRO_MAIL_FETCH_TOOLTIP)
-        self.mail_fetch_btn.clicked.connect(self._fetch_mails)
-        action_bar.addWidget(self.mail_fetch_btn)
+        self.mail_fetch_btn.triggered.connect(self._fetch_mails)
+        more_menu.addAction(self.mail_fetch_btn)
+        self.addAction(self.mail_fetch_btn)
 
-        self.fetch_single_vu_btn = QPushButton(BIPRO_FETCH_ONLY_VU)
-        self.fetch_single_vu_btn.setFixedHeight(30)
-        self.fetch_single_vu_btn.setStyleSheet(get_button_secondary_style())
-        self.fetch_single_vu_btn.clicked.connect(self._fetch_selected_vu)
-        action_bar.addWidget(self.fetch_single_vu_btn)
+        # Action: Only Selected VU
+        self.fetch_single_vu_btn = QAction(BIPRO_FETCH_ONLY_VU, self)
+        self.fetch_single_vu_btn.setShortcut("Shift+F5")
+        self.fetch_single_vu_btn.setToolTip(BIPRO_FETCH_ONLY_VU_TOOLTIP)
+        self.fetch_single_vu_btn.triggered.connect(self._fetch_selected_vu)
+        more_menu.addAction(self.fetch_single_vu_btn)
+        self.addAction(self.fetch_single_vu_btn)
 
-        self._refresh_btn = QPushButton(BIPRO_PREVIEW_REFRESH)
-        self._refresh_btn.setFixedHeight(30)
-        self._refresh_btn.setStyleSheet(get_button_success_style())
-        self._refresh_btn.setToolTip("Vorschau manuell aktualisieren (max. 1x / 30s)")
-        self._refresh_btn.clicked.connect(self._on_manual_refresh)
-        action_bar.addWidget(self._refresh_btn)
+        more_menu.addSeparator()
+
+        # Action: Refresh Preview
+        self._refresh_btn = QAction(BIPRO_PREVIEW_REFRESH, self)
+        self._refresh_btn.setShortcut("Ctrl+R")
+        self._refresh_btn.setToolTip(BIPRO_PREVIEW_REFRESH_TOOLTIP)
+        self._refresh_btn.triggered.connect(self._on_manual_refresh)
+        more_menu.addAction(self._refresh_btn)
+        self.addAction(self._refresh_btn)
+
+        self._more_btn.setMenu(more_menu)
+        action_bar.addWidget(self._more_btn)
 
         action_bar.addStretch()
 
@@ -1844,6 +1867,7 @@ class BiPROView(QWidget):
             "Quittiert ALLE gelisteten Lieferungen bei allen Versicherern.\n"
             "ACHTUNG: Quittierte Lieferungen werden vom Server geloescht!"
         )
+        self._ack_btn.setShortcut("Ctrl+Alt+A")
         self._ack_btn.clicked.connect(self._acknowledge_all_listed)
         action_bar.addWidget(self._ack_btn)
 
@@ -2741,6 +2765,9 @@ class BiPROView(QWidget):
             return
         
         total_docs = self._all_vus_stats.get('total_docs', 0) + self._unified_mail_docs
+        self.fetch_all_vus_btn.setEnabled(True)
+        if hasattr(self, '_more_btn'):
+            self._more_btn.setEnabled(True)
         self._update_status_card_complete(total_docs)
         self._unified_fetch_active = False
     
@@ -3203,6 +3230,8 @@ class BiPROView(QWidget):
         
         # UI sperren
         self.fetch_all_vus_btn.setEnabled(False)
+        if hasattr(self, '_more_btn'):
+            self._more_btn.setEnabled(False)
         self.download_btn.setEnabled(False)
         self.download_all_btn.setEnabled(False)
         
@@ -3456,7 +3485,6 @@ class BiPROView(QWidget):
             self._log(f"  Uebersprungen: {stats['vus_skipped']} VU(s)")
         
         self._all_vus_mode = False
-        self.fetch_all_vus_btn.setEnabled(True)
         self.fetch_all_vus_btn.setText(BIPRO_FETCH_ALL)
         
         self._progress_overlay._stats['download_success'] = stats['total_shipments']
@@ -3470,6 +3498,9 @@ class BiPROView(QWidget):
             self._unified_vus_done = True
             self._check_unified_complete()
         else:
+            self.fetch_all_vus_btn.setEnabled(True)
+            if hasattr(self, '_more_btn'):
+                self._more_btn.setEnabled(True)
             self._update_status_card_complete(stats.get('total_docs', 0))
     
     def _update_shipments_table(self, shipments):
